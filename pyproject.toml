@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kerno"
+version = "0.1.0"
+description = "Kerno Compliance Copilot — automated EU regulatory control mapping"
+requires-python = ">=3.11"
+
+dependencies = [
+    # API layer
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "python-multipart>=0.0.9",
+
+    # Authentication
+    "PyJWT>=2.8.0",
+
+    # Database
+    "psycopg2-binary>=2.9.9",
+    "sqlalchemy>=2.0.0,<3.0.0",
+    "alembic>=1.13.0",
+    "pgvector>=0.2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "httpx>=0.27.0",   # FastAPI TestClient transport
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "config*"]

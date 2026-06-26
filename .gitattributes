@@ -1,0 +1,19 @@
+# Normalize all text files to LF in the repository and on checkout.
+# This overrides core.autocrlf on Windows, preventing the CRLF warnings
+# that appeared during the initial commit on a Windows machine.
+* text=auto eol=lf
+
+# Explicitly mark binary formats so Git never attempts line-ending conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.pyc binary
+*.pyd binary
+*.so binary
+*.dll binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
