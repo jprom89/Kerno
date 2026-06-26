@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header">
+      <h1 class="page-title">Dashboard</h1>
+      <p class="page-subtitle">DORA Register of Information — tenant overview</p>
+    </div>
+
+    <div class="card-grid">
+      <div class="stat-card">
+        <div class="stat-label">Register entries</div>
+        <div class="stat-value" id="entry-count">—</div>
+        <div class="stat-note">Active ICT providers</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Submission runs</div>
+        <div class="stat-value" id="run-count">—</div>
+        <div class="stat-note">Total runs filed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Open windows</div>
+        <div class="stat-value" id="open-windows">—</div>
+        <div class="stat-note">Accepting submissions now</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="card">
+        <div class="stat-label mb-4">Latest submission run</div>
+        <div id="latest-run" class="text-muted">Loading…</div>
+      </div>
+      <div class="card">
+        <div class="stat-label mb-4">Next open window</div>
+        <div id="next-window" class="text-muted">Loading…</div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header">
+      <h1 class="page-title">DORA Register of Information</h1>
+      <p class="page-subtitle">ICT third-party service providers — read-only view</p>
+    </div>
+
+    <div class="card">
+      <div id="empty-msg" class="hidden alert alert-info">No register entries found for this tenant.</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Service</th>
+              <th>Type</th>
+              <th>Criticality</th>
+              <th>Business function</th>
+              <th>Status</th>
+              <th>Contract end</th>
+            </tr>
+          </thead>
+          <tbody id="entries-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/register.js"></script>
+</body>
+</html>

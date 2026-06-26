@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submission Run — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header flex items-center justify-between">
+      <div>
+        <a href="/dashboard/submissions.html" class="text-muted text-sm" style="text-decoration:none;">← Back to Submission History</a>
+        <h1 class="page-title" id="page-title" style="margin-top:4px;">Submission run</h1>
+      </div>
+      <div class="flex gap-2 items-center">
+        <div id="val-badge"></div>
+        <div id="status-badge"></div>
+      </div>
+    </div>
+
+    <div id="error-msg" class="alert alert-error hidden"></div>
+
+    <div class="card">
+      <dl class="detail-grid">
+        <dt class="detail-label">Run ID</dt>              <dd class="detail-value" id="run-id"></dd>
+        <dt class="detail-label">Submission window</dt>   <dd class="detail-value" id="window-id"></dd>
+        <dt class="detail-label">Reporting year</dt>      <dd class="detail-value" id="reporting-year"></dd>
+        <dt class="detail-label">Validation issues</dt>   <dd class="detail-value" id="val-issues"></dd>
+        <dt class="detail-label">Entry count</dt>         <dd class="detail-value" id="entry-count"></dd>
+        <dt class="detail-label">Created</dt>             <dd class="detail-value" id="created-at"></dd>
+        <dt class="detail-label">Last updated</dt>        <dd class="detail-value" id="updated-at"></dd>
+        <dt class="detail-label">Submitted at</dt>        <dd class="detail-value" id="submitted-at"></dd>
+        <dt class="detail-label">Submission reference</dt><dd class="detail-value" id="reference"></dd>
+      </dl>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/submission-detail.js"></script>
+</body>
+</html>

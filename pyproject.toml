@@ -18,6 +18,9 @@ dependencies = [
     # Authentication
     "PyJWT>=2.8.0",
 
+    # Async file I/O — required by FastAPI StaticFiles for dashboard serving
+    "aiofiles>=23.0",
+
     # Database
     "psycopg2-binary>=2.9.9",
     "sqlalchemy>=2.0.0,<3.0.0",

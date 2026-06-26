@@ -1,5 +1,5 @@
-"""Three unit tests for the /api/v1/submissions endpoints covering POST /runs,
-GET /runs, and the unauthenticated GET /windows endpoint."""
+"""Unit tests for the /api/v1/submissions endpoints covering POST /runs,
+GET /runs, GET /runs/{id}, and the unauthenticated GET /windows endpoint."""
 
 from __future__ import annotations
 
@@ -90,6 +90,25 @@ def test_list_runs_returns_200():
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == _RUN_ID
+
+
+def test_get_run_by_id_returns_200():
+    run = _make_run_output()
+    with patch("src.api.routers.submissions.get_submission_run", return_value=run):
+        client = TestClient(_app_both_overrides())
+        response = client.get(f"/api/v1/submissions/runs/{_RUN_ID}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == _RUN_ID
+    assert body["status"] == "ready"
+    assert body["validation_overall_status"] == "pass"
+
+
+def test_get_run_by_id_not_found_returns_404():
+    with patch("src.api.routers.submissions.get_submission_run", return_value=None):
+        client = TestClient(_app_both_overrides())
+        response = client.get(f"/api/v1/submissions/runs/{_RUN_ID}")
+    assert response.status_code == 404
 
 
 def test_list_windows_requires_no_auth():

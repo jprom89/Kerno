@@ -1,5 +1,6 @@
 """FastAPI application factory for the Kerno DORA RoI API.
-Registers all routers, exception handlers, and a startup check for required env vars."""
+Registers all routers, exception handlers, a startup env check, and serves the
+static dashboard from /dashboard/."""
 
 from __future__ import annotations
 
@@ -8,9 +9,11 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.api.routers import register, submissions
+from src.api.routers import auth as auth_router
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
 
 logger = logging.getLogger(__name__)
@@ -29,8 +32,14 @@ def create_app() -> FastAPI:
     """Return a fully configured FastAPI application instance."""
     app = FastAPI(lifespan=_lifespan)
 
+    app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(register.router, prefix="/api/v1/register", tags=["register"])
     app.include_router(submissions.router, prefix="/api/v1/submissions", tags=["submissions"])
+
+    @app.get("/", include_in_schema=False)
+    def root():
+        """Redirect the bare root URL to the dashboard login page."""
+        return RedirectResponse(url="/dashboard/login.html")
 
     @app.exception_handler(TenantContextMissingError)
     async def handle_tenant_context_missing(request: Request, exc: TenantContextMissingError):
@@ -51,6 +60,14 @@ def create_app() -> FastAPI:
     async def handle_unhandled(request: Request, exc: Exception):
         logger.exception("Unhandled exception")
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
+
+    dashboard_dir = os.path.join(os.path.dirname(__file__), "..", "dashboard")
+    if os.path.isdir(dashboard_dir):
+        app.mount(
+            "/dashboard",
+            StaticFiles(directory=dashboard_dir, html=True),
+            name="dashboard",
+        )
 
     return app
 

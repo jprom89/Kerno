@@ -11,8 +11,10 @@ from src.api.schemas.submissions import (
     SubmissionRunResponse,
     SubmissionWindowResponse,
 )
+from src.exceptions import EntryNotFoundError
 from src.services.dora_roi_submission_service import (
     build_and_record_submission,
+    get_submission_run,
     list_open_windows,
     list_tenant_submission_runs,
 )
@@ -28,6 +30,19 @@ def create_run(
 ) -> SubmissionRunResponse:
     """Trigger a submission run for the authenticated tenant and return its record."""
     run, _ = build_and_record_submission(conn, tenant_id, body.submission_window_id)
+    return SubmissionRunResponse.model_validate(run)
+
+
+@router.get("/runs/{run_id}")
+def get_run(
+    run_id: str,
+    tenant_id: str = Depends(get_tenant_id),
+    conn=Depends(get_conn),
+) -> SubmissionRunResponse:
+    """Return a single submission run by ID for the authenticated tenant. Raises 404 if not found."""
+    run = get_submission_run(conn, tenant_id, run_id)
+    if run is None:
+        raise EntryNotFoundError(f"submission run {run_id!r} not found")
     return SubmissionRunResponse.model_validate(run)
 
 

@@ -117,6 +117,15 @@ WHERE tenant_id = :tenant_id
 ORDER BY reporting_year DESC, created_at DESC
 """
 
+_SELECT_RUN_BY_ID = """
+SELECT id, tenant_id, submission_window_id, reporting_year, status,
+       validation_overall_status, validation_issue_count, entry_count,
+       created_at, updated_at, submitted_at, submission_reference
+FROM dora_submission_runs
+WHERE id = :run_id
+  AND tenant_id = :tenant_id
+"""
+
 _INSERT_RUN = """
 INSERT INTO dora_submission_runs (
     id, tenant_id, submission_window_id, reporting_year, status,
@@ -186,6 +195,22 @@ def build_and_record_submission(
     set_tenant_context(conn, tenant_id)
     run = _upsert_submission_run(conn, tenant_id, submission_window_id, window.reporting_year, package)
     return run, package
+
+
+def get_submission_run(conn, tenant_id: str, run_id: str) -> SubmissionRunOutput | None:
+    """Return a single submission run by ID for the given tenant, or None if not found.
+
+    Sets tenant context before querying so RLS restricts results to this tenant.
+    Raises TenantContextMissingError if tenant_id is falsey.
+    Returns None (not an exception) when run_id does not exist for this tenant.
+    """
+    _guard_tenant(tenant_id)
+    set_tenant_context(conn, tenant_id)
+    row = conn.execute(
+        _SELECT_RUN_BY_ID,
+        {"run_id": str(run_id), "tenant_id": str(tenant_id)},
+    ).fetchone()
+    return _run_row_to_output(row) if row is not None else None
 
 
 def list_open_windows(conn) -> list[SubmissionWindowOutput]:

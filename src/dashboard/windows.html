@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submission Windows — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header">
+      <h1 class="page-title">Submission Windows</h1>
+      <p class="page-subtitle">Currently open windows — trigger a submission build for any window below</p>
+    </div>
+
+    <div id="notice" class="hidden"></div>
+    <div id="empty-msg" class="hidden alert alert-info">No submission windows are currently open.</div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Authority</th>
+              <th>Year</th>
+              <th>Window opens</th>
+              <th>Window closes</th>
+              <th>Reference date</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="windows-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/windows.js"></script>
+</body>
+</html>

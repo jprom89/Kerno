@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submission History — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header flex items-center justify-between">
+      <div>
+        <h1 class="page-title">Submission History</h1>
+        <p class="page-subtitle">All DORA RoI submission runs for this tenant</p>
+      </div>
+      <a href="/dashboard/windows.html" class="btn btn-primary">New submission →</a>
+    </div>
+
+    <div id="empty-msg" class="hidden alert alert-info">No submission runs yet. Go to Submission Windows to trigger a build.</div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>Year</th>
+              <th>Status</th>
+              <th>Validation</th>
+              <th>Issues</th>
+              <th>Entries</th>
+              <th>Created</th>
+              <th>Submitted</th>
+            </tr>
+          </thead>
+          <tbody id="runs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/submissions.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register Entry — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header flex items-center justify-between">
+      <div>
+        <a href="/dashboard/register.html" class="text-muted text-sm" style="text-decoration:none;">← Back to Register</a>
+        <h1 class="page-title" id="page-title" style="margin-top:4px;">Entry detail</h1>
+      </div>
+      <div id="status-badge"></div>
+    </div>
+
+    <div id="error-msg" class="alert alert-error hidden"></div>
+
+    <div class="card">
+      <dl class="detail-grid">
+        <dt class="detail-label">Provider name</dt>     <dd class="detail-value" id="provider-name"></dd>
+        <dt class="detail-label">Service name</dt>      <dd class="detail-value" id="service-name"></dd>
+        <dt class="detail-label">Provider type</dt>     <dd class="detail-value" id="provider-type"></dd>
+        <dt class="detail-label">Criticality level</dt> <dd class="detail-value" id="criticality"></dd>
+        <dt class="detail-label">Business function</dt> <dd class="detail-value" id="business-function"></dd>
+        <dt class="detail-label">Data types</dt>        <dd class="detail-value" id="data-types"></dd>
+        <dt class="detail-label">Countries</dt>         <dd class="detail-value" id="countries"></dd>
+        <dt class="detail-label">Contract start</dt>    <dd class="detail-value" id="contract-start"></dd>
+        <dt class="detail-label">Contract end</dt>      <dd class="detail-value" id="contract-end"></dd>
+        <dt class="detail-label">Exit strategy</dt>     <dd class="detail-value" id="exit-strategy"></dd>
+        <dt class="detail-label">Source record ID</dt>  <dd class="detail-value" id="source-id"></dd>
+        <dt class="detail-label">Created</dt>           <dd class="detail-value" id="created-at"></dd>
+        <dt class="detail-label">Last updated</dt>      <dd class="detail-value" id="updated-at"></dd>
+      </dl>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/register-detail.js"></script>
+</body>
+</html>

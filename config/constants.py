@@ -202,3 +202,35 @@ VALIDATION_SEVERITY_WARN: str = "warn"
 # Severity string for a validation issue that represents a hard failure.
 # (PROMPT_doc15_dora_roi_export_validation.md §3.3)
 VALIDATION_SEVERITY_FAIL: str = "fail"
+
+# ---------------------------------------------------------------------------
+# Authentication — password hashing and JWT issuance (Document 19 / KER-103)
+# ---------------------------------------------------------------------------
+
+# Lifetime of a JWT issued at login, in seconds. 86400 = 24 hours (one working day).
+# Tokens expire server-side via the 'exp' claim; the dashboard clears the stored
+# token and redirects to login on 401. (CLAUDE.md §3 — tenant auth)
+JWT_EXPIRY_SECONDS: int = 86400
+
+# CPU and memory cost factor for the scrypt KDF (the 'n' parameter).
+# 16384 = 2^14 — the OWASP-recommended minimum for interactive logins
+# as of 2024. Doubling this value halves throughput; halving it doubles throughput.
+SCRYPT_COST_FACTOR: int = 16384
+
+# Block size parameter for the scrypt KDF (the 'r' parameter).
+# Controls internal memory block size. 8 is the standard value from the original
+# scrypt paper; there is no practical reason to change it for login workloads.
+SCRYPT_BLOCK_SIZE: int = 8
+
+# Parallelization factor for the scrypt KDF (the 'p' parameter).
+# 1 means sequential hashing. Increase to run hashing across multiple CPU cores
+# when under high login concurrency; the MVP is single-tenant so 1 is correct.
+SCRYPT_PARALLELISM: int = 1
+
+# Length of the derived key produced by scrypt, in bytes.
+# 32 bytes = 256-bit key — matches AES-256 key length as a convention.
+SCRYPT_KEY_LENGTH: int = 32
+
+# Length of the random salt generated for each new password hash, in bytes.
+# 32 bytes = 256 bits of entropy; this makes pre-computation attacks infeasible.
+SCRYPT_SALT_LENGTH: int = 32
