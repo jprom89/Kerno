@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from src.db.base import Base
+from src.models import Base
 
 
 class DORASubmissionWindow(Base):

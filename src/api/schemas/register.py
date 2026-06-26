@@ -52,7 +52,7 @@ class ReportingWindowResponse(BaseModel):
     authority_name: str
     member_state: str
     reporting_year: int
-    submission_open_date: date
-    submission_close_date: date
+    submission_open_date: date | None
+    submission_close_date: date | None
     notes: str | None
     created_at: datetime

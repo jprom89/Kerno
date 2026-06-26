@@ -35,7 +35,7 @@ from src.services.evidence_service import (
 )
 
 # A deterministic UUIDv4 for all tests — fixed for readable failure messages.
-_TENANT_ID = "c0000000-0000-4000-c000-000000000099"
+_TENANT_ID = "c0000000-0000-4000-a000-000000000099"
 _CONTROL_ID = str(uuid.uuid4())
 _RECORD_ID = str(uuid.uuid4())
 _LINK_ID = str(uuid.uuid4())

@@ -30,7 +30,7 @@ from src.services.override_service import OverrideInput, capture_override
 
 # A deterministic UUIDv4 for the test tenant — fixed so test failure messages
 # are readable ("tenant c000..." rather than a random UUID).
-_TENANT_ID = uuid.UUID("c0000000-0000-4000-c000-000000000003")
+_TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 
 # A deterministic UUIDv4 for the test reviewer — fixed for the same reason.
 _REVIEWER_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")

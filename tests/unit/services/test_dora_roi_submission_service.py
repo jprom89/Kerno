@@ -33,7 +33,7 @@ from src.services.dora_roi_submission_service import (
     list_tenant_submission_runs,
 )
 
-_TENANT_ID = "c0000000-0000-4000-c000-000000000066"
+_TENANT_ID = "c0000000-0000-4000-a000-000000000066"
 _WINDOW_ID = "w0000000-0000-4000-w000-000000000001"
 _RUN_ID = "r0000000-0000-4000-r000-000000000001"
 _NOW = datetime(2025, 6, 1, 12, 0, 0)

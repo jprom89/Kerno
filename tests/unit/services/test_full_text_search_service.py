@@ -24,7 +24,7 @@ from src.exceptions import TenantContextMissingError
 from src.services.full_text_search_service import search_records
 
 # A deterministic UUIDv4 tenant for all tests.
-_TENANT_ID = "c0000000-0000-4000-c000-000000000088"
+_TENANT_ID = "c0000000-0000-4000-a000-000000000088"
 _NOW = datetime.now(timezone.utc)
 
 

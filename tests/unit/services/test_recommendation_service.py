@@ -37,7 +37,7 @@ from src.models.recommendation import (
 from src.services.evidence_service import LINK_STATUS_ACTIVE, LINK_STATUS_BROKEN, EvidenceResult
 from src.services.recommendation_service import generate_recommendation
 
-_TENANT_ID = "c0000000-0000-4000-c000-000000000077"
+_TENANT_ID = "c0000000-0000-4000-a000-000000000077"
 _CONTROL_ID = "NIS2-Art21-1"
 _RECORD_ID = "rec-uuid-001"
 _CONTROL_ROW = (_CONTROL_ID, "NIS2-Art21-1", "Risk Management Measures")

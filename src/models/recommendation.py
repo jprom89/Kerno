@@ -25,7 +25,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from src.db.base import Base
+from src.models import Base
 
 # ---------------------------------------------------------------------------
 # Status constants — what a recommendation concludes about control coverage

@@ -34,7 +34,7 @@ from src.services.dora_roi_service import (
     update_register_entry,
 )
 
-_TENANT_ID = "c0000000-0000-4000-c000-000000000066"
+_TENANT_ID = "c0000000-0000-4000-a000-000000000066"
 _ENTRY_ID = "e0000000-0000-4000-e000-000000000001"
 _NOW = datetime.now(timezone.utc)
 _DATE = date(2024, 1, 1)

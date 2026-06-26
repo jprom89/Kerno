@@ -26,7 +26,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from src.db.base import Base
+from src.models import Base
 
 # ---------------------------------------------------------------------------
 # criticality_level constants (§3.2)

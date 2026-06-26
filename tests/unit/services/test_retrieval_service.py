@@ -30,7 +30,7 @@ from src.exceptions import TenantContextMissingError
 from src.services.retrieval_service import get_similar_controls
 
 # A deterministic UUIDv4 for the test tenant — fixed for readable failure messages.
-_TENANT_ID = uuid.UUID("c0000000-0000-4000-c000-000000000003")
+_TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 
 # Short float lists used as stand-ins for full-dimension vectors in unit tests.
 # The spy connection does not execute real SQL, so the dimension does not matter.
