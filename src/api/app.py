@@ -1,12 +1,17 @@
 """FastAPI application factory for the Kerno DORA RoI API.
-Registers all routers, exception handlers, a startup env check, and serves the
-static dashboard from /dashboard/."""
+Registers all routers, exception handlers, a startup env check, and serves the static dashboard from /dashboard/."""
 
 from __future__ import annotations
 
 import logging
 import os
 from contextlib import asynccontextmanager
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse

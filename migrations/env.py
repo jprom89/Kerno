@@ -1,11 +1,15 @@
 """Alembic migration environment — connects the migration engine to the live database.
-
-Reads DATABASE_URL from the environment, registers all SQLAlchemy models so
-autogenerate can detect schema changes, and runs migrations online or offline."""
+Reads DATABASE_URL from the environment and runs migrations online or offline."""
 
 from __future__ import annotations
 
 import os
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool

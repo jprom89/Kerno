@@ -105,6 +105,16 @@ migrations/
 
 ---
 
+## Scripts
+
+```
+scripts/
+├── seed_nis2_controls.py              ← One-time seed: NIS2 control catalogue
+└── seed_dev_tenant.py                 ← Dev-only seed: admin@kerno.local credentials
+```
+
+---
+
 ## Tests
 
 Mirror the `src/` structure. Every service has a matching test file.

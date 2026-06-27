@@ -11,6 +11,11 @@ from unittest.mock import MagicMock, patch
 import jwt
 from fastapi.testclient import TestClient
 
+# Must be set before src.api.app is imported — load_dotenv() in app.py runs at import
+# time and would otherwise install the real .env secret, breaking JWT signature checks.
+_JWT_SECRET = "test-secret-for-unit-tests"
+os.environ["KERNO_JWT_SECRET"] = _JWT_SECRET
+
 from src.api.app import create_app
 from src.api.dependencies import get_conn, get_tenant_id
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
@@ -18,10 +23,6 @@ from src.services.dora_roi_service import RegisterEntryOutput, ReportingWindowOu
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _ENTRY_ID = "e0000000-0000-4000-e000-000000000001"
-_JWT_SECRET = "test-secret-for-unit-tests"
-
-# Set before any dependency is resolved so _jwt_secret() finds it.
-os.environ.setdefault("KERNO_JWT_SECRET", _JWT_SECRET)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
