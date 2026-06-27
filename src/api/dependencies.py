@@ -19,7 +19,6 @@ from config.constants import EMBEDDING_DIMENSION
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
-# Converts :name placeholders to %(name)s (psycopg2 style).
 # Negative lookbehind avoids matching PostgreSQL ::typename casts.
 _NAMED_PARAM_RE = re.compile(r"(?<!:):([A-Za-z_]\w*)")
 
@@ -44,7 +43,7 @@ def _convert_named_params(sql: str, params: dict) -> tuple[str, dict]:
         value = params.get(name)
         if _is_vector_value(value):
             adapted[name] = _format_vector(value)
-            return f"%({name})s::vector"
+            return f"CAST(%({name})s AS vector)"
         adapted[name] = value
         return f"%({name})s"
 
@@ -69,10 +68,7 @@ class _CursorResult:
 
 
 class _ExecutableConn:
-    """Bridges raw psycopg2 connections to the execute(sql, params) interface used by all services.
-
-    psycopg2 connections have no execute() method — only cursors do. Services also use SQLAlchemy-style
-    :name dict params while psycopg2 requires %(name)s. This class adapts both conventions."""
+    """Adapts raw psycopg2 connections to execute(sql, params), converting :name dict params to %(name)s and wrapping vector lists in CAST(... AS vector)."""
 
     def __init__(self, raw_conn) -> None:
         self._conn = raw_conn
