@@ -1,22 +1,7 @@
-"""Unit tests for src/services/retrieval_service.py.
+"""Unit tests for src/services/retrieval_service.py — get_similar_controls and retrieve_similar_records.
 
-Plain-English summary
----------------------
-Ten tests verify the retrieval service without a live database. A spy
-connection records every ``execute()`` call in order, allowing assertions about
-SQL content, parameter values, and the order of operations (tenant context must
-be set before any SELECT). A configurable ``_SpyConn`` returns a fake bias
-vector from the ``retrieval_bias`` query when one is provided, or ``None`` to
-trigger the unbiased path.
-
-Tests cover: biased query uses ``:bias_vector`` parameter (not a column),
-unbiased fallback for ``None`` and ``[]``, SET-LOCAL-before-SELECT ordering,
-three invalid-tenant error cases, LIMIT value, bias coefficient value,
-``tenant_embeddings`` table name, and no SQLAlchemy Session API calls.
-
-How to run
-----------
-    pytest tests/unit/services/test_retrieval_service.py -v
+Seventeen tests cover both retrieval paths without a live database. Spy connections record
+execute() calls so tests can assert SQL content, parameter values, and call ordering.
 """
 
 from __future__ import annotations
@@ -25,19 +10,17 @@ import uuid
 
 import pytest
 
-from config.constants import BIAS_INJECTION_COEFFICIENT, MAX_SIMILAR_CONTROLS_RETURNED
+from config.constants import (
+    BIAS_INJECTION_COEFFICIENT,
+    MAX_SIMILAR_CONTROLS_RETURNED,
+    MAX_SIMILAR_RECORDS_RETURNED,
+)
 from src.exceptions import TenantContextMissingError
-from src.services.retrieval_service import get_similar_controls
+from src.services.retrieval_service import get_similar_controls, retrieve_similar_records
 
-# A deterministic UUIDv4 for the test tenant — fixed for readable failure messages.
 _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
-
-# Short float lists used as stand-ins for full-dimension vectors in unit tests.
-# The spy connection does not execute real SQL, so the dimension does not matter.
 _QUERY_VECTOR = [0.1, 0.2, 0.3]
 _BIAS_VECTOR = [0.4, 0.5, 0.6]
-
-# A UUIDv1 (time-based) — guaranteed not to be version 4, so it must be rejected.
 _NON_V4_UUID = uuid.UUID("a0000000-0000-1000-8000-000000000001")
 
 
@@ -45,109 +28,105 @@ _NON_V4_UUID = uuid.UUID("a0000000-0000-1000-8000-000000000001")
 
 
 class _NullResult:
-    """Simulates the return value of a non-SELECT execute call (INSERT, SET LOCAL).
-
-    Services call ``fetchone()`` or ``fetchall()`` on every execute result. For
-    non-SELECT statements these must return ``None`` / ``[]`` rather than raising.
-    """
-
     def fetchone(self):
-        """Return None — no rows from a non-SELECT statement."""
         return None
 
     def fetchall(self) -> list:
-        """Return an empty list — no rows from a non-SELECT statement."""
         return []
 
 
+class _SelectResult:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        return self._rows
+
+
 class _BiasResult:
-    """Simulates a retrieval_bias SELECT that returns one row containing the vector.
-
-    ``_fetch_tenant_bias_vector`` does ``list(row[0])`` on the fetchone result.
-    Returning ``(bias_vector,)`` places the vector at ``row[0]``.
-    """
-
     def __init__(self, bias_vector: list[float]) -> None:
-        """Store the fake bias vector to return from fetchone()."""
         self._bias_vector = bias_vector
 
     def fetchone(self):
-        """Return a one-element tuple so row[0] is the bias vector."""
         return (self._bias_vector,)
 
     def fetchall(self) -> list:
-        """Return an empty list — only fetchone is used for bias queries."""
         return []
 
 
 class _SpyConn:
-    """Records every execute() call; raises on SQLAlchemy Session API usage.
-
-    When ``bias_vector`` is provided, returns it from the ``retrieval_bias``
-    SELECT so the biased query path is exercised. When ``bias_vector`` is
-    ``None``, all selects return ``_NullResult`` so the unbiased path is taken.
-    """
+    """Records execute() calls for get_similar_controls tests; raises on SQLAlchemy Session API."""
 
     def __init__(self, bias_vector: list[float] | None = None) -> None:
-        """Initialise the spy with an empty call log and optional bias vector."""
         self.calls: list[tuple[str, object]] = []
         self._bias_vector = bias_vector
 
     def execute(self, sql: str, params=None) -> object:
-        """Record (sql, params) and return appropriate result based on query type."""
         self.calls.append((sql, params))
         if "retrieval_bias" in sql and self._bias_vector is not None:
             return _BiasResult(self._bias_vector)
         return _NullResult()
 
     def commit(self) -> None:
-        """No-op — unit tests do not require real transaction control."""
+        pass
 
     def rollback(self) -> None:
-        """No-op — unit tests do not require real transaction control."""
+        pass
 
     def add(self, *args, **kwargs) -> None:
-        """Raise to detect incorrect SQLAlchemy Session API usage."""
         raise AssertionError(
             "conn.add() was called. The retrieval service must use "
             "conn.execute(sql, params) — not the SQLAlchemy Session API."
         )
 
     def flush(self, *args, **kwargs) -> None:
-        """Raise to detect incorrect SQLAlchemy Session API usage."""
         raise AssertionError(
             "conn.flush() was called. The retrieval service must use "
             "conn.execute(sql, params) — not the SQLAlchemy Session API."
         )
 
 
+class _ContextSpyConn:
+    """Records execute() calls for retrieve_similar_records tests."""
+
+    def __init__(self, rows: list | None = None) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self._rows = rows or []
+
+    def execute(self, sql: str, params=None) -> object:
+        self.calls.append((sql, params))
+        if "context_records" in sql and self._rows:
+            return _SelectResult(self._rows)
+        return _NullResult()
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+    def add(self, *args, **kwargs) -> None:
+        raise AssertionError("conn.add() called — retrieve_similar_records must use conn.execute()")
+
+    def flush(self, *args, **kwargs) -> None:
+        raise AssertionError("conn.flush() called — retrieve_similar_records must use conn.execute()")
+
+
 class _FakeSession:
-    """Minimal session that supplies a tenant UUID via resolve_tenant_id().
-
-    ``resolve_and_set_tenant_context()`` reads the tenant identity by calling
-    ``session.resolve_tenant_id()``. This class implements that interface.
-    """
-
     def __init__(self, tenant_id: uuid.UUID = _TENANT_ID) -> None:
-        """Store the tenant UUID that resolve_tenant_id() will return."""
         self._tenant_id = tenant_id
 
     def resolve_tenant_id(self) -> uuid.UUID:
-        """Return the configured tenant UUID."""
         return self._tenant_id
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── get_similar_controls tests ────────────────────────────────────────────────
 
 
 def test_biased_query_uses_bias_vector_parameter() -> None:
-    """When a bias row exists, SQL must use :bias_vector as a parameter, not a column.
-
-    The dead-parameter bug (PROMPT_doc9 §2.2) caused the SQL to reference
-    retrieval_bias_vector as a column name inside tenant_embeddings. This test
-    verifies that :bias_vector appears as a bound parameter and that the column
-    name never appears in the query.
-    """
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
     biased_sql, biased_params = spy.calls[2]
@@ -157,11 +136,6 @@ def test_biased_query_uses_bias_vector_parameter() -> None:
 
 
 def test_unbiased_fallback_when_no_bias_row() -> None:
-    """Both None and [] bias values must trigger the unbiased similarity path.
-
-    None means no row exists in retrieval_bias. [] means the stored vector is
-    empty. Both must fall back to cosine similarity without error (§4.2).
-    """
     spy_none = _SpyConn(bias_vector=None)
     get_similar_controls(_FakeSession(), spy_none, _QUERY_VECTOR)
     assert ":bias_vector" not in spy_none.calls[2][0]
@@ -172,7 +146,6 @@ def test_unbiased_fallback_when_no_bias_row() -> None:
 
 
 def test_tenant_context_set_before_query() -> None:
-    """SET LOCAL must be the first SQL call — tenant context before any SELECT."""
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
     first_sql = spy.calls[0][0]
@@ -181,7 +154,6 @@ def test_tenant_context_set_before_query() -> None:
 
 
 def test_none_tenant_raises_tenant_context_missing_error() -> None:
-    """A session that returns None for tenant_id must raise TenantContextMissingError."""
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):
         get_similar_controls(_FakeSession(tenant_id=None), spy, _QUERY_VECTOR)
@@ -189,7 +161,6 @@ def test_none_tenant_raises_tenant_context_missing_error() -> None:
 
 
 def test_empty_tenant_id_raises_tenant_context_missing_error() -> None:
-    """A session that returns an empty string must raise TenantContextMissingError."""
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):
         get_similar_controls(_FakeSession(tenant_id=""), spy, _QUERY_VECTOR)
@@ -197,7 +168,6 @@ def test_empty_tenant_id_raises_tenant_context_missing_error() -> None:
 
 
 def test_non_v4_uuid_raises_tenant_context_missing_error() -> None:
-    """A version-1 UUID must raise TenantContextMissingError — only UUIDv4 accepted."""
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):
         get_similar_controls(_FakeSession(tenant_id=_NON_V4_UUID), spy, _QUERY_VECTOR)
@@ -205,7 +175,6 @@ def test_non_v4_uuid_raises_tenant_context_missing_error() -> None:
 
 
 def test_limit_respected() -> None:
-    """The SQL LIMIT parameter must equal MAX_SIMILAR_CONTROLS_RETURNED."""
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
     biased_params = spy.calls[2][1]
@@ -213,7 +182,6 @@ def test_limit_respected() -> None:
 
 
 def test_bias_injection_coefficient_applied() -> None:
-    """The bias coefficient parameter must equal BIAS_INJECTION_COEFFICIENT, no bare float."""
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
     biased_sql, biased_params = spy.calls[2]
@@ -222,7 +190,6 @@ def test_bias_injection_coefficient_applied() -> None:
 
 
 def test_table_name_is_tenant_embeddings() -> None:
-    """All similarity SELECTs must reference tenant_embeddings, not embeddings."""
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
     for sql, _ in spy.calls:
@@ -233,10 +200,74 @@ def test_table_name_is_tenant_embeddings() -> None:
 
 
 def test_no_sqlalchemy_session_api_called() -> None:
-    """conn.add() and conn.flush() must never be called by the retrieval service.
-
-    _SpyConn.add() and .flush() raise AssertionError if invoked. A clean return
-    from get_similar_controls() proves only the raw-connection API was used.
-    """
     spy = _SpyConn(bias_vector=_BIAS_VECTOR)
     get_similar_controls(_FakeSession(), spy, _QUERY_VECTOR)
+
+
+# ── retrieve_similar_records tests ────────────────────────────────────────────
+
+_FAKE_CONTEXT_ROWS = [
+    ("r1-uuid", "Policy Document", "Body of policy 1", 0.05),
+    ("r2-uuid", "Security Guide", "Body of guide 2", 0.42),
+]
+
+
+def test_context_set_local_before_select() -> None:
+    spy = _ContextSpyConn(rows=_FAKE_CONTEXT_ROWS)
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    assert "SET LOCAL" in spy.calls[0][0]
+    assert all("SET LOCAL" not in call[0] for call in spy.calls[1:])
+
+
+def test_context_query_targets_context_records_table() -> None:
+    spy = _ContextSpyConn()
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    select_calls = [(s, p) for s, p in spy.calls if "context_records" in s]
+    assert len(select_calls) == 1
+
+
+def test_context_query_has_is_deleted_guard() -> None:
+    spy = _ContextSpyConn()
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    select_sql = next(s for s, _ in spy.calls if "context_records" in s)
+    assert "is_deleted = FALSE" in select_sql
+
+
+def test_context_query_has_embedding_not_null_guard() -> None:
+    spy = _ContextSpyConn()
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    select_sql = next(s for s, _ in spy.calls if "context_records" in s)
+    assert "embedding IS NOT NULL" in select_sql
+
+
+def test_context_query_limit_uses_bound_param() -> None:
+    spy = _ContextSpyConn()
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR, limit=3)
+    _, params = next((s, p) for s, p in spy.calls if "context_records" in s)
+    assert params["result_limit"] == 3
+
+
+def test_context_query_default_limit_is_constant() -> None:
+    spy = _ContextSpyConn()
+    retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    _, params = next((s, p) for s, p in spy.calls if "context_records" in s)
+    assert params["result_limit"] == MAX_SIMILAR_RECORDS_RETURNED
+
+
+def test_context_query_returns_dicts_with_correct_keys() -> None:
+    spy = _ContextSpyConn(rows=_FAKE_CONTEXT_ROWS)
+    results = retrieve_similar_records(spy, _TENANT_ID, _QUERY_VECTOR)
+    assert len(results) == 2
+    assert results[0] == {
+        "record_id": "r1-uuid",
+        "title": "Policy Document",
+        "body": "Body of policy 1",
+        "distance": 0.05,
+    }
+
+
+def test_context_query_none_tenant_raises() -> None:
+    spy = _ContextSpyConn()
+    with pytest.raises(TenantContextMissingError):
+        retrieve_similar_records(spy, None, _QUERY_VECTOR)
+    assert len(spy.calls) == 0

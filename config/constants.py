@@ -126,6 +126,11 @@ TENANT_ID_UUID_VERSION: int = 4
 # (PROMPT_doc12_evidence_linking.md §4.3)
 FULL_TEXT_SEARCH_LIMIT: int = 20
 
+# Default row limit for the vector similarity search over context_records
+# (retrieve_similar_records in retrieval_service.py). Matches
+# MAX_SIMILAR_CONTROLS_RETURNED so both retrieval paths return the same depth by default.
+MAX_SIMILAR_RECORDS_RETURNED: int = 5
+
 # Inclusive lower bound for relevance_score on a ControlEvidenceLink row.
 # Evidence linking rejects scores below this value with a ValueError.
 # (PROMPT_doc12_evidence_linking.md §4.1)
