@@ -15,6 +15,10 @@ dependencies = [
     "pydantic>=2.0.0,<3.0.0",
     "python-multipart>=0.0.9",
 
+    # AI mapping engine (KER-105)
+    # EU-native LLM provider — Mistral AI SAS, Paris, France. No CLOUD Act exposure.
+    "mistralai>=2.0.0",
+
     # Authentication
     "PyJWT>=2.8.0",
 

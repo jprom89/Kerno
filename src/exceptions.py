@@ -9,3 +9,13 @@ class TenantContextMissingError(Exception):
 
 class EntryNotFoundError(Exception):
     """Raised when a requested register entry does not exist for the current tenant."""
+
+
+class MappingError(Exception):
+    """Raised when the AI control mapping step fails due to an LLM API error, malformed JSON
+    response, invalid status enum, or an out-of-range confidence score. Never catch silently."""
+
+
+class ConfigurationError(Exception):
+    """Raised when a required runtime configuration value is missing or malformed — for example,
+    an absent LLM API key. Signals a deployment fault, not a per-request error."""
