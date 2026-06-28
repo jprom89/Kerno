@@ -168,6 +168,12 @@ HIGH_CONFIDENCE_THRESHOLD: float = 0.75
 # (PROMPT_doc13_decision_layer.md §4.1 Step 3-4)
 MEDIUM_CONFIDENCE_THRESHOLD: float = 0.40
 
+# Confidence score below which an LLM-generated recommendation is flagged
+# for human review. The mapping service sets requires_review=True when
+# the LLM's returned confidence is strictly less than this value.
+# (KER-105 — mapping_service.py)
+LOW_CONFIDENCE_THRESHOLD: float = 0.5
+
 # Score assigned to evidence records that have no explicit relevance_score.
 # Represents a neutral "present but unscored" signal.
 # (PROMPT_doc13_decision_layer.md §4.1 Step 2)
@@ -177,6 +183,12 @@ DEFAULT_RELEVANCE_SCORE: float = 0.5
 # Recommendation row. Prevents unbounded text in the persisted record.
 # (PROMPT_doc13_decision_layer.md §4.1 Step 6)
 MAX_RATIONALE_LENGTH: int = 1000
+
+# Maximum word count the mapping prompt instructs the LLM to use for
+# its reasoning field. Not a hard DB constraint — enforced at the
+# prompt layer only, so the LLM is guided but not truncated server-side.
+# (KER-105 — mapping_service.py)
+MAX_REASONING_WORDS: int = 400
 
 # ---------------------------------------------------------------------------
 # DORA RoI Export + Validation (Document 15 / KER-106 part 2)
