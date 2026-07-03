@@ -276,6 +276,14 @@ what the story specifies — no more, no less.
   embedded panel surface itself). Jira iframe token hand-off deferred
   post-Sprint 1. reviewer_role and reviewer_id are user-provided pending
   per-user JWT claims.
+- KER-109 — ✅ Done. Coverage summary + drill-down. Override-wins resolution
+  matrix. WCAG AA. Links to KER-108 panel per control. Implemented as
+  src/services/coverage_service.py, src/api/routers/coverage.py,
+  src/api/schemas/coverage.py, src/dashboard/coverage.html, and
+  src/dashboard/js/coverage.js. Numbering note: the active sprint backlog
+  labels the control-coverage dashboard KER-109; the table's KER-109 row
+  ("Trust Center status display", src/api/trust_center.py) is the external
+  Trust Center surface and remains open.
 
 ---
 
