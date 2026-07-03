@@ -292,6 +292,13 @@ what the story specifies — no more, no less.
   note: the active sprint backlog labels remediation routing KER-110; the
   table's KER-110 row ("Webhook ingestion endpoint", src/api/webhooks.py) is
   the generic ingestion surface and remains open.
+- KER-111 — ✅ Done. Deterministic JSON evidence pack export per control family.
+  Covers system-of-record statuses, evidence refs, human decisions, and KER-107
+  audit extract. Generation recorded in ledger. Validates against EvidencePack
+  Pydantic schema. Migrations 017 still unapplied to dev DB. Implemented as
+  src/services/export_service.py, src/api/schemas/export.py, and
+  src/api/routers/export.py — matching the table's KER-111 row
+  (src/services/export_service.py).
 
 ---
 
