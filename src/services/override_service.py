@@ -6,7 +6,8 @@ When a compliance engineer tells Kerno that the AI got a control mapping wrong,
 two things must happen in the same database transaction:
 
   1. The override itself is saved (what the human decided, and their confidence weight).
-  2. An immutable audit log entry is written (who did it, when, and what changed).
+  2. An immutable, hash-chained audit ledger entry is appended via
+     src/services/audit_log.py (who did it, when, and what changed — KER-107).
 
 Both writes go into the same transaction so they are always consistent: if the
 database rejects the override record, the audit entry is also rolled back, and
@@ -32,8 +33,8 @@ Unit tests (no database required):
 
     pytest tests/unit/services/test_override_service.py -v
 
-The test suite has 10 cases covering valid overrides, invalid inputs, tenant
-isolation enforcement, reviewer weighting, and audit log creation.
+The test suite covers valid overrides, invalid inputs, tenant isolation
+enforcement, reviewer weighting, and hash-chained audit ledger creation.
 """
 
 from __future__ import annotations
@@ -42,9 +43,9 @@ import dataclasses
 import uuid
 
 from config.constants import JUNIOR_REVIEWER_WEIGHT, SENIOR_REVIEWER_WEIGHT
-from src.models.audit_log import AuditLog
 from src.models.override import Override
 from src.services.anonymisation import anonymise
+from src.services.audit_log import append_audit_entry
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 # Reviewer roles that carry full (senior) confidence weight.
@@ -92,8 +93,7 @@ def capture_override(session, conn, override_input: OverrideInput) -> Override:
         {"id": str(override.override_id)},
     ).fetchone()
     override.created_at = row[0]
-    audit_entry = _build_audit_log_entry(override)
-    _persist_audit_log_entry(conn, audit_entry)
+    _record_override_audit_entry(conn, override)
     return override
 
 
@@ -163,23 +163,30 @@ def _build_override_record(
     )
 
 
-def _build_audit_log_entry(override: Override) -> AuditLog:
-    """Construct an AuditLog entry from a fully-built override record.
+def _record_override_audit_entry(conn, override: Override) -> None:
+    """Append the override's entry to the tamper-evident audit ledger (KER-107).
 
-    All fields are copied from the override so the audit log is self-contained
-    and readable without joining to the overrides table. Generates the audit
-    log's own id in Python to remain consistent with the raw-SQL persist approach.
+    Runs on the same connection and transaction as the override INSERT, so the
+    override row and its ledger entry commit or roll back together. Overrides
+    carry no stored pre-decision snapshot, so the minimal before/after
+    representation is: before_state = the control the AI recommended,
+    after_state = the control the reviewer decided on (unchanged for approve)
+    plus their already-anonymised justification text.
     """
-    return AuditLog(
-        id=uuid.uuid4(),
-        override_id=override.override_id,
-        tenant_id=override.tenant_id,
-        reviewer_id=override.reviewer_id,
-        reviewer_role=override.reviewer_role,
+    append_audit_entry(
+        conn,
+        override.tenant_id,
+        actor_id=override.reviewer_id,
+        actor_role=override.reviewer_role,
         action_type=override.action_type,
-        original_control_id=override.original_control_id,
-        corrected_control_id=override.corrected_control_id,
-        justification_text=override.justification_text,
+        object_type="override",
+        object_id=str(override.override_id),
+        control_id=override.original_control_id,
+        before_state={"control_id": override.original_control_id},
+        after_state={
+            "control_id": override.corrected_control_id or override.original_control_id,
+            "justification_text": override.justification_text,
+        },
     )
 
 
@@ -216,31 +223,3 @@ def _persist_override(conn, override: Override) -> None:
     )
 
 
-def _persist_audit_log_entry(conn, audit_entry: AuditLog) -> None:
-    """Write the audit log entry to the database using a parameterised INSERT.
-
-    Uses ``conn.execute(sql, params)`` directly — not a SQLAlchemy Session — to
-    stay consistent with the raw-connection contract used throughout this
-    codebase.
-    """
-    conn.execute(
-        """
-        INSERT INTO audit_log
-            (id, override_id, tenant_id, reviewer_id, reviewer_role, action_type,
-             original_control_id, corrected_control_id, justification_text)
-        VALUES
-            (:id, :override_id, :tenant_id, :reviewer_id, :reviewer_role, :action_type,
-             :original_control_id, :corrected_control_id, :justification_text)
-        """,
-        {
-            "id": str(audit_entry.id),
-            "override_id": str(audit_entry.override_id),
-            "tenant_id": str(audit_entry.tenant_id),
-            "reviewer_id": str(audit_entry.reviewer_id),
-            "reviewer_role": audit_entry.reviewer_role,
-            "action_type": audit_entry.action_type,
-            "original_control_id": audit_entry.original_control_id,
-            "corrected_control_id": audit_entry.corrected_control_id,
-            "justification_text": audit_entry.justification_text,
-        },
-    )

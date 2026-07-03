@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control Review — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <!-- Embedded surface (KER-108): no sidebar chrome — this page is designed to
+       render inside a host-tool iframe (e.g. a Jira issue side-panel). -->
+  <main style="flex:1; padding:16px; max-width:560px; margin:0 auto;">
+    <div class="page-header flex items-center justify-between">
+      <div>
+        <div class="text-muted text-sm" id="issue-context" style="min-height:16px;"></div>
+        <h1 class="page-title" id="control-title" style="font-size:16px; margin-top:2px;">Control review</h1>
+      </div>
+      <div id="status-badge"></div>
+    </div>
+
+    <div id="error-msg" class="alert alert-error hidden"></div>
+    <div id="success-msg" class="alert alert-success hidden"></div>
+
+    <div class="card" id="recommendation-card">
+      <dl class="detail-grid">
+        <dt class="detail-label">Control</dt>        <dd class="detail-value" id="control-id"></dd>
+        <dt class="detail-label">Status</dt>         <dd class="detail-value" id="rec-status"></dd>
+        <dt class="detail-label">Confidence</dt>     <dd class="detail-value" id="rec-confidence"></dd>
+        <dt class="detail-label">Needs review</dt>   <dd class="detail-value" id="rec-review"></dd>
+        <dt class="detail-label">Generated</dt>      <dd class="detail-value" id="rec-generated"></dd>
+        <dt class="detail-label">Rationale</dt>      <dd class="detail-value" id="rec-rationale"></dd>
+        <dt class="detail-label">Gaps</dt>           <dd class="detail-value" id="rec-gaps"></dd>
+      </dl>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="detail-label" style="margin-bottom:8px;">Linked evidence</div>
+      <ul id="evidence-list" style="list-style:none; padding:0; margin:0;"></ul>
+      <div class="text-muted text-sm hidden" id="evidence-empty">No evidence linked to this control.</div>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="detail-label" style="margin-bottom:8px;">Your decision</div>
+      <div class="flex gap-2" style="margin-bottom:12px;">
+        <button class="btn btn-secondary" data-override-action="approve">Approve</button>
+        <button class="btn btn-secondary" data-override-action="edit">Edit</button>
+        <button class="btn btn-secondary" data-override-action="reject">Reject</button>
+      </div>
+      <div class="form-group">
+        <label for="reviewer-role">Your role</label>
+        <select id="reviewer-role">
+          <option value="vciso">vCISO</option>
+          <option value="fciso">fCISO</option>
+          <option value="internal_admin">Internal admin</option>
+        </select>
+      </div>
+      <div class="form-group hidden" id="corrected-group">
+        <label for="corrected-control">Corrected control ID</label>
+        <input type="text" id="corrected-control" placeholder="e.g. NIS2-4.3">
+      </div>
+      <div class="form-group">
+        <label for="justification">Justification (optional — internal identifiers are anonymised)</label>
+        <textarea id="justification" rows="3"></textarea>
+      </div>
+      <button class="btn btn-primary" id="submit-override" disabled>Submit decision</button>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/panel.js"></script>
+</body>
+</html>

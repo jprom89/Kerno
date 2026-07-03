@@ -1,40 +1,24 @@
-"""Unit tests for src/services/override_service.py.
+"""Unit tests for src/services/override_service.py — capture_override and its validation.
 
-Plain-English summary
----------------------
-These tests verify the override capture service without a live database. Every
-test uses a spy connection that records the raw SQL execute() calls the service
-issues, allowing assertions about the order of those calls, the parameters
-passed, and the absence of SQLAlchemy Session API calls (add(), flush()) that
-would indicate the wrong connection contract.
-
-Fourteen tests cover: justification text handling (null, email, hostname,
-dual-write to both tables), connection contract correctness, SET LOCAL
-ordering, audit log correctness, created_at read-back, reviewer weight
-assignment, input validation, tenant isolation, and the conftest
-named-parameter regex.
-
-How to run
-----------
-    pytest tests/unit/services/test_override_service.py -v
+Fifteen tests cover justification anonymisation, the raw-connection contract, SET LOCAL
+ordering, hash-chained audit ledger linkage, created_at read-back, reviewer weighting,
+input validation, tenant isolation, and the conftest named-parameter regex.
+Spy connections record every execute() call; no database is required.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 
-from config.constants import JUNIOR_REVIEWER_WEIGHT, SENIOR_REVIEWER_WEIGHT
+from config.constants import AUDIT_GENESIS_HASH, JUNIOR_REVIEWER_WEIGHT, SENIOR_REVIEWER_WEIGHT
 from src.exceptions import TenantContextMissingError
 from src.services.override_service import OverrideInput, capture_override
 
-# A deterministic UUIDv4 for the test tenant — fixed so test failure messages
-# are readable ("tenant c000..." rather than a random UUID).
 _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
-
-# A deterministic UUIDv4 for the test reviewer — fixed for the same reason.
 _REVIEWER_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")
 
 # The server-generated created_at the spy returns for the read-back SELECT.
@@ -45,73 +29,46 @@ _CREATED_AT = datetime(2025, 6, 1, tzinfo=timezone.utc)
 
 
 class _NullResult:
-    """Simulates the return value of a non-SELECT execute call (e.g. INSERT).
-
-    The application services call fetchall() or fetchone() on the result of
-    conn.execute(). For INSERT statements, these must return empty/None rather
-    than raising an exception — this class satisfies that contract.
-    """
+    def fetchone(self):
+        return None
 
     def fetchall(self) -> list:
-        """Return an empty list, as a non-SELECT result has no rows."""
         return []
-
-    def fetchone(self):
-        """Return None, as a non-SELECT result has no next row."""
-        return None
 
 
 class _CreatedAtResult:
-    """Simulates the created_at read-back SELECT — fetchone() returns one (timestamp,) row."""
+    def fetchone(self):
+        return (_CREATED_AT,)
 
     def fetchall(self) -> list:
-        """Return the single timestamp row."""
         return [(_CREATED_AT,)]
-
-    def fetchone(self):
-        """Return the server-generated created_at as a one-column row."""
-        return (_CREATED_AT,)
 
 
 class _SpyConn:
-    """Records every execute() call and raises on SQLAlchemy Session API usage.
-
-    The override service must use ``conn.execute(sql, params)`` — the raw
-    connection contract. If it accidentally calls ``conn.add()`` or
-    ``conn.flush()`` (SQLAlchemy Session API), those methods raise
-    AssertionError so the test fails with a clear message rather than a
-    silent wrong-API call.
-
-    Inspect ``self.calls`` after capture_override() to assert on SQL order
-    and parameters. Each entry is a (sql, params) tuple in call order.
-    """
+    """Records execute() calls; raises on SQLAlchemy Session API usage (add/flush)."""
 
     def __init__(self) -> None:
-        """Initialise with an empty call log."""
         self.calls: list[tuple[str, object]] = []
 
     def execute(self, sql: str, params=None):
-        """Append (sql, params) to the call log; return the timestamp row for the read-back SELECT."""
         self.calls.append((sql, params))
         if "SELECT created_at" in sql:
             return _CreatedAtResult()
         return _NullResult()
 
     def commit(self) -> None:
-        """No-op — unit tests do not need real transaction control."""
+        pass
 
     def rollback(self) -> None:
-        """No-op — unit tests do not need real transaction control."""
+        pass
 
     def add(self, *args, **kwargs) -> None:
-        """Raise to detect incorrect SQLAlchemy Session API usage."""
         raise AssertionError(
             "conn.add() was called. The override service must use "
             "conn.execute(sql, params) — not the SQLAlchemy Session API."
         )
 
     def flush(self, *args, **kwargs) -> None:
-        """Raise to detect incorrect SQLAlchemy Session API usage."""
         raise AssertionError(
             "conn.flush() was called. The override service must use "
             "conn.execute(sql, params) — not the SQLAlchemy Session API."
@@ -119,29 +76,14 @@ class _SpyConn:
 
 
 class _FakeSession:
-    """Minimal session that supplies a fixed tenant UUID to the service layer.
-
-    ``resolve_and_set_tenant_context()`` in ``tenant_context.py`` reads the
-    tenant identity by calling ``session.resolve_tenant_id()``. This class
-    implements exactly that interface with a deterministic value so tests are
-    reproducible.
-    """
-
     def __init__(self, tenant_id: uuid.UUID = _TENANT_ID) -> None:
-        """Store the tenant UUID that resolve_tenant_id() will return."""
         self._tenant_id = tenant_id
 
     def resolve_tenant_id(self) -> uuid.UUID:
-        """Return the fixed test tenant UUID."""
         return self._tenant_id
 
 
 def _make_input(**kwargs) -> OverrideInput:
-    """Build an OverrideInput with sensible defaults; override any field via kwargs.
-
-    Defaults produce a valid 'approve' override with no justification text.
-    Pass keyword arguments to override any field for a specific test scenario.
-    """
     defaults: dict = {
         "reviewer_id": _REVIEWER_ID,
         "reviewer_role": "vciso",
@@ -154,11 +96,14 @@ def _make_input(**kwargs) -> OverrideInput:
     return OverrideInput(**defaults)
 
 
+def _audit_insert_params(spy: _SpyConn) -> dict:
+    return next(p for s, p in spy.calls if "INSERT INTO audit_log" in s)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
 def test_null_justification_text_stored_as_none() -> None:
-    """justification_text=None must reach the overrides table as NULL, not empty string."""
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input(justification_text=None))
     override_params = spy.calls[1][1]
@@ -166,7 +111,6 @@ def test_null_justification_text_stored_as_none() -> None:
 
 
 def test_email_in_justification_text_is_anonymised() -> None:
-    """An email address in justification_text must be replaced with [INTERNAL_EMAIL]."""
     spy = _SpyConn()
     capture_override(
         _FakeSession(),
@@ -179,7 +123,6 @@ def test_email_in_justification_text_is_anonymised() -> None:
 
 
 def test_internal_hostname_in_justification_text_is_anonymised() -> None:
-    """An internal hostname in justification_text must be replaced with [INTERNAL_HOST]."""
     spy = _SpyConn()
     capture_override(
         _FakeSession(),
@@ -192,7 +135,6 @@ def test_internal_hostname_in_justification_text_is_anonymised() -> None:
 
 
 def test_anonymised_value_appears_in_both_override_and_audit_log() -> None:
-    """The anonymised text must be stored identically in both the override and audit log rows."""
     spy = _SpyConn()
     capture_override(
         _FakeSession(),
@@ -200,23 +142,17 @@ def test_anonymised_value_appears_in_both_override_and_audit_log() -> None:
         _make_input(justification_text="Contact admin@kerno.io for details"),
     )
     override_params = spy.calls[1][1]
-    audit_params = spy.calls[3][1]
+    audit_after_state = json.loads(_audit_insert_params(spy)["after_state"])
     assert "[INTERNAL_EMAIL]" in override_params["justification_text"]
-    assert audit_params["justification_text"] == override_params["justification_text"]
+    assert audit_after_state["justification_text"] == override_params["justification_text"]
 
 
 def test_no_sqlalchemy_session_api_called() -> None:
-    """conn.add() and conn.flush() must never be called during override capture.
-
-    _SpyConn.add() and .flush() raise AssertionError if invoked, so a clean
-    return from capture_override() proves the SQLAlchemy Session API was not used.
-    """
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input())
 
 
 def test_set_local_fires_before_insert_override() -> None:
-    """SET LOCAL must be the very first SQL call — tenant context before any write."""
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input())
     first_sql, _ = spy.calls[0]
@@ -224,16 +160,24 @@ def test_set_local_fires_before_insert_override() -> None:
 
 
 def test_audit_log_references_correct_override_id() -> None:
-    """The override_id in the audit log INSERT must match the override_id in the overrides INSERT."""
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input())
     override_params = spy.calls[1][1]
-    audit_params = spy.calls[3][1]
-    assert audit_params["override_id"] == override_params["override_id"]
+    audit_params = _audit_insert_params(spy)
+    assert audit_params["object_id"] == override_params["override_id"]
+    assert audit_params["object_type"] == "override"
+
+
+def test_override_audit_entry_is_hash_chained() -> None:
+    spy = _SpyConn()
+    capture_override(_FakeSession(), spy, _make_input())
+    audit_params = _audit_insert_params(spy)
+    assert audit_params["previous_hash"] == AUDIT_GENESIS_HASH
+    assert audit_params["entry_hash"] != AUDIT_GENESIS_HASH
+    assert len(audit_params["entry_hash"]) == len(AUDIT_GENESIS_HASH)
 
 
 def test_created_at_is_read_back_from_database() -> None:
-    """capture_override must read the server-generated created_at back onto the returned record."""
     spy = _SpyConn()
     override = capture_override(_FakeSession(), spy, _make_input())
     assert override.created_at == _CREATED_AT
@@ -243,7 +187,6 @@ def test_created_at_is_read_back_from_database() -> None:
 
 
 def test_vciso_gets_senior_confidence_weight() -> None:
-    """A vciso reviewer must be assigned SENIOR_REVIEWER_WEIGHT."""
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input(reviewer_role="vciso"))
     override_params = spy.calls[1][1]
@@ -251,7 +194,6 @@ def test_vciso_gets_senior_confidence_weight() -> None:
 
 
 def test_internal_admin_gets_junior_confidence_weight() -> None:
-    """An internal_admin reviewer must be assigned JUNIOR_REVIEWER_WEIGHT."""
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input(reviewer_role="internal_admin"))
     override_params = spy.calls[1][1]
@@ -259,7 +201,6 @@ def test_internal_admin_gets_junior_confidence_weight() -> None:
 
 
 def test_invalid_action_type_raises_value_error() -> None:
-    """An unrecognised action_type must raise ValueError before any SQL is issued."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="action_type"):
         capture_override(_FakeSession(), spy, _make_input(action_type="approve_all"))
@@ -267,7 +208,6 @@ def test_invalid_action_type_raises_value_error() -> None:
 
 
 def test_edit_without_corrected_control_id_raises_value_error() -> None:
-    """action_type='edit' with no corrected_control_id must raise ValueError before any SQL."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="corrected_control_id"):
         capture_override(
@@ -279,7 +219,6 @@ def test_edit_without_corrected_control_id_raises_value_error() -> None:
 
 
 def test_none_session_raises_tenant_context_missing_error() -> None:
-    """A None session must raise TenantContextMissingError before any SQL is issued."""
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):
         capture_override(None, spy, _make_input())
@@ -287,13 +226,7 @@ def test_none_session_raises_tenant_context_missing_error() -> None:
 
 
 def test_named_param_regex_does_not_match_postgresql_type_casts() -> None:
-    """The conftest :name regex must not match the second colon in ::typename casts.
-
-    PostgreSQL uses ::typename syntax for explicit type casts (e.g. ::uuid,
-    ::timestamptz). Without a negative lookbehind, the regex would treat the
-    type name as a named parameter. This test imports the compiled pattern from
-    conftest and verifies it only matches genuine :name placeholders.
-    """
+    # PostgreSQL ::typename casts must not be mistaken for :name parameters.
     from tests.conftest import _NAMED_PARAM_RE
 
     sql = "WHERE tenant_id = :tenant_id AND ts > '1970-01-01'::timestamptz"

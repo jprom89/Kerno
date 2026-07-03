@@ -262,6 +262,44 @@ what the story specifies — no more, no less.
 | KER-113 | Cross-tenant isolation test | Yes | tests/security/test_tenant_isolation.py |
 | KER-114 | Nightly weight recalculation stub | Should | src/services/bias_recalculation_service.py, src/scheduler/nightly_bias_recalculation.py |
 
+### Sprint 1 status notes (updated 2026-07-03)
+
+- KER-107 — ✅ Done. Delivered as the tamper-evident, hash-chained, append-only
+  audit ledger (src/services/audit_log.py, migration 016, PR #1). Numbering
+  note: the active sprint backlog labels the audit ledger KER-107; in the table
+  above that scope corresponds to the KER-112 row ("Audit log write", now
+  implemented by the ledger), while the table's KER-107 row ("Anonymisation
+  pipeline") also shipped earlier in src/services/anonymisation.py.
+- KER-108 — ✅ Done (MVP). Implemented as src/api/routers/panel.py,
+  src/api/schemas/panel.py, src/dashboard/panel.html, and
+  src/dashboard/js/panel.js (src/integrations/jira.py deferred — the MVP is the
+  embedded panel surface itself). Jira iframe token hand-off deferred
+  post-Sprint 1. reviewer_role and reviewer_id are user-provided pending
+  per-user JWT claims.
+- KER-109 — ✅ Done. Coverage summary + drill-down. Override-wins resolution
+  matrix. WCAG AA. Links to KER-108 panel per control. Implemented as
+  src/services/coverage_service.py, src/api/routers/coverage.py,
+  src/api/schemas/coverage.py, src/dashboard/coverage.html, and
+  src/dashboard/js/coverage.js. Numbering note: the active sprint backlog
+  labels the control-coverage dashboard KER-109; the table's KER-109 row
+  ("Trust Center status display", src/api/trust_center.py) is the external
+  Trust Center surface and remains open.
+- KER-110 — ✅ Done. Remediation routing: gap → Jira task with SLA due date and
+  assignee. Closure → re_review_flagged_at. Both actions in KER-107 audit
+  ledger. Migration 017 unapplied to dev DB — run alembic upgrade head before
+  integration tests. Implemented as src/services/remediation_service.py,
+  src/services/jira_client.py, and src/api/routers/remediation.py. Numbering
+  note: the active sprint backlog labels remediation routing KER-110; the
+  table's KER-110 row ("Webhook ingestion endpoint", src/api/webhooks.py) is
+  the generic ingestion surface and remains open.
+- KER-111 — ✅ Done. Deterministic JSON evidence pack export per control family.
+  Covers system-of-record statuses, evidence refs, human decisions, and KER-107
+  audit extract. Generation recorded in ledger. Validates against EvidencePack
+  Pydantic schema. Migrations 017 still unapplied to dev DB. Implemented as
+  src/services/export_service.py, src/api/schemas/export.py, and
+  src/api/routers/export.py — matching the table's KER-111 row
+  (src/services/export_service.py).
+
 ---
 
 ## §9 — GTM Correction (Pitch Material Alignment)

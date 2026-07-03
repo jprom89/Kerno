@@ -221,6 +221,25 @@ VALIDATION_SEVERITY_WARN: str = "warn"
 VALIDATION_SEVERITY_FAIL: str = "fail"
 
 # ---------------------------------------------------------------------------
+# Remediation routing (KER-110)
+# ---------------------------------------------------------------------------
+
+# Default SLA for remediation tasks, in days, used when seeding a tenant's
+# default routing rule. Per-tenant rules override this via their sla_days
+# column; the value here only feeds the dev seed script.
+DEFAULT_REMEDIATION_SLA_DAYS: int = 14
+
+# ---------------------------------------------------------------------------
+# Tamper-evident audit ledger (KER-107)
+# ---------------------------------------------------------------------------
+
+# The previous_hash value for the first entry in a tenant's audit chain.
+# 64 hex zeros — the width of a SHA-256 hex digest — so every entry's
+# previous_hash column has a uniform format and the chain has an unambiguous,
+# publicly known starting point that an external auditor can verify.
+AUDIT_GENESIS_HASH: str = "0" * 64
+
+# ---------------------------------------------------------------------------
 # Authentication — password hashing and JWT issuance (Document 19 / KER-103)
 # ---------------------------------------------------------------------------
 

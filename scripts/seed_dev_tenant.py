@@ -14,11 +14,13 @@ except ImportError:
 
 import psycopg2
 
+from config.constants import DEFAULT_REMEDIATION_SLA_DAYS
 from src.services.auth_service import hash_password
 
 _DEV_EMAIL = "admin@kerno.local"
 _DEV_PASSWORD = "changeme123"
 _DEV_DISPLAY_NAME = "Dev Tenant"
+_DEV_JIRA_ASSIGNEE = "dev-jira-account-id"
 
 _UPSERT_TENANT = """
 INSERT INTO tenants (display_name, email, password_hash, is_active)
@@ -28,9 +30,27 @@ ON CONFLICT (email) DO UPDATE
       is_active     = true
 """
 
+# Default remediation routing rule (KER-110): NULL category = applies to every
+# category without a specific rule. Idempotent — skipped if a default exists.
+_SEED_DEFAULT_ROUTING_RULE = """
+INSERT INTO remediation_routing_rules
+    (tenant_id, control_category, assignee_jira_account_id, sla_days)
+SELECT t.tenant_id, NULL, %s, %s
+FROM tenants t
+WHERE t.email = %s
+AND NOT EXISTS (
+    SELECT 1 FROM remediation_routing_rules r
+    WHERE r.tenant_id = t.tenant_id AND r.control_category IS NULL
+)
+"""
+
 
 def main() -> None:
-    """Hash the dev password, connect to DATABASE_URL, and upsert the dev tenant row."""
+    """Hash the dev password, connect to DATABASE_URL, and upsert the dev tenant row.
+
+    Also seeds the tenant's default remediation routing rule (KER-110) so the
+    remediation trigger works out of the box on a fresh dev database.
+    """
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         print(
@@ -45,7 +65,15 @@ def main() -> None:
         with conn:
             cursor = conn.cursor()
             cursor.execute(_UPSERT_TENANT, (_DEV_DISPLAY_NAME, _DEV_EMAIL, password_hash))
+            cursor.execute(
+                _SEED_DEFAULT_ROUTING_RULE,
+                (_DEV_JIRA_ASSIGNEE, DEFAULT_REMEDIATION_SLA_DAYS, _DEV_EMAIL),
+            )
         print(f"Dev tenant seeded — email: {_DEV_EMAIL}  password: {_DEV_PASSWORD}")
+        print(
+            f"Default remediation routing rule ensured — assignee: {_DEV_JIRA_ASSIGNEE}, "
+            f"SLA: {DEFAULT_REMEDIATION_SLA_DAYS} days"
+        )
     finally:
         conn.close()
 

@@ -305,12 +305,21 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     Child tables must be deleted before the parent tenants table to satisfy
     the foreign key constraints. Each DELETE is scoped to both test tenant IDs
     so only rows owned by this fixture are removed.
+
+    audit_log is append-only (KER-107): its trigger must be disabled for the
+    cleanup DELETE and re-enabled immediately after. Both ALTERs run inside the
+    caller's transaction, so a failed teardown rolls back to trigger-enabled.
     """
-    for table in ("audit_log", "overrides", "retrieval_bias", "tenant_embeddings"):
+    conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
+    for table in (
+        "audit_log", "overrides", "retrieval_bias", "tenant_embeddings",
+        "remediation_tasks", "remediation_routing_rules",
+    ):
         conn.execute(
             f"DELETE FROM {table} WHERE tenant_id IN (%s, %s)",
             [str(TENANT_A_ID), str(TENANT_B_ID)],
         )
+    conn.execute("ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only")
     conn.execute(
         "DELETE FROM tenants WHERE tenant_id IN (%s, %s)",
         [str(TENANT_A_ID), str(TENANT_B_ID)],

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control Coverage — Kerno</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="sidebar-logo">Kerno<span>.</span></div>
+    <div class="nav-section">Compliance</div>
+    <ul class="nav-links">
+      <li><a href="/dashboard/index.html"><span class="icon">⊞</span> Dashboard</a></li>
+      <li><a href="/dashboard/coverage.html"><span class="icon">◔</span> Coverage</a></li>
+      <li><a href="/dashboard/register.html"><span class="icon">☰</span> Register</a></li>
+      <li><a href="/dashboard/windows.html"><span class="icon">◷</span> Submission Windows</a></li>
+      <li><a href="/dashboard/submissions.html"><span class="icon">✓</span> Submission History</a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button class="logout-btn" data-action="logout">Sign out</button>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="page-header">
+      <h1 class="page-title">Control coverage</h1>
+      <p class="page-subtitle">System-of-record status — human decisions win over AI recommendations</p>
+    </div>
+
+    <div id="error-msg" class="alert alert-error hidden"></div>
+
+    <!-- Summary tier: status tiles are buttons (keyboard-focusable) that filter
+         the controls table. Status is conveyed by icon + label text, never colour alone. -->
+    <div class="card-grid" role="group" aria-label="Coverage by status — press a tile to filter the control list">
+      <button class="stat-card" data-status-filter="met" aria-pressed="false" style="text-align:left; cursor:pointer;">
+        <div class="stat-label">✓ Met</div>
+        <div class="stat-value" id="met-count">—</div>
+        <div class="stat-note" id="met-pct"></div>
+      </button>
+      <button class="stat-card" data-status-filter="partial" aria-pressed="false" style="text-align:left; cursor:pointer;">
+        <div class="stat-label">◐ Partial</div>
+        <div class="stat-value" id="partial-count">—</div>
+        <div class="stat-note" id="partial-pct"></div>
+      </button>
+      <button class="stat-card" data-status-filter="gap" aria-pressed="false" style="text-align:left; cursor:pointer;">
+        <div class="stat-label">✗ Gap</div>
+        <div class="stat-value" id="gap-count">—</div>
+        <div class="stat-note" id="gap-pct"></div>
+      </button>
+    </div>
+
+    <!-- Category tier -->
+    <div class="card" style="margin-top:16px;">
+      <div class="stat-label mb-4">Coverage by category</div>
+      <div class="table-wrap">
+        <table aria-label="Coverage by control category">
+          <thead>
+            <tr><th>Category</th><th>✓ Met</th><th>◐ Partial</th><th>✗ Gap</th><th>Total</th></tr>
+          </thead>
+          <tbody id="categories-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Drill-down tier -->
+    <div class="card" style="margin-top:16px;">
+      <div class="flex items-center justify-between mb-4">
+        <div class="stat-label" id="controls-heading">All controls</div>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary hidden" id="export-pack">Export evidence pack</button>
+          <button class="btn btn-secondary hidden" id="clear-filters">Show all</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table aria-label="Controls with system-of-record status">
+          <thead>
+            <tr><th>Control</th><th>Title</th><th>Status</th><th>Decided by</th><th>Confidence</th><th>Evidence</th></tr>
+          </thead>
+          <tbody id="controls-tbody"></tbody>
+        </table>
+      </div>
+      <div class="text-muted text-sm hidden" id="controls-empty">No controls match the current filter.</div>
+    </div>
+  </main>
+
+  <script type="module" src="./js/auth.js"></script>
+  <script type="module" src="./js/coverage.js"></script>
+</body>
+</html>

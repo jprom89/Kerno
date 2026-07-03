@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.api.routers import overrides, register, submissions
+from src.api.routers import coverage, export, overrides, panel, register, remediation, submissions
 from src.api.routers import auth as auth_router
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
 
@@ -41,6 +41,10 @@ def create_app() -> FastAPI:
     app.include_router(register.router, prefix="/api/v1/register", tags=["register"])
     app.include_router(submissions.router, prefix="/api/v1/submissions", tags=["submissions"])
     app.include_router(overrides.router, prefix="/api/v1", tags=["overrides"])
+    app.include_router(panel.router, prefix="/api/v1/panel", tags=["panel"])
+    app.include_router(coverage.router, prefix="/api/v1/coverage", tags=["coverage"])
+    app.include_router(remediation.router, prefix="/api/v1/remediation", tags=["remediation"])
+    app.include_router(export.router, prefix="/api/v1/export", tags=["export"])
 
     @app.get("/", include_in_schema=False)
     def root():
