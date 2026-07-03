@@ -62,17 +62,30 @@ def _insert_record(conn, record_id: str, tenant_id: uuid.UUID, title: str, vec: 
 
 @pytest.fixture
 def ker104_rows(db_connection, tenant_a_id, tenant_b_id):
-    """Seed Tenant A (near/mid/far) and Tenant B (b) context rows with known embeddings."""
+    """Seed Tenant A (near/mid/far) and Tenant B (b) context rows with known embeddings.
+
+    FORCE RLS (migration 018): even the owner role obeys the tenant policy on
+    context_records, so each tenant's rows are inserted and deleted under that
+    tenant's context.
+    """
+    db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
     _insert_record(db_connection, _RECORD_A_NEAR, tenant_a_id, "near record", _VEC_NEAR)
     _insert_record(db_connection, _RECORD_A_MID, tenant_a_id, "mid record", _VEC_MID)
     _insert_record(db_connection, _RECORD_A_FAR, tenant_a_id, "far record", _VEC_FAR)
+    db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_b_id)])
     _insert_record(db_connection, _RECORD_B, tenant_b_id, "tenant b record", _VEC_B)
 
     yield
 
+    db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
     db_connection.execute(
-        "DELETE FROM context_records WHERE record_id IN (%s, %s, %s, %s)",
-        [_RECORD_A_NEAR, _RECORD_A_MID, _RECORD_A_FAR, _RECORD_B],
+        "DELETE FROM context_records WHERE record_id IN (%s, %s, %s)",
+        [_RECORD_A_NEAR, _RECORD_A_MID, _RECORD_A_FAR],
+    )
+    db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_b_id)])
+    db_connection.execute(
+        "DELETE FROM context_records WHERE record_id = %s",
+        [_RECORD_B],
     )
     db_connection.commit()
 

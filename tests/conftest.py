@@ -260,15 +260,23 @@ def _seed_integration_data(conn: _DbConnection) -> None:
             str(TENANT_B_ID), "Integration Test Tenant B",
         ],
     )
+    # FORCE RLS (migration 018): even the table-owner role obeys the tenant
+    # policies, so each tenant's rows must be inserted under that tenant's context.
+    conn.execute("SET LOCAL app.current_tenant_id = %s", [str(TENANT_A_ID)])
     conn.execute(
         """
         INSERT INTO tenant_embeddings (tenant_id, control_id, embedding)
-        VALUES (%s, %s, %s::vector), (%s, %s, %s::vector)
+        VALUES (%s, %s, %s::vector)
         """,
-        [
-            str(TENANT_A_ID), "tenant_a_control_001", _format_vector(_TENANT_A_EMBEDDING),
-            str(TENANT_B_ID), "tenant_b_control_001", _format_vector(_TENANT_B_EMBEDDING),
-        ],
+        [str(TENANT_A_ID), "tenant_a_control_001", _format_vector(_TENANT_A_EMBEDDING)],
+    )
+    conn.execute("SET LOCAL app.current_tenant_id = %s", [str(TENANT_B_ID)])
+    conn.execute(
+        """
+        INSERT INTO tenant_embeddings (tenant_id, control_id, embedding)
+        VALUES (%s, %s, %s::vector)
+        """,
+        [str(TENANT_B_ID), "tenant_b_control_001", _format_vector(_TENANT_B_EMBEDDING)],
     )
     _seed_tenant_b_supplemental(conn)
 
@@ -280,6 +288,7 @@ def _seed_tenant_b_supplemental(conn: _DbConnection) -> None:
     Tenant A's queries must not return either of these rows even though they
     exist in the database. Called by ``_seed_integration_data``.
     """
+    conn.execute("SET LOCAL app.current_tenant_id = %s", [str(TENANT_B_ID)])
     conn.execute(
         """
         INSERT INTO overrides
@@ -309,16 +318,22 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     audit_log is append-only (KER-107): its trigger must be disabled for the
     cleanup DELETE and re-enabled immediately after. Both ALTERs run inside the
     caller's transaction, so a failed teardown rolls back to trigger-enabled.
+
+    FORCE RLS (migration 018) means even the owner role only sees one tenant's
+    rows at a time, so the cleanup iterates the tenants and deletes each
+    tenant's rows under that tenant's context.
     """
     conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
-    for table in (
-        "audit_log", "overrides", "retrieval_bias", "tenant_embeddings",
-        "remediation_tasks", "remediation_routing_rules",
-    ):
-        conn.execute(
-            f"DELETE FROM {table} WHERE tenant_id IN (%s, %s)",
-            [str(TENANT_A_ID), str(TENANT_B_ID)],
-        )
+    for tenant_id in (TENANT_A_ID, TENANT_B_ID):
+        conn.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_id)])
+        for table in (
+            "audit_log", "overrides", "retrieval_bias", "tenant_embeddings",
+            "context_records", "remediation_tasks", "remediation_routing_rules",
+        ):
+            conn.execute(
+                f"DELETE FROM {table} WHERE tenant_id = %s",
+                [str(tenant_id)],
+            )
     conn.execute("ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only")
     conn.execute(
         "DELETE FROM tenants WHERE tenant_id IN (%s, %s)",

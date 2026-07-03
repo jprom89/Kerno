@@ -44,6 +44,8 @@ AND NOT EXISTS (
 )
 """
 
+_SELECT_TENANT_ID = "SELECT tenant_id FROM tenants WHERE email = %s"
+
 
 def main() -> None:
     """Hash the dev password, connect to DATABASE_URL, and upsert the dev tenant row.
@@ -65,6 +67,11 @@ def main() -> None:
         with conn:
             cursor = conn.cursor()
             cursor.execute(_UPSERT_TENANT, (_DEV_DISPLAY_NAME, _DEV_EMAIL, password_hash))
+            cursor.execute(_SELECT_TENANT_ID, (_DEV_EMAIL,))
+            tenant_id = cursor.fetchone()[0]
+            # FORCE RLS (migration 018): the routing-rule INSERT must run under
+            # the tenant's context — even the owner role obeys the policy.
+            cursor.execute("SET LOCAL app.current_tenant_id = %s", (str(tenant_id),))
             cursor.execute(
                 _SEED_DEFAULT_ROUTING_RULE,
                 (_DEV_JIRA_ASSIGNEE, DEFAULT_REMEDIATION_SLA_DAYS, _DEV_EMAIL),

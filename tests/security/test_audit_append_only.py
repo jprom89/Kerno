@@ -60,8 +60,11 @@ def test_audit_service_exposes_no_update_or_delete_functions() -> None:
 def test_update_rejected_by_append_only_trigger(db_connection, tenant_a_id):
     with db_connection.transaction():
         entry = _append_entry(db_connection, tenant_a_id)
+    # FORCE RLS (migration 018) hides rows without a tenant context; the row
+    # must be visible for the row-level trigger to fire at all.
     with pytest.raises(Exception, match="append-only"):
         with db_connection.transaction():
+            db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
             db_connection.execute(
                 "UPDATE audit_log SET action_type = 'edit' WHERE id = %s", [entry.id]
             )
@@ -73,6 +76,7 @@ def test_delete_rejected_by_append_only_trigger(db_connection, tenant_a_id):
         entry = _append_entry(db_connection, tenant_a_id)
     with pytest.raises(Exception, match="append-only"):
         with db_connection.transaction():
+            db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
             db_connection.execute("DELETE FROM audit_log WHERE id = %s", [entry.id])
 
 
@@ -122,12 +126,14 @@ def test_chain_valid_across_multiple_appends(db_connection, tenant_a_id):
 @pytest.mark.integration
 def test_tampering_after_trigger_bypass_breaks_verification(db_connection, tenant_a_id):
     # A table owner can disable the trigger — the hash chain is the layer that
-    # still catches the edit afterwards. This test plays that attacker.
+    # still catches the edit afterwards. This test plays that attacker, who
+    # also sets the tenant context so FORCE RLS shows them the target row.
     with db_connection.transaction():
         entry = _append_entry(db_connection, tenant_a_id, control_id="ker107-tamper")
         _append_entry(db_connection, tenant_a_id, control_id="ker107-tamper-2")
     with db_connection.transaction():
         db_connection.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
+        db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
         db_connection.execute(
             "UPDATE audit_log SET action_type = 'reject' WHERE id = %s", [entry.id]
         )
