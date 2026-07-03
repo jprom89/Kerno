@@ -4,7 +4,7 @@
    /api/v1/coverage. Status is always rendered as icon + text label + badge
    colour, never colour alone (WCAG AA). */
 
-import { requireAuth, markActiveNav } from './auth.js';
+import { requireAuth, markActiveNav, getToken } from './auth.js';
 import { apiGet } from './api.js';
 
 if (!requireAuth()) throw new Error('redirect');
@@ -140,6 +140,33 @@ function _wireInteractions() {
         tile.addEventListener('click', () => _toggleStatusFilter(tile));
     });
     document.getElementById('clear-filters').addEventListener('click', _clearFilters);
+    document.getElementById('export-pack').addEventListener('click', _exportEvidencePack);
+}
+
+/* A plain <a href> cannot carry the Bearer token (auth is header-based), so the
+   export fetches the pack with the token and hands it to the browser as a download. */
+async function _exportEvidencePack() {
+    if (!_categoryFilter) return;
+    let response;
+    try {
+        response = await fetch(
+            `/api/v1/export/evidence-pack?control_family=${encodeURIComponent(_categoryFilter)}`,
+            { headers: { 'Authorization': `Bearer ${getToken()}` } },
+        );
+    } catch (err) {
+        _showError('Failed to export the evidence pack.');
+        return;
+    }
+    if (!response.ok) {
+        _showError(`Evidence pack export failed (HTTP ${response.status}).`);
+        return;
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `kerno-evidence-pack-${_categoryFilter}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
 }
 
 function _toggleStatusFilter(tile) {
@@ -175,6 +202,7 @@ function _updateHeading(visibleCount) {
         ? `Controls (${parts.join(', ')}) — ${visibleCount}`
         : `All controls — ${visibleCount}`;
     document.getElementById('clear-filters').classList.toggle('hidden', parts.length === 0);
+    document.getElementById('export-pack').classList.toggle('hidden', !_categoryFilter);
 }
 
 function _showError(msg) {
