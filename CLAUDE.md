@@ -299,6 +299,13 @@ what the story specifies — no more, no less.
   src/services/export_service.py, src/api/schemas/export.py, and
   src/api/routers/export.py — matching the table's KER-111 row
   (src/services/export_service.py).
+- KER-113 — ✅ Done. FORCE ROW LEVEL SECURITY applied to all 11 policy-bearing
+  tables via migration 018. Owner role now subject to its own RLS policies.
+  Tenant isolation holds at DB layer + app layer + audit trigger.
+  test_cross_tenant_override_not_visible and
+  test_cross_tenant_bias_vector_not_visible both green. 334/334 — first fully
+  green suite. (Note: migrations 017 and 018 are both applied to the dev DB as
+  of this entry, superseding the KER-110/111 "017 unapplied" notes above.)
 
 ---
 
