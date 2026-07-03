@@ -262,6 +262,21 @@ what the story specifies — no more, no less.
 | KER-113 | Cross-tenant isolation test | Yes | tests/security/test_tenant_isolation.py |
 | KER-114 | Nightly weight recalculation stub | Should | src/services/bias_recalculation_service.py, src/scheduler/nightly_bias_recalculation.py |
 
+### Sprint 1 status notes (updated 2026-07-03)
+
+- KER-107 — ✅ Done. Delivered as the tamper-evident, hash-chained, append-only
+  audit ledger (src/services/audit_log.py, migration 016, PR #1). Numbering
+  note: the active sprint backlog labels the audit ledger KER-107; in the table
+  above that scope corresponds to the KER-112 row ("Audit log write", now
+  implemented by the ledger), while the table's KER-107 row ("Anonymisation
+  pipeline") also shipped earlier in src/services/anonymisation.py.
+- KER-108 — ✅ Done (MVP). Implemented as src/api/routers/panel.py,
+  src/api/schemas/panel.py, src/dashboard/panel.html, and
+  src/dashboard/js/panel.js (src/integrations/jira.py deferred — the MVP is the
+  embedded panel surface itself). Jira iframe token hand-off deferred
+  post-Sprint 1. reviewer_role and reviewer_id are user-provided pending
+  per-user JWT claims.
+
 ---
 
 ## §9 — GTM Correction (Pitch Material Alignment)
