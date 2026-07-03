@@ -284,6 +284,14 @@ what the story specifies — no more, no less.
   labels the control-coverage dashboard KER-109; the table's KER-109 row
   ("Trust Center status display", src/api/trust_center.py) is the external
   Trust Center surface and remains open.
+- KER-110 — ✅ Done. Remediation routing: gap → Jira task with SLA due date and
+  assignee. Closure → re_review_flagged_at. Both actions in KER-107 audit
+  ledger. Migration 017 unapplied to dev DB — run alembic upgrade head before
+  integration tests. Implemented as src/services/remediation_service.py,
+  src/services/jira_client.py, and src/api/routers/remediation.py. Numbering
+  note: the active sprint backlog labels remediation routing KER-110; the
+  table's KER-110 row ("Webhook ingestion endpoint", src/api/webhooks.py) is
+  the generic ingestion surface and remains open.
 
 ---
 
