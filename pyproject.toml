@@ -19,6 +19,9 @@ dependencies = [
     # EU-native LLM provider — Mistral AI SAS, Paris, France. No CLOUD Act exposure.
     "mistralai>=2.0.0",
 
+    # Jira connector for remediation routing (KER-110)
+    "httpx>=0.27.0",
+
     # Authentication
     "PyJWT>=2.8.0",
 

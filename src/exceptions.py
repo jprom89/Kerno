@@ -19,3 +19,8 @@ class MappingError(Exception):
 class ConfigurationError(Exception):
     """Raised when a required runtime configuration value is missing or malformed — for example,
     an absent LLM API key. Signals a deployment fault, not a per-request error."""
+
+
+class JiraClientError(Exception):
+    """Raised when a Jira API call fails or the Jira connection is not configured.
+    Callers map this to HTTP 503 — the remediation feature is unavailable, not broken."""

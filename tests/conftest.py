@@ -311,7 +311,10 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     caller's transaction, so a failed teardown rolls back to trigger-enabled.
     """
     conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
-    for table in ("audit_log", "overrides", "retrieval_bias", "tenant_embeddings"):
+    for table in (
+        "audit_log", "overrides", "retrieval_bias", "tenant_embeddings",
+        "remediation_tasks", "remediation_routing_rules",
+    ):
         conn.execute(
             f"DELETE FROM {table} WHERE tenant_id IN (%s, %s)",
             [str(TENANT_A_ID), str(TENANT_B_ID)],
