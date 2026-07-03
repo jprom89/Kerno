@@ -8,10 +8,11 @@ issues, allowing assertions about the order of those calls, the parameters
 passed, and the absence of SQLAlchemy Session API calls (add(), flush()) that
 would indicate the wrong connection contract.
 
-Thirteen tests cover: justification text handling (null, email, hostname,
+Fourteen tests cover: justification text handling (null, email, hostname,
 dual-write to both tables), connection contract correctness, SET LOCAL
-ordering, audit log correctness, reviewer weight assignment, input validation,
-tenant isolation, and the conftest named-parameter regex.
+ordering, audit log correctness, created_at read-back, reviewer weight
+assignment, input validation, tenant isolation, and the conftest
+named-parameter regex.
 
 How to run
 ----------
@@ -21,6 +22,7 @@ How to run
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -34,6 +36,9 @@ _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 
 # A deterministic UUIDv4 for the test reviewer — fixed for the same reason.
 _REVIEWER_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")
+
+# The server-generated created_at the spy returns for the read-back SELECT.
+_CREATED_AT = datetime(2025, 6, 1, tzinfo=timezone.utc)
 
 
 # ── Test infrastructure ───────────────────────────────────────────────────────
@@ -56,6 +61,18 @@ class _NullResult:
         return None
 
 
+class _CreatedAtResult:
+    """Simulates the created_at read-back SELECT — fetchone() returns one (timestamp,) row."""
+
+    def fetchall(self) -> list:
+        """Return the single timestamp row."""
+        return [(_CREATED_AT,)]
+
+    def fetchone(self):
+        """Return the server-generated created_at as a one-column row."""
+        return (_CREATED_AT,)
+
+
 class _SpyConn:
     """Records every execute() call and raises on SQLAlchemy Session API usage.
 
@@ -73,9 +90,11 @@ class _SpyConn:
         """Initialise with an empty call log."""
         self.calls: list[tuple[str, object]] = []
 
-    def execute(self, sql: str, params=None) -> _NullResult:
-        """Append (sql, params) to the call log and return a null result."""
+    def execute(self, sql: str, params=None):
+        """Append (sql, params) to the call log; return the timestamp row for the read-back SELECT."""
         self.calls.append((sql, params))
+        if "SELECT created_at" in sql:
+            return _CreatedAtResult()
         return _NullResult()
 
     def commit(self) -> None:
@@ -181,7 +200,7 @@ def test_anonymised_value_appears_in_both_override_and_audit_log() -> None:
         _make_input(justification_text="Contact admin@kerno.io for details"),
     )
     override_params = spy.calls[1][1]
-    audit_params = spy.calls[2][1]
+    audit_params = spy.calls[3][1]
     assert "[INTERNAL_EMAIL]" in override_params["justification_text"]
     assert audit_params["justification_text"] == override_params["justification_text"]
 
@@ -209,8 +228,18 @@ def test_audit_log_references_correct_override_id() -> None:
     spy = _SpyConn()
     capture_override(_FakeSession(), spy, _make_input())
     override_params = spy.calls[1][1]
-    audit_params = spy.calls[2][1]
+    audit_params = spy.calls[3][1]
     assert audit_params["override_id"] == override_params["override_id"]
+
+
+def test_created_at_is_read_back_from_database() -> None:
+    """capture_override must read the server-generated created_at back onto the returned record."""
+    spy = _SpyConn()
+    override = capture_override(_FakeSession(), spy, _make_input())
+    assert override.created_at == _CREATED_AT
+    select_sql, select_params = spy.calls[2]
+    assert "SELECT created_at" in select_sql
+    assert select_params["id"] == spy.calls[1][1]["override_id"]
 
 
 def test_vciso_gets_senior_confidence_weight() -> None:

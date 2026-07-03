@@ -75,7 +75,8 @@ def capture_override(session, conn, override_input: OverrideInput) -> Override:
 
     Resolves the tenant from the authenticated session, validates it, then writes
     the override record and the audit log entry together. Anonymises the
-    justification text before storing it. Returns the saved override record so the
+    justification text before storing it, then reads the database-generated
+    ``created_at`` back onto the record. Returns the saved override record so the
     caller can confirm what was stored. Raises ``TenantContextMissingError`` if the
     session cannot supply a valid tenant. Raises ``ValueError`` if input fields
     fail validation. The ``conn`` parameter must be a raw database connection
@@ -86,6 +87,11 @@ def capture_override(session, conn, override_input: OverrideInput) -> Override:
     confidence_weight = _assign_reviewer_confidence_weight(override_input.reviewer_role)
     override = _build_override_record(tenant_id, override_input, confidence_weight)
     _persist_override(conn, override)
+    row = conn.execute(
+        "SELECT created_at FROM overrides WHERE override_id = :id",
+        {"id": str(override.override_id)},
+    ).fetchone()
+    override.created_at = row[0]
     audit_entry = _build_audit_log_entry(override)
     _persist_audit_log_entry(conn, audit_entry)
     return override
