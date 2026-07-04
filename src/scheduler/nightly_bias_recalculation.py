@@ -21,23 +21,33 @@ This file is intentionally thin: it contains only the orchestration logic. The
 math lives in ``bias_recalculation_service.py``; the tenant context guard lives
 in ``src/services/tenant_context.py``. (KER-114, LEARNING_PIPELINE_SPEC.md §5.1.)
 
+Sprint 1 status (KER-114)
+-------------------------
+Sprint 1 ships the STUB entry point ``run_recalculation_stub`` — triggered
+manually via POST /api/v1/scheduler/run-recalculation — which counts pending
+overrides, logs, and records the run in the KER-107 audit ledger WITHOUT
+touching any bias vector. The full batch below (``run_nightly_bias_recalculation``
+and its helpers) is the ready-made implementation the stub hands over to
+post-Sprint 1; it is retained intact and is not wired to any schedule yet.
+
 How to run or test
 ------------------
 Unit tests (no database required):
 
-    pytest tests/unit/services/test_nightly_bias_recalculation.py -v
+    pytest tests/unit/scheduler/test_nightly_recalculation_stub.py -v
 
-In production this file is invoked as a cron job. To run it manually:
-
-    python -m src.scheduler.nightly_bias_recalculation
+In production the stub is triggered via the API endpoint above; the full batch
+will be invoked by the platform cron scheduler post-Sprint 1.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 import uuid
 
+from src.services.audit_log import append_audit_entry
 from src.services.bias_recalculation_service import (
     persist_retrieval_bias,
     recalculate_retrieval_bias,
@@ -45,6 +55,82 @@ from src.services.bias_recalculation_service import (
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 logger = logging.getLogger(__name__)
+
+# Counts overrides accumulated since the tenant's last recalculation — the
+# same "since last run" boundary the full batch uses ('1970-01-01' = never ran).
+_COUNT_OVERRIDES_SINCE_LAST_RUN = """
+SELECT count(*)
+FROM overrides o
+LEFT JOIN retrieval_bias rb ON rb.tenant_id = o.tenant_id
+WHERE o.tenant_id = :tenant_id
+  AND o.created_at > COALESCE(rb.last_recalculated_at, '1970-01-01'::timestamptz)
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class RecalculationStubResult:
+    """Outcome of one stub run — what was observed, never what was changed."""
+
+    tenant_id: str
+    override_count: int
+    duration_ms: int
+    status: str
+
+
+def run_recalculation_stub(conn, session) -> RecalculationStubResult:
+    """Sprint 1 stub (KER-114): prove the nightly loop runs and is traceable.
+
+    Resolves the tenant from the authenticated session, counts the overrides
+    accumulated since the last recalculation, emits the structured start and
+    complete log lines, and records the run in the KER-107 audit ledger.
+    Deliberately modifies NO bias vector: the full LEARNING_PIPELINE_SPEC.md §5
+    recalculation in this module activates post-Sprint 1.
+    Raises TenantContextMissingError on an invalid session.
+    """
+    # TODO (post-Sprint 1): replace stub with full bias vector recalculation
+    # Inputs: all overrides since last_recalculated_at
+    # Algorithm: see LEARNING_PIPELINE_SPEC.md §5
+    # Output: updated retrieval_bias row per tenant
+    start_ms = time.monotonic()
+    tenant_id = resolve_and_set_tenant_context(session, conn)
+    override_count = _count_overrides_since_last_run(conn, tenant_id)
+    logger.info(
+        "NIGHTLY_RECALCULATION started tenant=%s override_count=%d",
+        tenant_id, override_count,
+    )
+    append_audit_entry(
+        conn,
+        tenant_id,
+        actor_id=None,
+        actor_role="system",
+        action_type="nightly_recalculation_stub_ran",
+        object_type="bias_vector",
+        object_id=str(tenant_id),
+        control_id=None,
+        after_state={
+            "override_count": override_count,
+            "status": "stub",
+            "note": "full recalculation deferred to post-Sprint 1",
+        },
+    )
+    duration_ms = int((time.monotonic() - start_ms) * 1000)
+    logger.info(
+        "NIGHTLY_RECALCULATION completed tenant=%s duration_ms=%d status=stub",
+        tenant_id, duration_ms,
+    )
+    return RecalculationStubResult(
+        tenant_id=str(tenant_id),
+        override_count=override_count,
+        duration_ms=duration_ms,
+        status="stub",
+    )
+
+
+def _count_overrides_since_last_run(conn, tenant_id: uuid.UUID) -> int:
+    row = conn.execute(
+        _COUNT_OVERRIDES_SINCE_LAST_RUN, {"tenant_id": str(tenant_id)}
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
 
 
 def run_nightly_bias_recalculation(db_session_factory, admin_session) -> None:

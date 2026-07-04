@@ -54,6 +54,15 @@ from datetime import datetime, timezone
 
 from config.constants import DECAY_FACTOR, LEARNING_RATE
 
+# TODO (post-Sprint 1): replace stub with full bias vector recalculation
+# Inputs: all overrides since last_recalculated_at
+# Algorithm: see LEARNING_PIPELINE_SPEC.md §5
+# Output: updated retrieval_bias row per tenant
+# Sprint 1 (KER-114) runs run_recalculation_stub() in
+# src/scheduler/nightly_bias_recalculation.py, which logs and audits WITHOUT
+# calling the functions below. This module is the ready-made full
+# implementation the stub hands over to when the loop is activated.
+
 # Type alias: a vector is a list of floats with a fixed length determined
 # by the embedding model. The length is enforced at the model layer (RetrievalBias)
 # and checked here at the level of the mathematical operation.
