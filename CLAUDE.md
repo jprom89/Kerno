@@ -242,6 +242,12 @@ Every migration file must:
 
 ## §8 — Sprint 1 Story Reference
 
+## Sprint 1 — CLOSED
+All Must-have and Should-have stories delivered.
+Final suite: 343 passed, 0 failed (unit + security + integration).
+Dev DB at migration head s4t5u6v7.
+Closed: 2026-07-04
+
 These are the 14 stories for Sprint 1. Files must implement exactly
 what the story specifies — no more, no less.
 
@@ -306,6 +312,12 @@ what the story specifies — no more, no less.
   test_cross_tenant_bias_vector_not_visible both green. 334/334 — first fully
   green suite. (Note: migrations 017 and 018 are both applied to the dev DB as
   of this entry, superseding the KER-110/111 "017 unapplied" notes above.)
+- KER-114 — ✅ Done. Nightly weight recalculation stub.
+  POST /api/v1/scheduler/run-recalculation triggers manually
+  (JWT-authenticated). Emits structured log + KER-107 audit entry per run.
+  Full §5.2 recalculation math already present in
+  bias_recalculation_service.py — wiring deferred to post-Sprint 1.
+  343/343 — Sprint 1 complete.
 
 ---
 
