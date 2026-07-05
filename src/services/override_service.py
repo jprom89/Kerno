@@ -183,9 +183,12 @@ def _record_override_audit_entry(conn, override: Override) -> None:
         object_id=str(override.override_id),
         control_id=override.original_control_id,
         before_state={"control_id": override.original_control_id},
+        # TODO: replace actor_attribution with verified per-user identity
+        # when per-user JWT claims land (post-Sprint 1)
         after_state={
             "control_id": override.corrected_control_id or override.original_control_id,
             "justification_text": override.justification_text,
+            "actor_attribution": "tenant_principal_pending_per_user_auth",
         },
     )
 

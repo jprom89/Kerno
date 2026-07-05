@@ -4,9 +4,10 @@ so the nightly recalculation stub is triggered manually through this endpoint.""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from src.api.dependencies import get_conn, get_tenant_id
+from src.api.rate_limit import limiter
 from src.api.schemas.scheduler import RecalculationRunResponse
 from src.scheduler.nightly_bias_recalculation import run_recalculation_stub
 
@@ -25,7 +26,9 @@ class _SessionContext:
 
 
 @router.post("/run-recalculation")
+@limiter.limit("10/minute")
 def run_recalculation(
+    request: Request,
     tenant_id: str = Depends(get_tenant_id),
     conn=Depends(get_conn),
 ) -> RecalculationRunResponse:

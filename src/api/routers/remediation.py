@@ -41,8 +41,12 @@ def trigger(
         result = trigger_remediation(conn, _SessionContext(tenant_id), body.control_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    except JiraClientError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    except JiraClientError:
+        # SEC-04: do not leak Jira's internal error text (endpoints, timeouts) to
+        # the caller; the full exception is available server-side via logging.
+        raise HTTPException(
+            status_code=503, detail="Jira integration error — check server logs."
+        )
     return TriggerRemediationResponse(
         control_id=result.control_id,
         jira_issue_key=result.jira_issue_key,

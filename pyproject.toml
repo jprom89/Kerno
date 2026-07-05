@@ -22,6 +22,9 @@ dependencies = [
     # Jira connector for remediation routing (KER-110)
     "httpx>=0.27.0",
 
+    # Rate limiting (SEC-05)
+    "slowapi>=0.1.9",
+
     # Authentication
     "PyJWT>=2.8.0",
 

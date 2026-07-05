@@ -28,6 +28,8 @@ All values are sourced from LEARNING_PIPELINE_SPEC.md. Do not change a value
 here without updating the spec section it references.
 """
 
+from enum import StrEnum
+
 # ---------------------------------------------------------------------------
 # Retrieval bias recalculation (the nightly learning step)
 # Source: LEARNING_PIPELINE_SPEC.md §5.2 — "The Weight Recalculation Formula"
@@ -57,6 +59,29 @@ SENIOR_REVIEWER_WEIGHT: float = 1.0
 # This is gamma_i = 0.5 in the spec — renamed per CLAUDE.md §2.3.
 # (LEARNING_PIPELINE_SPEC.md §5.2)
 JUNIOR_REVIEWER_WEIGHT: float = 0.5
+
+
+# ---------------------------------------------------------------------------
+# Reviewer role vocabulary (SEC-01 hardening)
+# ---------------------------------------------------------------------------
+
+
+class ReviewerRole(StrEnum):
+    """The only reviewer roles a human override may declare.
+
+    These MUST stay in sync with REVIEWER_ROLES in src/models/override.py and the
+    reviewer_role_enum database type (migration 003): the overrides table rejects
+    any other value at the DB layer, so the API bounds the field to exactly this
+    set and returns 422 for anything else. The COMPLIANCE_MANAGER/AUDITOR/SYSTEM
+    roles proposed in the SEC-01 ticket are deliberately NOT included — they are
+    not valid reviewer_role_enum members ('system' is an audit actor_role for
+    machine-generated events, never a human override role), so accepting them here
+    would only defer the failure to a DB error. Add a role to the DB enum first.
+    """
+
+    VCISO = "vciso"
+    FCISO = "fciso"
+    INTERNAL_ADMIN = "internal_admin"
 
 # ---------------------------------------------------------------------------
 # Calibration / commercial moat thresholds

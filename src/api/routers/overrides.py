@@ -6,12 +6,13 @@ from __future__ import annotations
 import uuid
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 # _oauth2_scheme and _jwt_secret are imported rather than reimplemented so the
 # reviewer token is read with the same security scheme as get_tenant_id; the
 # no-modify constraint forbids adding a public reviewer dependency to dependencies.py.
 from src.api.dependencies import _jwt_secret, _oauth2_scheme, get_conn, get_tenant_id
+from src.api.rate_limit import limiter
 from src.api.schemas.overrides import OverrideRequest, OverrideResponse
 from src.services.override_service import OverrideInput, capture_override
 
@@ -45,11 +46,18 @@ def get_reviewer_id(token: str | None = Depends(_oauth2_scheme)) -> str:
         uuid.UUID(reviewer_id)
     except ValueError:
         raise HTTPException(status_code=401, detail="sub is not a valid UUID")
+    # LIMITATION (SEC-01): the JWT 'sub' claim currently equals tenant_id (KER-108) —
+    # this is the authenticated tenant principal, not a verified per-user identity.
+    # reviewer_id is intentionally left on this pattern; per-user JWT claims (which
+    # would make this a real person) are deferred post-Sprint 1. The audit ledger
+    # records after_state.actor_attribution to make this limitation explicit.
     return reviewer_id
 
 
 @router.post("/overrides", status_code=201)
+@limiter.limit("60/minute")
 def create_override(
+    request: Request,
     body: OverrideRequest,
     tenant_id: str = Depends(get_tenant_id),
     reviewer_id: str = Depends(get_reviewer_id),

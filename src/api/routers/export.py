@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from src.api.dependencies import get_conn, get_tenant_id
+from src.api.rate_limit import limiter
 from src.services.export_service import build_evidence_pack, serialise_pack
 
 router = APIRouter()
@@ -29,7 +30,9 @@ class _SessionContext:
 
 
 @router.get("/evidence-pack")
+@limiter.limit("30/minute")
 def export_evidence_pack(
+    request: Request,
     control_family: str = Query(..., min_length=1),
     tenant_id: str = Depends(get_tenant_id),
     conn=Depends(get_conn),

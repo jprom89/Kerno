@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 
 try:
@@ -16,7 +17,10 @@ except ImportError:
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from src.api.rate_limit import limiter
 from src.api.routers import coverage, export, overrides, panel, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
@@ -36,6 +40,10 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Return a fully configured FastAPI application instance."""
     app = FastAPI(lifespan=_lifespan)
+
+    # SEC-05: register the shared rate limiter and its 429 handler.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(register.router, prefix="/api/v1/register", tags=["register"])
@@ -62,9 +70,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RuntimeError)
     async def handle_runtime_error(request: Request, exc: RuntimeError):
+        # SEC-03: never return the exception text to the caller. Log it in full
+        # server-side, keyed by a correlation id the caller can quote in support.
+        correlation_id = str(uuid.uuid4())
+        logger.exception("Unhandled RuntimeError [%s]", correlation_id)
         return JSONResponse(
             status_code=500,
-            content={"detail": "submission run error", "message": str(exc)},
+            content={"detail": "An internal error occurred.", "correlation_id": correlation_id},
         )
 
     @app.exception_handler(Exception)

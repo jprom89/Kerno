@@ -52,7 +52,19 @@ def main() -> None:
 
     Also seeds the tenant's default remediation routing rule (KER-110) so the
     remediation trigger works out of the box on a fresh dev database.
+
+    Refuses to run unless KERNO_ENV=development (SEC-02): this hardcodes weak
+    credentials, so it must never be pointed at a staging or production database.
     """
+    env = os.getenv("KERNO_ENV", "")
+    if env != "development":
+        print(
+            "ERROR: seed_dev_tenant.py refused to run — KERNO_ENV is not "
+            "'development'. Set KERNO_ENV=development to run this script locally.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         print(
@@ -76,7 +88,7 @@ def main() -> None:
                 _SEED_DEFAULT_ROUTING_RULE,
                 (_DEV_JIRA_ASSIGNEE, DEFAULT_REMEDIATION_SLA_DAYS, _DEV_EMAIL),
             )
-        print(f"Dev tenant seeded — email: {_DEV_EMAIL}  password: {_DEV_PASSWORD}")
+        print(f"Dev tenant seeded: {_DEV_EMAIL} (password set)")
         print(
             f"Default remediation routing rule ensured — assignee: {_DEV_JIRA_ASSIGNEE}, "
             f"SLA: {DEFAULT_REMEDIATION_SLA_DAYS} days"

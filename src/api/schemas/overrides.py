@@ -7,9 +7,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from config.constants import ReviewerRole
+
 
 class OverrideRequest(BaseModel):
-    reviewer_role: str
+    # reviewer_role is bounded to the ReviewerRole enum (SEC-01): an out-of-set
+    # value is rejected with 422 instead of reaching the DB enum as a 500.
+    reviewer_role: ReviewerRole
     action_type: str
     original_control_id: str
     corrected_control_id: str | None = None

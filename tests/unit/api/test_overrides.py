@@ -69,6 +69,23 @@ def test_approve_action_returns_201():
     assert body["corrected_control_id"] is None
 
 
+def test_invalid_reviewer_role_returns_422():
+    # SEC-01 gate check: a reviewer_role outside the ReviewerRole enum is rejected
+    # at validation (422) before any service call — capture_override is never reached.
+    with patch("src.api.routers.overrides.capture_override") as mock_capture:
+        client = TestClient(_app_with_overrides())
+        response = client.post(
+            "/api/v1/overrides",
+            json={
+                "reviewer_role": "hacker",
+                "action_type": "approve",
+                "original_control_id": "ctrl-001",
+            },
+        )
+    assert response.status_code == 422
+    mock_capture.assert_not_called()
+
+
 def test_edit_action_with_corrected_control_id_returns_201():
     override = _fake_override("edit", "ctrl-002")
     with patch("src.api.routers.overrides.capture_override", return_value=override):
