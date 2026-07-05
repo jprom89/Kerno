@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.2 | Updated: 2026-06-19 | Changes: Added §10 Post-File Review Protocol -->
+<!-- Version: 1.3 | Updated: 2026-07-05 | Changes: Added §9 Security Hardening (KER-SEC-01); renumbered GTM Correction to §10 and Post-File Review Protocol to §11 -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -321,7 +321,7 @@ what the story specifies — no more, no less.
 
 ---
 
-## §8.1 Security Hardening — KER-SEC-01
+## §9 — Security Hardening (KER-SEC-01)
 Audit date: 2026-07-05
 Grade: B → B+ (post-remediation)
 
@@ -343,12 +343,9 @@ Open (deferred):
   auto-resolved when per-user JWT claims land.
 - Per-user JWT identity (SEC-01 full fix) — Sprint 2 or later.
 
-(Numbering note: the §9/§10 headings below predate this section, so the
-security notes are filed as §8.1 to avoid renumbering existing references.)
-
 ---
 
-## §9 — GTM Correction (Pitch Material Alignment)
+## §10 — GTM Correction (Pitch Material Alignment)
 
 The GTM Strategy document states that vCISO referral partnerships
 are a near-term acquisition channel. This is incorrect.
@@ -364,7 +361,7 @@ channels, the correct sequencing is:
 
 ---
 
-## §10 — Post-File Review Protocol (Non-Negotiable)
+## §11 — Post-File Review Protocol (Non-Negotiable)
 
 After writing every file, before moving to the next file in the build order,
 produce a review block in this exact format:

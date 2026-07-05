@@ -33,13 +33,13 @@ Do not proceed to File 1 until all three are answered correctly.
 ## Review Protocol
 
 After every file, produce the Post-File Review block defined in
-§10 of CLAUDE.md before writing the next file.
+§11 of CLAUDE.md before writing the next file.
 
 The review block must appear in this exact format:
 
   ### ✅ File N Review — <filename>
   What this file does (one sentence)
-  Gate checks table (7 rows — copy the table from §10 exactly)
+  Gate checks table (7 rows — copy the table from §11 exactly)
   Test coverage summary (one line per test)
   Open questions before next file
   Proceed to File N+1? Yes / No — blocked by: <reason>
