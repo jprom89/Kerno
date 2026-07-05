@@ -321,6 +321,33 @@ what the story specifies — no more, no less.
 
 ---
 
+## §8.1 Security Hardening — KER-SEC-01
+Audit date: 2026-07-05
+Grade: B → B+ (post-remediation)
+
+Resolved:
+- SEC-01: reviewer_role constrained to ReviewerRole enum (VCISO/FCISO/INTERNAL_ADMIN);
+  actor_attribution honest marker added to override audit entries.
+  Full per-user JWT identity deferred to post-Sprint 2.
+- SEC-02: seed script hard-exits unless KERNO_ENV=development;
+  plaintext password no longer printed.
+- SEC-03/04: generic RuntimeError handler with correlation ID;
+  JiraClientError no longer leaks to HTTP responses.
+- SEC-05: slowapi rate limiting on scheduler (10/min),
+  export (30/min), overrides (60/min).
+- SEC-06: uv.lock generated (54 packages, reproducible installs).
+
+Open (deferred):
+- SEC-05 (full): gateway-level rate limiting — pending infra decision.
+- SEC-07/08: server-side log hygiene + export role field —
+  auto-resolved when per-user JWT claims land.
+- Per-user JWT identity (SEC-01 full fix) — Sprint 2 or later.
+
+(Numbering note: the §9/§10 headings below predate this section, so the
+security notes are filed as §8.1 to avoid renumbering existing references.)
+
+---
+
 ## §9 — GTM Correction (Pitch Material Alignment)
 
 The GTM Strategy document states that vCISO referral partnerships
