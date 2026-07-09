@@ -1,16 +1,18 @@
-"""auth_service.py — credential verification and JWT issuance for tenant login.
+"""auth_service.py — per-user credential verification and JWT issuance (KER-202).
 
-What:  Verifies an email/password pair against the tenants table and, on success,
-       issues a signed HS256 JWT carrying the tenant_id claim consumed by
-       get_tenant_id() in src/api/dependencies.py.
-Why:   The dashboard login endpoint needs an issuance path. The existing JWT
-       machinery only validates tokens; this service is the one place that mints them.
+What:  Verifies an email/password pair against the users table and, on success,
+       issues a signed HS256 JWT carrying user_id (as sub), email, role, and
+       tenant_id — the claims consumed by get_tenant_id()/require_role() in
+       src/api/dependencies.py.
+Why:   Sprint 1 authenticated one credential per tenant; KER-202 makes login
+       per-user so overrides and the audit ledger attribute to a real person and
+       RBAC can gate by role. This is the one place JWTs are minted.
 How:   Call authenticate_and_issue_token(conn, email, password). Returns a JWT string
-       on success, None on invalid credentials. call hash_password(plaintext) when
-       seeding a tenant row:
-           python -c "from src.services.auth_service import hash_password; print(hash_password('s3cr3t'))"
-       Then store the result in the tenants.password_hash column.
-       Run tests with: pytest tests/unit/api/test_auth.py -v
+       on success, None on invalid credentials. Use hash_password(plaintext) when
+       provisioning a user row (store the result in users.password_hash).
+       The login lookup reads users before any tenant context exists; the users
+       table is deliberately not FORCE-RLS'd for exactly this reason (migration 019).
+       Run tests with: pytest tests/unit/services/test_user_auth.py -v
 """
 
 from __future__ import annotations
@@ -31,10 +33,16 @@ from config.constants import (
     SCRYPT_SALT_LENGTH,
 )
 
-_SELECT_TENANT_BY_EMAIL = """
-SELECT tenant_id, password_hash, is_active
-FROM tenants
+# Reads users before any tenant context exists (login bootstrap). Email is unique
+# per tenant, so LIMIT 1 (oldest) makes the lookup deterministic if the same
+# address were ever provisioned in two tenants. (Migration 019 documents why the
+# users table is not FORCE-RLS'd, which is what lets this pre-context read run.)
+_SELECT_USER_BY_EMAIL = """
+SELECT user_id, tenant_id, password_hash, role, is_active
+FROM users
 WHERE email = :email
+ORDER BY created_at ASC
+LIMIT 1
 """
 
 # Dummy hash used when the email is not found, so that the verification path
@@ -44,7 +52,7 @@ _DUMMY_HASH: str = ""
 
 
 def _build_dummy_hash() -> str:
-    """Return a dummy hash to use when an email is not found in the tenants table.
+    """Return a dummy hash to use when an email is not found in the users table.
 
     Called once at module load time so the dummy hash is available for
     _dummy_verify() without recomputing it on every failed login attempt.
@@ -105,18 +113,23 @@ def _dummy_verify() -> None:
     _verify_password("invalid_input", _DUMMY_HASH)
 
 
-def _issue_jwt(tenant_id: str) -> str:
-    """Return a signed HS256 JWT carrying tenant_id and an expiry claim.
+def _issue_jwt(user_id: str, email: str, role: str, tenant_id: str) -> str:
+    """Return a signed HS256 JWT carrying the user's identity, role, and tenant.
 
-    Reads KERNO_JWT_SECRET from the environment. Raises RuntimeError if the
-    secret is absent (the lifespan check in app.py normally prevents this).
+    sub is the user_id (the verified actor), and the token also carries email,
+    role (an RbacRole value consumed by require_role), and tenant_id (consumed by
+    get_tenant_id). Reads KERNO_JWT_SECRET from the environment; raises RuntimeError
+    if it is absent (the lifespan check in app.py normally prevents this).
     """
     secret = os.environ.get("KERNO_JWT_SECRET")
     if not secret:
         raise RuntimeError("KERNO_JWT_SECRET environment variable is not set")
     now = int(time.time())
     payload = {
-        "sub": tenant_id,
+        "sub": user_id,
+        "user_id": user_id,
+        "email": email,
+        "role": role,
         "tenant_id": tenant_id,
         "iat": now,
         "exp": now + JWT_EXPIRY_SECONDS,
@@ -125,25 +138,29 @@ def _issue_jwt(tenant_id: str) -> str:
 
 
 def authenticate_and_issue_token(conn, email: str, password: str) -> str | None:
-    """Verify credentials against the tenants table. Return a JWT string or None.
+    """Verify credentials against the users table. Return a per-user JWT or None.
 
-    Returns None (not an exception) on any failure — wrong email, wrong password,
-    or inactive tenant — so the caller returns a uniform 401 with no detail that
+    Returns None (not an exception) on any failure — unknown email, wrong password,
+    or inactive user — so the caller returns a uniform 401 with no detail that
     reveals which field is wrong. The dummy verify call keeps timing consistent
-    between 'email not found' and 'password wrong' paths.
+    between 'email not found' and 'password wrong' paths. The users lookup runs
+    before tenant context exists (login bootstrap); it is safe because the caller
+    verifies the password before this function returns any token.
     """
     normalised_email = email.lower().strip()
-    row = conn.execute(_SELECT_TENANT_BY_EMAIL, {"email": normalised_email}).fetchone()
+    row = conn.execute(_SELECT_USER_BY_EMAIL, {"email": normalised_email}).fetchone()
     if row is None:
         _dummy_verify()
         return None
-    tenant_id, stored_hash, is_active = str(row[0]), row[1], row[2]
+    user_id, tenant_id, stored_hash, role, is_active = (
+        str(row[0]), str(row[1]), row[2], row[3], row[4],
+    )
     if not is_active or stored_hash is None:
         _dummy_verify()
         return None
     if not _verify_password(password, stored_hash):
         return None
-    return _issue_jwt(tenant_id)
+    return _issue_jwt(user_id, email=normalised_email, role=role, tenant_id=tenant_id)
 
 
 # Build the dummy hash at module load time — not at call time — so it is

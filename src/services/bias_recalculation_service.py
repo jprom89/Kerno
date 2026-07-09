@@ -29,22 +29,28 @@ The update formula (LEARNING_PIPELINE_SPEC.md Section 5.2) works like this:
     target_control_vector        — the embedding of the control the human chose
     source_recommendation_vector — the embedding of what the AI had recommended
 
-Two functions live here:
+Three functions live here:
   1. ``recalculate_retrieval_bias`` — pure function, no database. Takes the
      current vector and a list of overrides, returns the new vector. Testable
      without a database connection.
   2. ``persist_retrieval_bias`` — writes the result to the database. Requires
      the caller to have already set the tenant context.
+  3. ``coerce_vector`` — converts a raw database vector value (pgvector text
+     form or any numeric sequence) into the plain float list the math expects.
+
+This module is live as of KER-201: the nightly batch and the manual trigger in
+``src/scheduler/nightly_bias_recalculation.py`` both call these functions for
+real — the Sprint 1 observe-only stub is gone.
 
 How to run or test
 ------------------
 Unit tests (no database required):
 
-    pytest tests/unit/services/test_bias_recalculation_service.py -v
+    pytest tests/unit/scheduler/test_nightly_recalculation.py -v
 
-The test suite has 8 cases including a numerically verified worked example
-from LEARNING_PIPELINE_SPEC.md §5.2, the new-tenant zero-vector seed, and
-the no-overrides pass-through.
+That suite includes a numerically verified worked example of the §5.2 formula,
+the new-tenant zero-vector seed, the no-overrides pass-through, and the
+pgvector text-form coercion cases.
 """
 
 from __future__ import annotations
@@ -53,15 +59,6 @@ import uuid
 from datetime import datetime, timezone
 
 from config.constants import DECAY_FACTOR, LEARNING_RATE
-
-# TODO (post-Sprint 1): replace stub with full bias vector recalculation
-# Inputs: all overrides since last_recalculated_at
-# Algorithm: see LEARNING_PIPELINE_SPEC.md §5
-# Output: updated retrieval_bias row per tenant
-# Sprint 1 (KER-114) runs run_recalculation_stub() in
-# src/scheduler/nightly_bias_recalculation.py, which logs and audits WITHOUT
-# calling the functions below. This module is the ready-made full
-# implementation the stub hands over to when the loop is activated.
 
 # Type alias: a vector is a list of floats with a fixed length determined
 # by the embedding model. The length is enforced at the model layer (RetrievalBias)
@@ -110,12 +107,14 @@ def persist_retrieval_bias(
     tenant_id: uuid.UUID,
     updated_retrieval_bias_vector: Vector,
     override_count: int,
-) -> None:
+) -> datetime:
     """Write the recalculated bias vector to the database for the given tenant.
 
     Requires that the caller has already set the tenant context on ``conn``
     (via ``resolve_and_set_tenant_context``). Uses an upsert — one row per
-    tenant, refreshed on each nightly run. (KER-114.)
+    tenant, refreshed on each nightly run. Returns the timestamp written to
+    ``last_recalculated_at`` so the caller's audit ledger entry can record the
+    exact same moment. (KER-201.)
     """
     now = datetime.now(timezone.utc)
     conn.execute(
@@ -136,6 +135,28 @@ def persist_retrieval_bias(
             "now": now,
         },
     )
+    return now
+
+
+def coerce_vector(raw_vector_value) -> Vector:
+    """Convert a raw database vector value into a plain list of floats.
+
+    pgvector columns arrive from the raw-connection query path as text (for
+    example ``'[0.1,0.2]'``) because no client-side vector adapter is
+    registered. This function accepts that text form, or an already-materialised
+    sequence of numbers, and returns a plain float list. ``None`` and empty
+    values return an empty list, meaning "no vector yet". Raises ``ValueError``
+    on any malformed element so a corrupt value fails loudly instead of
+    entering the formula. (KER-201.)
+    """
+    if raw_vector_value is None:
+        return []
+    if isinstance(raw_vector_value, str):
+        inner_text = raw_vector_value.strip().strip("[]")
+        if not inner_text:
+            return []
+        return [float(element) for element in inner_text.split(",")]
+    return [float(element) for element in raw_vector_value]
 
 
 def _sum_weighted_corrections(overrides: list[dict]) -> Vector:

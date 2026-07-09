@@ -83,6 +83,24 @@ class ReviewerRole(StrEnum):
     FCISO = "fciso"
     INTERNAL_ADMIN = "internal_admin"
 
+
+class RbacRole(StrEnum):
+    """The per-user access-control role carried in the authenticated JWT (KER-202).
+
+    Distinct from ReviewerRole: this is the identity/authorisation vocabulary for
+    users, whereas ReviewerRole is the override table's confidence-weighting enum.
+    A user's RbacRole is mapped to a ReviewerRole at override-capture time by
+    REVIEWER_ROLE_MAP in src/services/override_service.py — the two enums are never
+    merged. Stored in the users.role column (migration 019).
+    """
+
+    COMPLIANCE_LEAD = "compliance_lead"
+    SECURITY_ENGINEER = "security_engineer"
+    VCISO = "vciso"
+    AUDITOR = "auditor"
+    PLATFORM_ENGINEER = "platform_engineer"
+    END_CUSTOMER_ADMIN = "end_customer_admin"
+
 # ---------------------------------------------------------------------------
 # Calibration / commercial moat thresholds
 # Source: LEARNING_PIPELINE_SPEC.md §6 — "The Commercial Switching-Cost Moat"

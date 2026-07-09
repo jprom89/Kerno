@@ -1,5 +1,5 @@
-"""Unit tests for the POST /api/v1/scheduler/run-recalculation endpoint (KER-114).
-The scheduler stub is mocked at the router level; no database is touched."""
+"""Unit tests for the POST /api/v1/scheduler/run-recalculation endpoint (KER-201).
+The real per-tenant recalculation is mocked at the router level; no database is touched."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 from src.api.dependencies import get_conn, get_tenant_id
-from src.scheduler.nightly_bias_recalculation import RecalculationStubResult
+from src.scheduler.nightly_bias_recalculation import RecalculationRunResult
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 
@@ -21,9 +21,13 @@ def _override_get_conn():
     yield MagicMock()
 
 
-def _fake_result() -> RecalculationStubResult:
-    return RecalculationStubResult(
-        tenant_id=_TENANT_ID, override_count=3, duration_ms=12, status="stub"
+def _fake_result() -> RecalculationRunResult:
+    return RecalculationRunResult(
+        tenant_id=_TENANT_ID,
+        override_count=3,
+        dimensions=1536,
+        duration_ms=12,
+        status="recalculated",
     )
 
 
@@ -34,9 +38,9 @@ def _app_with_overrides():
     return _app
 
 
-def test_run_recalculation_returns_stub_result():
+def test_run_recalculation_returns_real_run_result():
     with patch(
-        "src.api.routers.scheduler.run_recalculation_stub", return_value=_fake_result()
+        "src.api.routers.scheduler.run_tenant_recalculation", return_value=_fake_result()
     ) as mock_run:
         client = TestClient(_app_with_overrides())
         response = client.post("/api/v1/scheduler/run-recalculation")
@@ -44,10 +48,11 @@ def test_run_recalculation_returns_stub_result():
     assert response.json() == {
         "tenant_id": _TENANT_ID,
         "override_count": 3,
+        "dimensions": 1536,
         "duration_ms": 12,
-        "status": "stub",
+        "status": "recalculated",
     }
-    # The stub receives the session tenant, never caller-supplied identity.
+    # The recalculation receives the session tenant, never caller-supplied identity.
     session_arg = mock_run.call_args[0][1]
     assert session_arg.resolve_tenant_id() == _TENANT_ID
 

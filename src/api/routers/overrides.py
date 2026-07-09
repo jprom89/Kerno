@@ -11,10 +11,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 # _oauth2_scheme and _jwt_secret are imported rather than reimplemented so the
 # reviewer token is read with the same security scheme as get_tenant_id; the
 # no-modify constraint forbids adding a public reviewer dependency to dependencies.py.
-from src.api.dependencies import _jwt_secret, _oauth2_scheme, get_conn, get_tenant_id
+from src.api.dependencies import (
+    _jwt_secret,
+    _oauth2_scheme,
+    get_conn,
+    get_tenant_id,
+    require_role,
+)
 from src.api.rate_limit import limiter
 from src.api.schemas.overrides import OverrideRequest, OverrideResponse
-from src.services.override_service import OverrideInput, capture_override
+from src.services.override_service import (
+    OVERRIDE_CAPABLE_ROLES,
+    OverrideInput,
+    capture_override,
+    resolve_reviewer_role,
+)
 
 router = APIRouter()
 
@@ -46,11 +57,8 @@ def get_reviewer_id(token: str | None = Depends(_oauth2_scheme)) -> str:
         uuid.UUID(reviewer_id)
     except ValueError:
         raise HTTPException(status_code=401, detail="sub is not a valid UUID")
-    # LIMITATION (SEC-01): the JWT 'sub' claim currently equals tenant_id (KER-108) —
-    # this is the authenticated tenant principal, not a verified per-user identity.
-    # reviewer_id is intentionally left on this pattern; per-user JWT claims (which
-    # would make this a real person) are deferred post-Sprint 1. The audit ledger
-    # records after_state.actor_attribution to make this limitation explicit.
+    # sub is the verified per-user user_id (KER-202), validated as a UUID — the real
+    # actor recorded on the override and in the KER-107 audit ledger.
     return reviewer_id
 
 
@@ -61,13 +69,21 @@ def create_override(
     body: OverrideRequest,
     tenant_id: str = Depends(get_tenant_id),
     reviewer_id: str = Depends(get_reviewer_id),
+    rbac_role: str = Depends(require_role(*OVERRIDE_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> OverrideResponse:
     """Capture a human override for the authenticated tenant and reviewer; return the stored record with 201.
-    A ValueError from the service becomes HTTP 422; TenantContextMissingError becomes HTTP 403 via the app handler."""
+    Auditors and any role that may not override are rejected with 403 by require_role. The reviewer_role is
+    derived from the verified JWT role, never the body. ValueError -> 422; TenantContextMissingError -> 403."""
+    reviewer_role = resolve_reviewer_role(rbac_role)
+    if reviewer_role is None:
+        # Defensive: require_role already excludes auditor and unknown roles.
+        raise HTTPException(
+            status_code=403, detail="your role is not permitted to submit overrides"
+        )
     override_input = OverrideInput(
         reviewer_id=reviewer_id,
-        reviewer_role=body.reviewer_role,
+        reviewer_role=reviewer_role,
         action_type=body.action_type,
         original_control_id=body.original_control_id,
         corrected_control_id=body.corrected_control_id,

@@ -17,6 +17,7 @@ from config.constants import (
 )
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError
+from src.services.bias_recalculation_service import coerce_vector
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ def _fetch_tenant_bias_vector(conn, tenant_id: uuid.UUID) -> list[float] | None:
 
     Returns None (not an empty list) when no row exists, so callers can distinguish
     "not yet calibrated" from a genuine zero vector. Treat empty list as uncalibrated too (§4.2).
+    The stored pgvector value arrives as text and is coerced to a float list (KER-201).
     """
     row = conn.execute(
         "SELECT bias_vector FROM retrieval_bias WHERE tenant_id = :tenant_id",
@@ -133,7 +135,7 @@ def _fetch_tenant_bias_vector(conn, tenant_id: uuid.UUID) -> list[float] | None:
     ).fetchone()
     if row is None:
         return None
-    return list(row[0])
+    return coerce_vector(row[0])
 
 
 def _run_biased_query(

@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.3 | Updated: 2026-07-05 | Changes: Added §9 Security Hardening (KER-SEC-01); renumbered GTM Correction to §10 and Post-File Review Protocol to §11 -->
+<!-- Version: 1.4 | Updated: 2026-07-07 | Changes: Appended §12 Sprint 2a Backlog (KER-201, KER-202) with KER-202 design decisions -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -328,7 +328,7 @@ Grade: B → B+ (post-remediation)
 Resolved:
 - SEC-01: reviewer_role constrained to ReviewerRole enum (VCISO/FCISO/INTERNAL_ADMIN);
   actor_attribution honest marker added to override audit entries.
-  Full per-user JWT identity deferred to post-Sprint 2.
+  (Superseded — see "Resolved (Sprint 2a)" below for the full fix.)
 - SEC-02: seed script hard-exits unless KERNO_ENV=development;
   plaintext password no longer printed.
 - SEC-03/04: generic RuntimeError handler with correlation ID;
@@ -337,11 +337,17 @@ Resolved:
   export (30/min), overrides (60/min).
 - SEC-06: uv.lock generated (54 packages, reproducible installs).
 
+Resolved (Sprint 2a):
+- SEC-01 (full): per-user JWT identity live — reviewer_id and
+  reviewer_role sourced from verified JWT claims;
+  OverrideRequest.reviewer_role removed from request schema.
+- SEC-07: log hygiene — audit entries now carry real actor_id
+  (user_id from JWT); actor_attribution placeholder removed.
+- SEC-08: export role field — reviewer_role in override audit
+  after_state is now the JWT-derived ReviewerRole enum value.
+
 Open (deferred):
 - SEC-05 (full): gateway-level rate limiting — pending infra decision.
-- SEC-07/08: server-side log hygiene + export role field —
-  auto-resolved when per-user JWT claims land.
-- Per-user JWT identity (SEC-01 full fix) — Sprint 2 or later.
 
 ---
 
@@ -423,4 +429,165 @@ made during the build without reading the code itself.
 - Must not mark a gate ✅ if it has not actually checked it.
 - Must not write "None" under open questions if there is any ambiguity.
 - Must not proceed to the next file if any gate shows ❌.
+
+---
+
+## §12 — Sprint 2a Backlog
+
+**Sprint goal:** Close the learning-loop and identity gaps left open after
+Sprint 1 — activate real nightly bias recalculation (KER-201) and replace the
+placeholder actor identity with verified per-user authentication and RBAC
+(KER-202).
+
+### Regulatory update (recorded 7 July 2026)
+
+The EU Digital Omnibus on AI (adopted 29 June 2026) defers the Annex III
+high-risk obligations — including EU AI Act Article 19 log retention — from
+2 August 2026 to 2 December 2027. The AI-decision log story (KER-203) is
+therefore no longer a hard-deadline emergency and moves to Sprint 2b. Sprint 2a
+is scoped to two stories: KER-201 and KER-202.
+
+### KER-202 — Per-user identity and RBAC enforcement
+
+- **Priority:** Must-have · **Points:** 13 · **Reg tie:** EU AI Act Article 14
+  (human-oversight accountability); NIS2 (audit-trail attribution).
+
+**Acceptance criteria:**
+1. New users table (migration 019): user_id UUID PK, tenant_id, email (unique
+   per tenant), scrypt password_hash, role, is_active, created_at. RLS +
+   tenant_isolation_policy on the users table.
+2. Login issues a JWT carrying user_id (as sub), email, role, tenant_id.
+3. Override capture records reviewer_id from the verified JWT user_id and
+   reviewer_role from the verified JWT role claim.
+4. OverrideRequest.reviewer_role field is REMOVED — role is never accepted from
+   the request body. The ReviewerRole enum (§9 SEC-01) still bounds the value.
+5. The actor_attribution="tenant_principal_pending_per_user_auth" marker is
+   removed from override audit after_state; the ledger now attributes to a real
+   actor_id. The TODO at src/api/routers/overrides.py:52 is removed.
+6. RBAC gates on the six roles:
+   - Auditor = read-only (403 on any write)
+   - Compliance Lead + vCISO = approve/override
+   - Platform Engineer = connector/webhook management
+   - Security Engineer + End-Customer Admin = per §4 existing scope
+7. All existing tests continue to pass; auth fixtures updated to mint per-user
+   JWTs; new tests cover role gating (403 cases) and the removed request field.
+8. Resolves SEC-01 fully; auto-resolves SEC-07/08 (update §9 open items).
+
+**Design decisions implemented (KER-202):**
+1. **REVIEWER_ROLE_MAP** (src/services/override_service.py) bridges the two role
+   vocabularies without merging them: a user's 6-value RBAC role (JWT claim,
+   config.constants.RbacRole) maps to the 3-value override ReviewerRole enum used
+   for confidence weighting —
+     vciso -> VCISO (senior 1.0), compliance_lead -> VCISO (senior 1.0),
+     security_engineer -> FCISO (senior 1.0),
+     platform_engineer -> INTERNAL_ADMIN (junior 0.5),
+     end_customer_admin -> INTERNAL_ADMIN (junior 0.5),
+     auditor -> None (read-only — 403 before any DB write).
+   OVERRIDE_CAPABLE_ROLES is derived from the map (every non-None role) so the
+   allow-list and the map never drift. reviewer_role is always derived from the
+   verified JWT role, never accepted from the request body.
+2. **users table RLS without FORCE** (migration 019) — a deliberate exception to
+   the migration-018 FORCE rule. Login must look up a user by email before any
+   tenant context exists, and FORCE would block even the owner role from that
+   pre-context read (proven: SET row_security=off errors under FORCE). So users
+   gets ENABLE ROW LEVEL SECURITY but NOT FORCE, with a context-optional policy
+   that permits reads when app.current_tenant_id is unset (login scan) and
+   restricts to the tenant otherwise. This mirrors how migration 018 leaves the
+   tenants table unforced for the same auth-bootstrap reason. Security note:
+   without FORCE the owner role bypasses the policy, so users isolation relies on
+   the fact that only the login query reads users (subsequent requests read
+   identity from the JWT and never re-query users).
+
+### KER-201 — Activate real nightly bias recalculation
+
+- **Priority:** Must-have · **Points:** 8 · **Reg tie:** EU AI Act Article 14
+  (human oversight — override feedback must actually influence retrieval).
+
+The pure-math recalculate_retrieval_bias / persist_retrieval_bias and the
+per-tenant batch orchestrator run_nightly_bias_recalculation are already
+implemented and unit-tested. This story is stub-wiring + scheduling + end-to-end
+proof only — NOT bug-fixing (the bugs listed in earlier drafts were verified
+already-resolved at head s4t5u6v7).
+
+**Acceptance criteria:**
+1. The KER-114 stub path (run_recalculation_stub + POST /api/v1/scheduler/
+   run-recalculation) is replaced by / delegates to the real batch, so a manual
+   trigger performs an actual recalculation and updates retrieval_bias.
+2. Formula uses existing constants exactly: DECAY_FACTOR=0.85, LEARNING_RATE=0.15,
+   SENIOR_REVIEWER_WEIGHT=1.0, JUNIOR_REVIEWER_WEIGHT=0.5.
+3. A nightly scheduling mechanism is wired into the app (APScheduler or cron
+   entrypoint — document the chosen mechanism in CLAUDE.md).
+4. Each real recalculation emits a KER-107 ledger entry:
+   action="bias_recalculated", object_type="bias_vector",
+   after_state={override_count, dimensions, updated_at} — replacing the stub
+   marker for real runs.
+5. Integration test (live DB): seed overrides for a tenant, run the batch, assert
+   retrieval_bias moved in the expected direction and the subsequent
+   get_similar_controls ranking reflects the new bias.
+6. Per-tenant failure isolation retained.
+7. TODO blocks at nightly_bias_recalculation.py:90 and
+   bias_recalculation_service.py:57 removed.
+
+**Design decisions implemented (KER-201):**
+1. **Scheduling mechanism (AC-3): cron entrypoint, not APScheduler.** The nightly
+   trigger is `python -m src.scheduler.nightly_bias_recalculation` (a `main()` in
+   the scheduler module), invoked by the platform scheduler — cron on Linux,
+   Task Scheduler on Windows dev. Chosen over APScheduler because it adds no
+   dependency (uv.lock unchanged, §9 SEC-06), keeps retries/alerting with the
+   platform scheduler, and cannot interfere with API worker processes. The
+   manual per-tenant path (POST /api/v1/scheduler/run-recalculation) delegates
+   to the same shared core, so both paths produce identical writes.
+2. **pgvector text coercion (coerce_vector).** psycopg2 returns pgvector columns
+   as text (no client adapter is registered), so the "ready-made" batch would
+   have crashed on any live vector (`list(row[0])` yields characters). Proven by
+   live probe during implementation. `coerce_vector` in
+   bias_recalculation_service.py is the single parser; used by the scheduler
+   fetches AND by retrieval_service._fetch_tenant_bias_vector — the one touch
+   outside the KER-201 file list, required for AC-5's ranking assertion (the
+   biased similarity query needs a real float list).
+3. **No-new-overrides runs write nothing.** A tenant with zero overrides since
+   last_recalculated_at is skipped: no bias upsert (the column is
+   vector(1536) NOT NULL — an uncalibrated tenant has no persistable vector)
+   and no ledger entry (a nightly no-op entry per silent tenant would bloat the
+   KER-107 chain). The manual endpoint reports status="no_new_overrides".
+4. **PLATFORM_SCHEDULER_TENANT_ID** — a fixed, valid-v4, deliberately
+   nonexistent UUID the batch presents to the §3 tenant-context guard for its
+   one internal query (listing active tenants; the tenants table is unforced
+   per migration 018). It satisfies the guard without bypassing it: if the
+   tenants table were ever policy-forced, the batch would see zero tenants
+   (fail closed) rather than leak.
+5. **persist_retrieval_bias returns its timestamp** so the ledger entry's
+   after_state.updated_at is byte-identical to the row's last_recalculated_at.
+
+### Dependency table
+
+| Story | Depends on | Nature |
+|---|---|---|
+| KER-202 | — | Independent; foundational for later surfaces (audit-actor + RBAC gating) |
+| KER-201 | — | Independent (uses existing overrides / tenant_embeddings / retrieval_bias) |
+
+Neither story has a cross-story prerequisite. Recommended order: **KER-202
+first** (its per-user-JWT fixture change ripples through tests), then KER-201.
+
+### Capacity table
+
+| Set | Stories | Points |
+|---|---|---|
+| **Sprint 2a total (Must-have only)** | KER-202 (13) + KER-201 (8) | **21** |
+
+Baseline: the full test suite must stay green at Sprint 2a close.
+Deferred to later sprints: KER-203 (Sprint 2b — Art. 19 deadline now
+2 Dec 2027), KER-204 (Trust Center), KER-205 (webhook ingestion).
+
+> ### 🏁 Sprint 2a — Definition of Done (banner)
+> Sprint 2a is closed only when **all of the following hold**:
+> 1. All baseline tests + every new KER-201/KER-202 test are green
+>    (unit + security + integration), 0 failed.
+> 2. Both production TODO markers are removed:
+>    nightly_bias_recalculation.py:90 and bias_recalculation_service.py:57
+>    (KER-201), and the overrides.py actor_attribution placeholder (KER-202).
+> 3. Migration 019 is applied and physically verified on the dev DB
+>    (users table present with RLS + tenant_isolation_policy).
+> 4. SEC-01 is marked closed in §9 (per-user identity landed; role no longer
+>    request-supplied; audit attributes to a real actor); SEC-07/08 reviewed.
 

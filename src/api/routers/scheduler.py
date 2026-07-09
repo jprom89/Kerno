@@ -1,6 +1,6 @@
 """FastAPI router for the manual scheduler trigger mounted at /api/v1/scheduler.
-Internal/admin surface (KER-114) — no scheduling infrastructure exists in the app yet,
-so the nightly recalculation stub is triggered manually through this endpoint."""
+Internal/admin surface (KER-201) — the nightly batch runs via the cron entrypoint in
+src/scheduler/nightly_bias_recalculation.py; this endpoint recalculates one tenant on demand."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from src.api.dependencies import get_conn, get_tenant_id
 from src.api.rate_limit import limiter
 from src.api.schemas.scheduler import RecalculationRunResponse
-from src.scheduler.nightly_bias_recalculation import run_recalculation_stub
+from src.scheduler.nightly_bias_recalculation import run_tenant_recalculation
 
 router = APIRouter()
 
@@ -32,15 +32,18 @@ def run_recalculation(
     tenant_id: str = Depends(get_tenant_id),
     conn=Depends(get_conn),
 ) -> RecalculationRunResponse:
-    """Run the KER-114 recalculation stub for the authenticated tenant.
+    """Run a real bias recalculation for the authenticated tenant (KER-201).
 
-    Logs the run, records it in the KER-107 audit ledger, and reports the
-    pending override count — without modifying any bias vector (stub).
+    Processes every override captured since the tenant's last recalculation,
+    updates the retrieval_bias row, and records the run in the KER-107 audit
+    ledger — all in one transaction. Reports status "no_new_overrides" (and
+    writes nothing) when there is nothing new to process.
     """
-    result = run_recalculation_stub(conn, _SessionContext(tenant_id))
+    result = run_tenant_recalculation(conn, _SessionContext(tenant_id))
     return RecalculationRunResponse(
         tenant_id=result.tenant_id,
         override_count=result.override_count,
+        dimensions=result.dimensions,
         duration_ms=result.duration_ms,
         status=result.status,
     )

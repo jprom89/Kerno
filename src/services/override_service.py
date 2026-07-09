@@ -42,7 +42,12 @@ from __future__ import annotations
 import dataclasses
 import uuid
 
-from config.constants import JUNIOR_REVIEWER_WEIGHT, SENIOR_REVIEWER_WEIGHT
+from config.constants import (
+    JUNIOR_REVIEWER_WEIGHT,
+    RbacRole,
+    ReviewerRole,
+    SENIOR_REVIEWER_WEIGHT,
+)
 from src.models.override import Override
 from src.services.anonymisation import anonymise
 from src.services.audit_log import append_audit_entry
@@ -51,6 +56,37 @@ from src.services.tenant_context import resolve_and_set_tenant_context
 # Reviewer roles that carry full (senior) confidence weight.
 # Roles absent from this set receive the junior weight.
 _SENIOR_ROLES = frozenset({"vciso", "fciso"})
+
+# Bridges the two role vocabularies (KER-202 design decision): a user's RBAC role
+# (JWT claim, RbacRole) maps to the override ReviewerRole enum used for confidence
+# weighting. The two enums are never merged; this map is the only link between
+# them. auditor maps to None — auditors are read-only and are rejected with 403
+# before any override is written (see OVERRIDE_CAPABLE_ROLES and the overrides
+# router). reviewer_role is therefore always derived from the verified JWT role,
+# never accepted from the request body.
+REVIEWER_ROLE_MAP: dict[RbacRole, ReviewerRole | None] = {
+    RbacRole.VCISO: ReviewerRole.VCISO,                        # senior weight 1.0
+    RbacRole.COMPLIANCE_LEAD: ReviewerRole.VCISO,              # senior weight 1.0
+    RbacRole.SECURITY_ENGINEER: ReviewerRole.FCISO,           # senior weight 1.0
+    RbacRole.PLATFORM_ENGINEER: ReviewerRole.INTERNAL_ADMIN,  # junior weight 0.5
+    RbacRole.END_CUSTOMER_ADMIN: ReviewerRole.INTERNAL_ADMIN,  # junior weight 0.5
+    RbacRole.AUDITOR: None,                                    # read-only — 403
+}
+
+# The RBAC roles permitted to submit an override — every role whose map value is
+# not None. Derived from the map so the allow-list and the map never drift.
+OVERRIDE_CAPABLE_ROLES: tuple[RbacRole, ...] = tuple(
+    role for role, reviewer_role in REVIEWER_ROLE_MAP.items() if reviewer_role is not None
+)
+
+
+def resolve_reviewer_role(rbac_role: str) -> ReviewerRole | None:
+    """Return the override ReviewerRole for a user's RBAC role, or None if that role
+    may not submit overrides (auditor, or any role not in REVIEWER_ROLE_MAP)."""
+    try:
+        return REVIEWER_ROLE_MAP[RbacRole(rbac_role)]
+    except ValueError:
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -182,13 +218,12 @@ def _record_override_audit_entry(conn, override: Override) -> None:
         object_type="override",
         object_id=str(override.override_id),
         control_id=override.original_control_id,
+        # actor_id is override.reviewer_id — a verified per-user JWT user_id
+        # (KER-202); the tenant-principal placeholder attribution is removed.
         before_state={"control_id": override.original_control_id},
-        # TODO: replace actor_attribution with verified per-user identity
-        # when per-user JWT claims land (post-Sprint 1)
         after_state={
             "control_id": override.corrected_control_id or override.original_control_id,
             "justification_text": override.justification_text,
-            "actor_attribution": "tenant_principal_pending_per_user_auth",
         },
     )
 

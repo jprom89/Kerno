@@ -128,6 +128,40 @@ def get_tenant_id(token: str | None = Depends(_oauth2_scheme)) -> str:
     return tenant_id
 
 
+def get_role(token: str | None = Depends(_oauth2_scheme)) -> str:
+    """Decode a Bearer JWT and return the RBAC role claim (KER-202).
+    Raises HTTP 401 if the token is missing, expired, invalid, or carries no role claim."""
+    if token is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="invalid token")
+    role = payload.get("role")
+    if not role:
+        raise HTTPException(status_code=401, detail="role claim missing")
+    return role
+
+
+def require_role(*allowed_roles: str):
+    """Return a dependency that admits only the given RBAC roles, else HTTP 403.
+
+    Reads the role from the verified JWT (via get_role, which 401s on a bad token)
+    and returns it so the endpoint can reuse the value. Pass config.constants.RbacRole
+    members; they compare equal to the JWT's role string. (KER-202 RBAC gate.)
+    """
+    def _require_role_dependency(role: str = Depends(get_role)) -> str:
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=403, detail="your role is not permitted to perform this action"
+            )
+        return role
+
+    return _require_role_dependency
+
+
 def get_conn() -> Generator:
     """Yield an _ExecutableConn wrapping a pooled psycopg2 connection; commit on success, rollback on exception."""
     pool = _get_pool()

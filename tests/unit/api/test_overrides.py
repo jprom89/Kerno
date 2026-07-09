@@ -1,9 +1,12 @@
 """Unit tests for the POST /api/v1/overrides endpoint covering approve, edit, and validation failures.
-capture_override is mocked at the router level; no database is touched."""
+
+capture_override is mocked at the router level; no database is touched. Auth is supplied per-user
+(KER-202): the reviewer's tenant, id, and role come from dependencies overridden here (get_role
+stands in for the verified JWT role claim); RBAC gating itself is exercised in test_rbac_gates.py.
+"""
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -12,14 +15,12 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_role, get_tenant_id
 from src.api.routers.overrides import get_reviewer_id
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
-_REVIEWER_ID = "a0000000-0000-4000-a000-000000000001"
+_REVIEWER_ID = "d0000000-0000-4000-d000-000000000004"
 _OVERRIDE_ID = "e0000000-0000-4000-e000-000000000001"
-
-os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -39,10 +40,11 @@ def _fake_override(action_type: str, corrected_control_id: str | None) -> Simple
     )
 
 
-def _app_with_overrides():
+def _app_with_overrides(role: str = "vciso"):
     _app = create_app()
     _app.dependency_overrides[get_tenant_id] = lambda: _TENANT_ID
     _app.dependency_overrides[get_reviewer_id] = lambda: _REVIEWER_ID
+    _app.dependency_overrides[get_role] = lambda: role
     _app.dependency_overrides[get_conn] = _override_get_conn
     return _app
 
@@ -56,11 +58,7 @@ def test_approve_action_returns_201():
         client = TestClient(_app_with_overrides())
         response = client.post(
             "/api/v1/overrides",
-            json={
-                "reviewer_role": "vciso",
-                "action_type": "approve",
-                "original_control_id": "ctrl-001",
-            },
+            json={"action_type": "approve", "original_control_id": "ctrl-001"},
         )
     assert response.status_code == 201
     body = response.json()
@@ -69,21 +67,20 @@ def test_approve_action_returns_201():
     assert body["corrected_control_id"] is None
 
 
-def test_invalid_reviewer_role_returns_422():
-    # SEC-01 gate check: a reviewer_role outside the ReviewerRole enum is rejected
-    # at validation (422) before any service call — capture_override is never reached.
-    with patch("src.api.routers.overrides.capture_override") as mock_capture:
-        client = TestClient(_app_with_overrides())
+def test_reviewer_role_derived_from_jwt_not_body():
+    # The reviewer_role passed to capture_override must come from the JWT role
+    # (vciso -> ReviewerRole.VCISO), never from any value in the request body.
+    override = _fake_override("approve", None)
+    with patch("src.api.routers.overrides.capture_override", return_value=override) as mock_capture:
+        client = TestClient(_app_with_overrides(role="vciso"))
         response = client.post(
             "/api/v1/overrides",
-            json={
-                "reviewer_role": "hacker",
-                "action_type": "approve",
-                "original_control_id": "ctrl-001",
-            },
+            json={"action_type": "approve", "original_control_id": "ctrl-001",
+                  "reviewer_role": "internal_admin"},  # ignored — not in the schema
         )
-    assert response.status_code == 422
-    mock_capture.assert_not_called()
+    assert response.status_code == 201
+    override_input = mock_capture.call_args[0][2]
+    assert override_input.reviewer_role == "vciso"
 
 
 def test_edit_action_with_corrected_control_id_returns_201():
@@ -93,7 +90,6 @@ def test_edit_action_with_corrected_control_id_returns_201():
         response = client.post(
             "/api/v1/overrides",
             json={
-                "reviewer_role": "vciso",
                 "action_type": "edit",
                 "original_control_id": "ctrl-001",
                 "corrected_control_id": "ctrl-002",
@@ -111,11 +107,7 @@ def test_edit_without_corrected_control_id_returns_422():
         client = TestClient(_app_with_overrides())
         response = client.post(
             "/api/v1/overrides",
-            json={
-                "reviewer_role": "vciso",
-                "action_type": "edit",
-                "original_control_id": "ctrl-001",
-            },
+            json={"action_type": "edit", "original_control_id": "ctrl-001"},
         )
     assert response.status_code == 422
     assert "corrected_control_id" in response.json()["detail"]
@@ -127,11 +119,7 @@ def test_reject_without_corrected_control_id_returns_422():
         client = TestClient(_app_with_overrides())
         response = client.post(
             "/api/v1/overrides",
-            json={
-                "reviewer_role": "vciso",
-                "action_type": "reject",
-                "original_control_id": "ctrl-001",
-            },
+            json={"action_type": "reject", "original_control_id": "ctrl-001"},
         )
     assert response.status_code == 422
     assert "corrected_control_id" in response.json()["detail"]
@@ -143,11 +131,7 @@ def test_invalid_action_type_returns_422():
         client = TestClient(_app_with_overrides())
         response = client.post(
             "/api/v1/overrides",
-            json={
-                "reviewer_role": "vciso",
-                "action_type": "approve_all",
-                "original_control_id": "ctrl-001",
-            },
+            json={"action_type": "approve_all", "original_control_id": "ctrl-001"},
         )
     assert response.status_code == 422
     assert "action_type" in response.json()["detail"]

@@ -7,13 +7,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from config.constants import ReviewerRole
-
 
 class OverrideRequest(BaseModel):
-    # reviewer_role is bounded to the ReviewerRole enum (SEC-01): an out-of-set
-    # value is rejected with 422 instead of reaching the DB enum as a 500.
-    reviewer_role: ReviewerRole
+    # reviewer_role is NOT accepted from the request (KER-202): the reviewer's role
+    # is derived from the verified JWT and mapped to a ReviewerRole in
+    # override_service.REVIEWER_ROLE_MAP. reviewer_id likewise comes from the JWT.
     action_type: str
     original_control_id: str
     corrected_control_id: str | None = None

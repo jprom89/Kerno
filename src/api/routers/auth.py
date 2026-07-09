@@ -21,11 +21,11 @@ router = APIRouter()
 
 @router.post("/login")
 def login(body: LoginRequest, conn=Depends(get_conn)) -> TokenResponse:
-    """Authenticate with email and password, return a signed JWT on success.
+    """Authenticate with email and password, return a signed per-user JWT on success.
 
-    Returns 401 with the detail 'invalid credentials' for any failure — wrong
-    email, wrong password, or inactive tenant — to prevent leaking which field
-    is incorrect. The service layer uses timing-consistent verification.
+    Returns 401 with the detail 'invalid credentials' for any failure — unknown
+    email, wrong password, or inactive user — to prevent leaking which field is
+    incorrect. The service layer uses timing-consistent verification (KER-202).
     """
     token = authenticate_and_issue_token(conn, body.email, body.password)
     if token is None:

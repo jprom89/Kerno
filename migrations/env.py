@@ -31,6 +31,7 @@ import src.models.override  # noqa: F401
 import src.models.recommendation  # noqa: F401
 import src.models.remediation_routing_rule  # noqa: F401
 import src.models.remediation_task  # noqa: F401
+import src.models.user  # noqa: F401
 import src.models.retrieval_bias  # noqa: F401
 import src.models.tenant  # noqa: F401
 
