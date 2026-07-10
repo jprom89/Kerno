@@ -333,3 +333,14 @@ AI_DECISION_LOG_RETENTION_DAYS: int = 180
 # seconds. 300 = 5 minutes (CLAUDE.md §13 KER-204 AC-4) — public traffic must
 # never hammer the coverage query on every hit.
 TRUST_CENTER_CACHE_TTL_SECONDS: int = 300
+
+# ---------------------------------------------------------------------------
+# Webhook ingestion (KER-205)
+# ---------------------------------------------------------------------------
+
+# How long a (source_system, external_ref) pair is considered a duplicate
+# after first ingestion, in hours (CLAUDE.md §13 KER-205 AC-4). A repeat
+# delivery inside this window returns 200 without re-processing; after the
+# window the same external_ref may legitimately be re-ingested (the upstream
+# system may have changed the underlying record).
+WEBHOOK_DEDUP_WINDOW_HOURS: int = 24

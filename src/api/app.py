@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from src.api import trust_center
+from src.api import trust_center, webhooks
 from src.api.rate_limit import limiter
 from src.api.routers import ai_decisions, coverage, export, overrides, panel, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
@@ -62,6 +62,9 @@ def create_app() -> FastAPI:
     app.include_router(
         trust_center.admin_router, prefix="/api/v1/trust-center", tags=["trust-center"]
     )
+    # Webhooks (KER-205): /ingest is public (HMAC-authenticated); the
+    # registration/rotation management endpoints are JWT + platform_engineer.
+    app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
 
     @app.get("/", include_in_schema=False)
     def root():
