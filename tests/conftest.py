@@ -327,8 +327,9 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     for tenant_id in (TENANT_A_ID, TENANT_B_ID):
         conn.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_id)])
         for table in (
-            "audit_log", "overrides", "retrieval_bias", "tenant_embeddings",
-            "context_records", "remediation_tasks", "remediation_routing_rules",
+            "audit_log", "ai_decision_log", "overrides", "retrieval_bias",
+            "tenant_embeddings", "context_records", "remediation_tasks",
+            "remediation_routing_rules",
         ):
             conn.execute(
                 f"DELETE FROM {table} WHERE tenant_id = %s",

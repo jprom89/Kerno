@@ -133,7 +133,31 @@ def test_set_tenant_context_is_first_db_call():
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     assert len(spy.calls) > 0
     assert "SET LOCAL" in spy.calls[0][0]
-    assert all("SET LOCAL" not in call[0] for call in spy.calls[1:])
+    # Sub-services (KER-203 decision log) may re-set the SAME tenant context —
+    # what must never happen is a SET LOCAL pointing at a different tenant.
+    for sql, params in spy.calls:
+        if "SET LOCAL" in sql:
+            assert params == [str(_TENANT_ID)]
+
+
+def test_recommendation_writes_ai_decision_log_in_same_transaction():
+    # KER-203 AC-2: the decision-log INSERT rides the same connection as the
+    # recommendation INSERT — no recommendation without its retained record.
+    spy = _SpyConn()
+    mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
+    with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
+         patch("src.services.mapping_service.write_audit_event"), \
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
+        map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
+    statements = [sql for sql, _ in spy.calls]
+    assert any("INSERT INTO recommendations" in sql for sql in statements)
+    log_params = next(p for s, p in spy.calls if "INSERT INTO ai_decision_log" in s)
+    assert log_params["control_id"] == _CONTROL.control_id
+    assert log_params["output_status"] == "met"
+    assert log_params["evidence_ids"] == ["rec-001"]
+    assert log_params["model_version"] == _MODEL_ID
+    assert len(log_params["input_snapshot_hash"]) == 64  # SHA-256 hex digest
+    assert 0.0 <= log_params["confidence_score"] <= 1.0
 
 
 # ---------------------------------------------------------------------------

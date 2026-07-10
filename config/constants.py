@@ -313,3 +313,13 @@ SCRYPT_KEY_LENGTH: int = 32
 # Length of the random salt generated for each new password hash, in bytes.
 # 32 bytes = 256 bits of entropy; this makes pre-computation attacks infeasible.
 SCRYPT_SALT_LENGTH: int = 32
+
+# ---------------------------------------------------------------------------
+# AI-decision log retention (KER-203)
+# ---------------------------------------------------------------------------
+
+# How long ai_decision_log rows are retained before the prune job removes them,
+# in days. 180 days is the Sprint 2b policy floor (CLAUDE.md §13 KER-203 AC-4);
+# EU AI Act Article 19 record-keeping is the regulatory driver. The prune job
+# (src/scheduler/prune_ai_decision_log.py) deletes rows older than this window.
+AI_DECISION_LOG_RETENTION_DAYS: int = 180

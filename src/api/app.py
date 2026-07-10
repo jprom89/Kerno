@@ -21,7 +21,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from src.api.rate_limit import limiter
-from src.api.routers import coverage, export, overrides, panel, register, remediation, scheduler, submissions
+from src.api.routers import ai_decisions, coverage, export, overrides, panel, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
 
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(remediation.router, prefix="/api/v1/remediation", tags=["remediation"])
     app.include_router(export.router, prefix="/api/v1/export", tags=["export"])
     app.include_router(scheduler.router, prefix="/api/v1/scheduler", tags=["scheduler"])
+    app.include_router(ai_decisions.router, prefix="/api/v1", tags=["ai-decisions"])
 
     @app.get("/", include_in_schema=False)
     def root():

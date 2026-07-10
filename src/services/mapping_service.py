@@ -2,11 +2,14 @@
 
 Call map_control() with a ControlInput and evidence list; raises MappingError on any
 LLM or validation failure, TenantContextMissingError when tenant context is missing.
+Every persisted recommendation also writes one ai_decision_log row in the same
+transaction (KER-203) — no recommendation can exist without its retained decision record.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -25,6 +28,7 @@ from config.constants import (
 from src.db.rls import set_tenant_context
 from src.exceptions import MappingError, TenantContextMissingError  # noqa: F401
 from src.models.recommendation import CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENCE_MEDIUM
+from src.services.ai_decision_log_service import emit_decision_log
 from src.services.audit_log import write_audit_event
 from src.services.llm_client import get_llm_client
 
@@ -113,8 +117,10 @@ def map_control(
 
     Sets tenant context as the first DB call, then calls the LLM, validates
     the JSON response, marks prior recommendations superseded, inserts a new
-    row, and emits an audit event. Raises MappingError on any LLM or parse
-    failure, TenantContextMissingError if tenant_id is None or not a valid UUIDv4.
+    row, writes the retained ai_decision_log record (KER-203 — same
+    transaction, so neither row can exist without the other), and emits an
+    audit event. Raises MappingError on any LLM or parse failure,
+    TenantContextMissingError if tenant_id is None or not a valid UUIDv4.
     """
     set_tenant_context(conn, tenant_id)
     model_id = _get_model_id()
@@ -131,6 +137,7 @@ def map_control(
         conn, rec_id, tenant_id, control.control_id,
         parsed, confidence_level, requires_human_review, snapshot, now,
     )
+    _record_decision_log(conn, tenant_id, control.control_id, parsed, snapshot, model_id)
     write_audit_event(
         conn, str(tenant_id), "recommendation_generated",
         {"recommendation_id": rec_id, "control_id": control.control_id, "status": parsed["status"]},
@@ -332,6 +339,46 @@ def _persist_recommendation(
             "input_snapshot": json.dumps(snapshot),
             "generated_at": now,
         },
+    )
+
+
+def _hash_input_snapshot(snapshot: dict) -> str:
+    """Return the SHA-256 hex digest of the canonical JSON form of the snapshot.
+
+    Canonical means sorted keys and no insignificant whitespace, so the same
+    inputs always produce the same digest regardless of dict ordering. Only
+    this hash reaches ai_decision_log — never the snapshot itself — which is
+    what keeps personal data out of the retained log (KER-203 AC-6).
+    """
+    canonical_json = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def _record_decision_log(
+    conn,
+    tenant_id,
+    control_id: str,
+    parsed: dict,
+    snapshot: dict,
+    model_id: str,
+) -> None:
+    """Write the retained AI-decision record for this recommendation (KER-203 AC-2).
+
+    Runs on the same connection and transaction as the recommendation INSERT,
+    so the recommendation and its decision record commit or roll back
+    together. Stores the snapshot's SHA-256 fingerprint, the model's outcome
+    and confidence, its reasoning extract, and the generating model version.
+    """
+    emit_decision_log(
+        conn,
+        tenant_id,
+        control_id=control_id,
+        evidence_ids=parsed["evidence_ids"],
+        input_snapshot_hash=_hash_input_snapshot(snapshot),
+        output_status=parsed["status"],
+        confidence_score=parsed["confidence"],
+        rationale_extract=parsed["reasoning"],
+        model_version=model_id,
     )
 
 

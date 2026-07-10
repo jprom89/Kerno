@@ -19,6 +19,7 @@ from src.models import Base
 # Import every model module so their table definitions register with Base.metadata.
 # Alembic's autogenerate compares Base.metadata against the live schema; a model
 # that is never imported is invisible to it and will appear as a missing table.
+import src.models.ai_decision_log  # noqa: F401
 import src.models.audit_log  # noqa: F401
 import src.models.compliance_control  # noqa: F401
 import src.models.control_crosswalk  # noqa: F401

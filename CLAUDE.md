@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.4 | Updated: 2026-07-07 | Changes: Appended §12 Sprint 2a Backlog (KER-201, KER-202) with KER-202 design decisions -->
+<!-- Version: 1.5 | Updated: 2026-07-10 | Changes: Added §13 Sprint 2b -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -590,4 +590,279 @@ Deferred to later sprints: KER-203 (Sprint 2b — Art. 19 deadline now
 >    (users table present with RLS + tenant_isolation_policy).
 > 4. SEC-01 is marked closed in §9 (per-user identity landed; role no longer
 >    request-supplied; audit attributes to a real actor); SEC-07/08 reviewed.
+
+---
+
+## §13 — Sprint 2b Backlog
+
+**Sprint goal:** Make the AI decision trail retainable and queryable (KER-203),
+give tenants a public compliance face (KER-204), and open a secure evidence
+intake channel (KER-205) — before the September 2026 customer rollout.
+
+### Regulatory context (recorded 9 July 2026)
+
+The EU Digital Omnibus on AI entered into force ~2 July 2026. Article 19 log
+retention (Annex III high-risk) now bites on 2 December 2027 — but KER-203
+ships in THIS sprint anyway: NIS2/DORA enterprise buyers ask for decision-log
+retention during procurement, and retrofitting logging under every
+recommendation write after launch is far more expensive than building it in
+before the September 2026 rollout. The legal deadline is the backstop, not
+the driver.
+
+Baseline (verified 9 July 2026, commit 76fc09a): CLAUDE.md v1.4; migration
+head t5u6v7w8 (019 — users); 373 tests passing, 0 failed;
+src/api/trust_center.py and src/api/webhooks.py do not exist (both §8 rows
+still open — this sprint creates them); no IngestService ORM layer exists —
+KER-205 builds a thin normalisation layer over context_records (migration
+007) and the existing evidence-linking patterns.
+
+### KER-203 — AI-decision log retention
+
+- **Priority:** Must-have · **Points:** 13 · **Reg tie:** EU AI Act
+  Articles 12, 19, 26 (deadline 2 Dec 2027; ship before Sep 2026 rollout).
+
+**Acceptance criteria:**
+1. New ai_decision_log table (migration 020): correlation_id UUID PK,
+   tenant_id UUID NOT NULL, control_id UUID NOT NULL, evidence_ids UUID[]
+   NOT NULL, input_snapshot_hash TEXT NOT NULL, output_status TEXT NOT NULL,
+   confidence_score FLOAT NOT NULL, rationale_extract TEXT NOT NULL,
+   model_version TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now().
+   ENABLE + FORCE ROW LEVEL SECURITY with tenant_isolation_policy — this is a
+   pure tenant-data table; the users-table auth-bootstrap exception
+   (§12 KER-202 decision 2) does NOT apply. Indexes on (tenant_id, created_at),
+   (control_id), (confidence_score).
+2. Every recommendation generation (mapping_service.map_control) emits exactly
+   one ai_decision_log row in the same transaction as the recommendation
+   write — commit and rollback together. No recommendation can exist without
+   its log entry (same atomicity pattern as override + KER-107 ledger).
+3. This log is SEPARATE from the KER-107 human-decision ledger — append-only
+   but NOT hash-chained. Different retention, volume, and query profile;
+   hash-chaining at recommendation volume would be pure overhead.
+4. Entries retained >= 180 days. A prune job removes rows past the configured
+   window. Window defined as AI_DECISION_LOG_RETENTION_DAYS in
+   config/constants.py (default 180, §2.4-compliant named constant). Prune job
+   runnable as a cron entrypoint alongside the KER-201 scheduler:
+   python -m src.scheduler.prune_ai_decision_log
+5. Query API (JWT-scoped; tenant_id from the authenticated session — never
+   from the request): GET /api/v1/ai-decisions with optional query params
+   control_id (UUID), after (ISO date), confidence_gte (float 0–1).
+6. GDPR alignment: input_snapshot_hash only (SHA-256 of the raw input
+   snapshot — never the snapshot itself). No raw personal data in any log
+   field. Legal basis (EU AI Act Article 19) documented in
+   docs/ai_decision_log_runbook.md.
+7. Integration test (live DB): a recommendation write produces a retained,
+   queryable ai_decision_log entry; the prune job deletes rows outside the
+   retention window and retains rows inside it.
+
+**Design decisions (KER-203):**
+1. **FORCE RLS, explicitly.** ai_decision_log holds nothing but tenant data
+   and is only ever read/written under an authenticated tenant context, so it
+   gets the full migration-018 treatment (ENABLE + FORCE + policy).
+2. **Append-only without hash-chaining.** The KER-107 ledger proves human
+   decisions are tamper-evident; the AI log proves the machine's decisions are
+   retained and reconstructable. Conflating them would couple a low-volume
+   forensic chain to a high-volume operational log.
+3. **Hash-only input snapshots.** SHA-256 of the canonical JSON of the mapping
+   inputs. Verifiable ("was THIS input what produced THAT output?") without
+   storing personal data. model_version comes from KERNO_LLM_MODEL.
+4. **Prune follows the KER-201 scheduler pattern** — cron entrypoint, no new
+   dependency, per the §12 KER-201 decision 1 rationale. Prune runs are
+   logged; prune does NOT write KER-107 entries per row (volume).
+
+**Files to create:** src/models/ai_decision_log.py,
+src/services/ai_decision_log_service.py, src/api/routers/ai_decisions.py,
+src/api/schemas/ai_decisions.py,
+migrations/versions/020_create_ai_decision_log.py,
+src/scheduler/prune_ai_decision_log.py, docs/ai_decision_log_runbook.md,
+tests/unit/services/test_ai_decision_log.py,
+tests/integration/test_ker203_ai_decision_log.py
+**Files to modify:** src/services/mapping_service.py, config/constants.py,
+src/api/app.py (register the ai-decisions router).
+**Migration:** Yes — 020_create_ai_decision_log.py.
+
+**Story DoD (inherits §11 per-file review protocol):** every file passes its
+§11 gate; migration 020 applied and physically verified (FORCE flag checked
+like migration 018); runbook committed; unit + integration tests green;
+full suite green.
+
+### KER-204 — Trust Center public status display
+
+- **Priority:** Should-have · **Points:** 8 · **Reg tie:** NIS2
+  Articles 21, 23.
+
+Implements the §8 KER-109 table row's open surface:
+src/api/trust_center.py (does not exist — created here).
+
+**Acceptance criteria:**
+1. Public endpoint GET /trust-center/{tenant_slug}/status returning the NIS2
+   coverage summary — met/partial/gap counts by NIS2 category, derived from
+   the KER-109 system-of-record statuses. Summary counts ONLY: no
+   control-level detail, evidence refs, or audit entries to unauthenticated
+   callers.
+2. Gated by a per-tenant visibility flag (public/private). Private tenant →
+   404 to unauthenticated callers (not 403 — do not confirm the tenant
+   exists).
+3. tenant_slug resolves to tenant_id server-side. tenant_id never appears in
+   the URL or the response body.
+4. Public snapshot cached with a 5-minute TTL (coverage is a fan-out query —
+   never computed on every public hit). TTL defined as
+   TRUST_CENTER_CACHE_TTL_SECONDS in config/constants.py (default 300).
+5. Snapshot generation (cache fill, not cache hit) recorded in the KER-107
+   ledger: action="trust_center_snapshot", object_type="trust_center".
+6. Visibility toggle (public/private) settable only by compliance_lead,
+   vciso, or platform_engineer (require_role() from KER-202).
+7. Security test: an unauthenticated caller on a private tenant receives 404
+   only — same response body and no exploitable timing difference versus a
+   nonexistent slug.
+
+**Design decisions (KER-204):**
+1. **404-not-403, timing-consistent.** Private and nonexistent slugs take the
+   same code path (resolve, then check visibility, then respond identically),
+   so neither the status code nor latency confirms tenant existence.
+2. **Slug lookup is the auth-bootstrap read.** The public endpoint has no
+   tenant context; the slug→tenant resolution reads only the tenants table,
+   which is already unforced (migration 018). All coverage reads then run
+   under the resolved tenant's context as usual (§3).
+3. **Migration 021 must backfill before constraining.** tenant_slug is UNIQUE
+   NOT NULL on a table with existing rows: the migration derives a
+   deterministic slug for existing tenants (slugified display_name, tenant_id
+   suffix on collision), then applies NOT NULL. Reversible per §7.
+4. **In-process TTL cache** (dict + timestamp, no new dependency). Documented
+   single-process limitation; gateway-level caching is a Sprint 3+ infra item
+   alongside SEC-05.
+
+**Files to create:** src/api/trust_center.py, src/api/schemas/trust_center.py,
+migrations/versions/021_add_trust_center_fields.py,
+tests/unit/api/test_trust_center.py
+**Files to modify:** src/api/app.py (register router), src/models/tenant.py
+(+ tenant_slug unique not null, + trust_center_public bool default False),
+config/constants.py (TTL constant).
+**Migration:** Yes — 021_add_trust_center_fields.py (ALTER tenants: add
+tenant_slug VARCHAR UNIQUE NOT NULL with backfill, trust_center_public
+BOOLEAN NOT NULL DEFAULT FALSE).
+
+**Story DoD (inherits §11):** every file passes its §11 gate; migration 021
+applied and verified (slug backfill confirmed on existing dev rows); AC-7
+security test green; full suite green.
+
+### KER-205 — Generic webhook ingestion
+
+- **Priority:** Should-have · **Points:** 13 · **Reg tie:** DORA, NIS2
+  Article 21.
+
+Implements the §8 KER-110 table row's open surface: src/api/webhooks.py
+(does not exist — created here). No new ingest framework: a thin
+WebhookNormaliser over context_records (migration 007) and the existing
+evidence-linking patterns.
+
+**Acceptance criteria:**
+1. POST /api/v1/webhooks/ingest accepting JSON:
+   { source_system, event_type, external_ref, payload, tenant_id_hint }.
+2. Per-tenant HMAC-SHA256 signature verification mandatory. Header:
+   X-Kerno-Signature: sha256=<hex>. Invalid or missing signature → 401,
+   verified with a constant-time compare (hmac.compare_digest). Signature
+   verification runs BEFORE body schema validation — a signature failure is
+   never a 422.
+3. tenant_id resolved from the registered webhook secret ONLY. tenant_id_hint
+   is logged for diagnostics but never used for auth or routing.
+4. Idempotency: deduplicate on (source_system, external_ref) per tenant
+   within WEBHOOK_DEDUP_WINDOW_HOURS (config/constants.py, default 24).
+   Duplicate → 200, no re-processing, no second DB write.
+5. Supported event types (Sprint 2b): jira.issue.updated, jira.issue.closed,
+   cmdb.asset.updated, generic.evidence.submitted. Unknown type → 422 (only
+   after the signature has verified).
+6. Accepted events normalise to the context_records schema via a thin
+   WebhookNormaliser class reusing evidence-linking patterns.
+7. Webhook registration: tenants register source systems and receive a
+   signing secret. The secret is stored as plaintext in
+   webhook_registrations, never returned after creation, and rotatable via a
+   dedicated endpoint: the 201 registration response contains it exactly
+   once; GET /api/v1/webhooks/{id} returns all fields EXCEPT signing_secret;
+   POST /api/v1/webhooks/{id}/rotate overwrites the column with a new random
+   secret and returns it once. Registration/management/rotation endpoints
+   gated to platform_engineer (require_role()).
+8. Each accepted, non-duplicate event emits a KER-107 ledger entry:
+   action="webhook_ingested", object_type="context_record".
+9. Security tests (mandatory):
+   a. Invalid HMAC → 401.
+   b. tenant_id_hint cannot override the secret-resolved tenant_id.
+   c. Duplicate external_ref within the window → 200, no second
+      context_record.
+
+**Design decisions (KER-205):**
+1. **Signing-secret storage (resolves the AC-2/AC-7 contradiction, decided
+   9 July 2026).** HMAC verification requires the raw secret — it cannot be
+   derived from a hash — so signing_secret is stored plaintext, protected by:
+   (a) RLS on webhook_registrations; (b) returned exactly once in the 201
+   creation response; (c) excluded from every read endpoint thereafter;
+   (d) rotatable via POST /api/v1/webhooks/{id}/rotate (new secret returned
+   once, column overwritten). At-rest column encryption (pgcrypto) is
+   deferred to Sprint 3. Documented in the migration 022 docstring.
+2. **webhook_registrations: RLS WITHOUT FORCE — the migration-019 exception
+   applies.** The ingest path is unauthenticated (the signature IS the
+   authentication), so the registration lookup necessarily runs BEFORE any
+   tenant context exists — exactly the users-table auth-bootstrap situation
+   (§12 KER-202 decision 2). ENABLE ROW LEVEL SECURITY with the
+   context-optional policy pattern; NOT FORCE. Only the ingest lookup reads
+   it pre-context; all management endpoints are JWT-authenticated and run
+   under tenant context. The dedup store, by contrast, is only ever touched
+   AFTER the tenant is resolved, so it gets ENABLE + FORCE + policy.
+3. **Registration lookup key.** Ingest requests carry
+   X-Kerno-Webhook-Id: <registration UUID> alongside the signature; the
+   server loads that one registration and verifies the HMAC against its
+   secret (unknown id → 401, indistinguishable from a bad signature). The id
+   is a non-secret handle — this avoids trial-verifying secrets across
+   tenants, which would be O(registrations) per request and a timing oracle.
+4. **Dedup window is a named constant** (WEBHOOK_DEDUP_WINDOW_HOURS = 24,
+   §2.4); dedup rows are pruned opportunistically past the window.
+
+**Files to create:** src/api/webhooks.py, src/api/schemas/webhooks.py,
+src/services/webhook_service.py, src/models/webhook_registration.py,
+migrations/versions/022_create_webhook_tables.py,
+tests/unit/api/test_webhooks.py, tests/unit/services/test_webhook_service.py
+**Files to modify:** src/api/app.py (register router), config/constants.py
+(dedup window constant), .env.example (any new webhook env vars).
+**Migration:** Yes — 022_create_webhook_tables.py (webhook_registrations:
+ENABLE RLS, NOT FORCE, context-optional policy per design decision 2;
+ingestion dedup store: ENABLE + FORCE + tenant_isolation_policy).
+
+**Story DoD (inherits §11):** every file passes its §11 gate; migration 022
+applied and verified (FORCE flags checked per table as specified); security
+tests 9a–9c green; full suite green.
+
+### Dependency table
+
+| Story | Depends on | Status |
+|---|---|---|
+| KER-203 | — | Independent — start first |
+| KER-204 | KER-202 (Sprint 2a) | ✅ done — require_role() live |
+| KER-205 | KER-202 (Sprint 2a) | ✅ done — require_role() live |
+| KER-204 + KER-205 | Each other | Independent — can parallelise |
+
+Recommended order: **KER-203 first** (Must-have, and its mapping_service
+transaction change is the riskiest touch), then KER-204 and KER-205 in
+either order or in parallel.
+
+### Capacity table
+
+| Set | Stories | Points |
+|---|---|---|
+| Must-have | KER-203 | 13 |
+| Should-have | KER-204 (8) + KER-205 (13) | 21 |
+| **Sprint 2b total** | | **34** |
+
+Target close: ~1 August 2026 (buffer before the September rollout).
+Baseline: the full 373-test suite must stay green throughout.
+
+> ### 🏁 Sprint 2b — Definition of Done (banner)
+> Sprint 2b is closed only when **all of the following hold**:
+> 1. All Sprint 2a tests (373) + every new KER-203/204/205 test are green
+>    (unit + security + integration), 0 failed.
+> 2. Migrations 020, 021, and 022 are applied and physically verified on the
+>    dev DB (tables present; RLS/FORCE flags match each table's spec:
+>    ai_decision_log FORCED, webhook_registrations ENABLED-not-FORCED,
+>    dedup store FORCED; tenant_slug backfill confirmed).
+> 3. The KER-203 runbook (docs/ai_decision_log_runbook.md) is committed.
+> 4. KER-205 security tests 9a–9c are passing.
+> 5. Nothing is pushed until explicitly confirmed.
 
