@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.5 | Updated: 2026-07-10 | Changes: Added §13 Sprint 2b -->
+<!-- Version: 1.6 | Updated: 2026-07-11 | Changes: Sprint 2b complete — KER-203/204/205 delivered -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -854,15 +854,18 @@ either order or in parallel.
 Target close: ~1 August 2026 (buffer before the September rollout).
 Baseline: the full 373-test suite must stay green throughout.
 
-> ### 🏁 Sprint 2b — Definition of Done (banner)
+> ### 🏁 Sprint 2b — Definition of Done (banner) — ✅ MET (closed 2026-07-11)
 > Sprint 2b is closed only when **all of the following hold**:
-> 1. All Sprint 2a tests (373) + every new KER-203/204/205 test are green
->    (unit + security + integration), 0 failed.
-> 2. Migrations 020, 021, and 022 are applied and physically verified on the
+> 1. ✅ All Sprint 2a tests (373) + every new KER-203/204/205 test are green
+>    (unit + security + integration): **431 tests, 0 failed**
+>    (373 Sprint 2a + 58 new).
+> 2. ✅ Migrations 020, 021, and 022 applied and physically verified on the
 >    dev DB (tables present; RLS/FORCE flags match each table's spec:
 >    ai_decision_log FORCED, webhook_registrations ENABLED-not-FORCED,
->    dedup store FORCED; tenant_slug backfill confirmed).
-> 3. The KER-203 runbook (docs/ai_decision_log_runbook.md) is committed.
-> 4. KER-205 security tests 9a–9c are passing.
-> 5. Nothing is pushed until explicitly confirmed.
+>    dedup store FORCED; tenant_slug backfill confirmed — head w8x9y0z1).
+> 3. ✅ The KER-203 runbook (docs/ai_decision_log_runbook.md) is committed
+>    (commit 61a108f).
+> 4. ✅ KER-205 security tests 9a–9c passing (commit 793223f).
+> 5. ✅ Nothing pushed — confirmed (commits 61a108f, 8ef9fbc, 793223f are
+>    local only pending explicit push approval).
 
