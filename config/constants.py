@@ -323,3 +323,13 @@ SCRYPT_SALT_LENGTH: int = 32
 # EU AI Act Article 19 record-keeping is the regulatory driver. The prune job
 # (src/scheduler/prune_ai_decision_log.py) deletes rows older than this window.
 AI_DECISION_LOG_RETENTION_DAYS: int = 180
+
+# ---------------------------------------------------------------------------
+# Trust Center public status display (KER-204)
+# ---------------------------------------------------------------------------
+
+# How long a tenant's public Trust Center snapshot is served from the
+# in-process cache before the coverage fan-out query is recomputed, in
+# seconds. 300 = 5 minutes (CLAUDE.md §13 KER-204 AC-4) — public traffic must
+# never hammer the coverage query on every hit.
+TRUST_CENTER_CACHE_TTL_SECONDS: int = 300

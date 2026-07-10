@@ -79,6 +79,27 @@ class Tenant(Base):
         server_default=text("true"),
     )
 
+    # URL-safe public identifier for the Trust Center page (KER-204):
+    # /trust-center/{tenant_slug}/status. Unique across all tenants; the
+    # database assigns a non-identifying placeholder when registration does not
+    # supply one (migration 021). Never exposes the tenant_id.
+    tenant_slug: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        unique=True,
+        server_default=text("'tenant-' || substr(gen_random_uuid()::text, 1, 8)"),
+    )
+
+    # Whether the company's Trust Center status page is publicly visible.
+    # Private by default — a tenant must opt in (KER-204); the toggle is gated
+    # to compliance_lead, vciso, and platform_engineer roles.
+    trust_center_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+
     @validates("tenant_id")
     def _enforce_tenant_id_is_immutable(self, key: str, value: uuid.UUID) -> uuid.UUID:
         """Refuse to change ``tenant_id`` once it has a value — it is immutable.

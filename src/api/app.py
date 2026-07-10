@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from src.api import trust_center
 from src.api.rate_limit import limiter
 from src.api.routers import ai_decisions, coverage, export, overrides, panel, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
@@ -55,6 +56,12 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/v1/export", tags=["export"])
     app.include_router(scheduler.router, prefix="/api/v1/scheduler", tags=["scheduler"])
     app.include_router(ai_decisions.router, prefix="/api/v1", tags=["ai-decisions"])
+    # Trust Center (KER-204): the status page is deliberately public (no /api/v1
+    # prefix, no auth); the visibility toggle is authenticated and role-gated.
+    app.include_router(trust_center.public_router, tags=["trust-center"])
+    app.include_router(
+        trust_center.admin_router, prefix="/api/v1/trust-center", tags=["trust-center"]
+    )
 
     @app.get("/", include_in_schema=False)
     def root():
