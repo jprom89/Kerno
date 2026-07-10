@@ -1,5 +1,10 @@
 """Pydantic request and response models for the remediation endpoints (KER-110).
-tenant_id is never accepted from the request — it always comes from the authenticated session."""
+tenant_id is never accepted from the request — it always comes from the authenticated session.
+
+Why:   request/response contracts live apart from routing so the API surface
+       is reviewable in one place.
+How:   pytest tests/unit/api/test_remediation.py -v
+"""
 
 from __future__ import annotations
 

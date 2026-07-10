@@ -1,5 +1,10 @@
 """Pydantic request and response models for the DORA submission run endpoints.
-Field names match the service-layer dataclasses exactly — no renaming."""
+Field names match the service-layer dataclasses exactly — no renaming.
+
+Why:   request/response contracts live apart from routing so the API surface
+       is reviewable in one place.
+How:   pytest tests/unit/api/test_submissions.py -v
+"""
 
 from __future__ import annotations
 

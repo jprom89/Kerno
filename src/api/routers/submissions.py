@@ -1,5 +1,9 @@
 """FastAPI router for DORA submission run endpoints mounted at /api/v1/submissions.
-Thin translation layer only — all business logic lives in dora_roi_submission_service."""
+Thin translation layer only — all business logic lives in dora_roi_submission_service.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_submissions.py -v
+"""
 
 from __future__ import annotations
 

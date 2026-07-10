@@ -1,5 +1,10 @@
 """Pydantic request and response models for the override capture endpoint.
-Field names match the override_service dataclass; reviewer_id and tenant_id are never accepted from the request."""
+Field names match the override_service dataclass; reviewer_id and tenant_id are never accepted from the request.
+
+Why:   request/response contracts live apart from routing so the API surface
+       is reviewable in one place.
+How:   pytest tests/unit/api/test_overrides.py -v
+"""
 
 from __future__ import annotations
 

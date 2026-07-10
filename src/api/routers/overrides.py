@@ -1,5 +1,10 @@
 """FastAPI router for the human override capture endpoint mounted at /api/v1/overrides.
-Thin translation layer only — all business logic lives in override_service."""
+Thin translation layer only — all business logic lives in override_service.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free;
+       reviewer identity and role come only from the verified JWT (KER-202).
+How:   pytest tests/unit/api/test_overrides.py tests/unit/api/test_rbac_gates.py -v
+"""
 
 from __future__ import annotations
 

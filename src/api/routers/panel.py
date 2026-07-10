@@ -1,5 +1,9 @@
 """FastAPI router for the embedded side-panel read endpoint mounted at /api/v1/panel.
-Thin read-only translation layer — recommendation and evidence data come from their existing services."""
+Thin read-only translation layer — recommendation and evidence data come from their existing services.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_panel.py -v
+"""
 
 from __future__ import annotations
 

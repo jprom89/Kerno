@@ -1,6 +1,10 @@
 """FastAPI router for the AI-decision log query endpoint mounted at /api/v1/ai-decisions.
 Thin translation layer only (KER-203) — filtering and tenant scoping live in
-ai_decision_log_service; the tenant always comes from the verified JWT, never the request."""
+ai_decision_log_service; the tenant always comes from the verified JWT, never the request.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/integration/test_ker203_ai_decision_log.py -m integration -v
+"""
 
 from __future__ import annotations
 

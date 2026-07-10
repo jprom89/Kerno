@@ -54,6 +54,7 @@ from datetime import datetime, timedelta, timezone
 
 from config.constants import WEBHOOK_DEDUP_WINDOW_HOURS
 from src.db.rls import set_tenant_context
+from src.exceptions import UnsupportedEventTypeError, WebhookAuthenticationError
 
 # Length in bytes of a newly generated signing secret; 32 bytes = 64 hex
 # characters = a 256-bit HMAC key.
@@ -61,17 +62,6 @@ _SIGNING_SECRET_BYTES = 32
 
 # The scheme prefix every X-Kerno-Signature value must carry.
 _SIGNATURE_PREFIX = "sha256="
-
-
-class WebhookAuthenticationError(Exception):
-    """A delivery failed authentication — unknown id, inactive registration,
-    malformed signature header, or HMAC mismatch. One error type for all four
-    causes, so the HTTP layer maps every failure to the same 401 and a caller
-    can never probe which part was wrong."""
-
-
-class UnsupportedEventTypeError(ValueError):
-    """The delivery authenticated but its event_type is not one Kerno ingests."""
 
 
 _INSERT_REGISTRATION = """

@@ -1,5 +1,9 @@
 """FastAPI router for remediation endpoints mounted at /api/v1/remediation.
-Thin translation layer — routing, Jira creation, and audit writes live in remediation_service."""
+Thin translation layer — routing, Jira creation, and audit writes live in remediation_service.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_remediation.py -v
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,10 @@
 """FastAPI dependencies for JWT authentication and database connections.
-_ExecutableConn wraps raw psycopg2 connections to bridge the :name parameter style used by services to psycopg2's %(name)s cursor API."""
+_ExecutableConn wraps raw psycopg2 connections to bridge the :name parameter style used by services to psycopg2's %(name)s cursor API.
+
+Why:   auth decoding and connection pooling live in one module so every router
+       enforces identity the same way (CLAUDE.md Section 3).
+How:   pytest tests/unit/api/test_dependencies.py -v
+"""
 
 from __future__ import annotations
 

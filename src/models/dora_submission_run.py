@@ -1,5 +1,10 @@
 """ORM model for dora_submission_runs: one row per tenant submission attempt for a given
-authority window, tracking status from draft through ready to submitted."""
+authority window, tracking status from draft through ready to submitted.
+
+Why:   DORA filings need an auditable record of every attempt per authority window,
+       not just the final submission.
+How:   pytest tests/unit/models/test_dora_submission_run.py -v
+"""
 
 from __future__ import annotations
 

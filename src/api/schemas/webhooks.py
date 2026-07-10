@@ -4,6 +4,8 @@ The one security-loaded rule here: ``signing_secret`` appears ONLY in the two
 returned-exactly-once shapes (WebhookRegistrationCreatedResponse and
 WebhookRotateResponse). The ordinary read shape, WebhookRegistrationResponse,
 has no secret field at all — it cannot leak what it cannot represent.
+
+How:   pytest tests/unit/api/test_webhooks.py -v
 """
 
 from __future__ import annotations

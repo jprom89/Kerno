@@ -1,7 +1,12 @@
 """Identifies tenants at risk of missing a DORA filing deadline by finding those with no
 ready or submitted run for any currently-open authority submission window. Requires an
 admin-level database connection that bypasses PostgreSQL RLS; a tenant-scoped connection
-raises SchedulerAdminConnectionRequiredError instead of silently returning an empty list."""
+raises SchedulerAdminConnectionRequiredError instead of silently returning an empty list.
+
+Why:   a missed DORA window is a regulatory breach; this job surfaces at-risk
+       tenants before the deadline instead of after it.
+How:   pytest tests/unit/scheduler/test_dora_roi_submission_scheduler.py -v
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,9 @@
 """FastAPI router for DORA register entry endpoints mounted at /api/v1/register.
-Thin translation layer only — all business logic lives in dora_roi_service."""
+Thin translation layer only — all business logic lives in dora_roi_service.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_register.py -v
+"""
 
 from __future__ import annotations
 

@@ -4,6 +4,10 @@ Call map_control() with a ControlInput and evidence list; raises MappingError on
 LLM or validation failure, TenantContextMissingError when tenant context is missing.
 Every persisted recommendation also writes one ai_decision_log row in the same
 transaction (KER-203) — no recommendation can exist without its retained decision record.
+
+Why:   the mapping decision is the product's core output; validation, persistence,
+       and the retained decision record must happen in one auditable place.
+How:   pytest tests/unit/services/test_mapping_service.py -v
 """
 
 from __future__ import annotations

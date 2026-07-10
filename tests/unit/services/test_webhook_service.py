@@ -19,10 +19,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from config.constants import WEBHOOK_DEDUP_WINDOW_HOURS
-from src.exceptions import TenantContextMissingError
-from src.services.webhook_service import (
+from src.exceptions import (
+    TenantContextMissingError,
     UnsupportedEventTypeError,
     WebhookAuthenticationError,
+)
+from src.services.webhook_service import (
     WebhookNormaliser,
     is_duplicate,
     normalise_event,

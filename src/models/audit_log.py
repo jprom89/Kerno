@@ -4,6 +4,10 @@ Each row is one immutable audit event whose entry_hash chains to the previous en
 so edits, deletions, and reordering are detectable by src/services/audit_log.verify_audit_chain();
 the append-only trigger from migration 016 blocks UPDATE and DELETE at the database level.
 Rows are written exclusively through src/services/audit_log.append_audit_entry().
+
+Why:   compliance auditors must trust that history cannot be silently rewritten;
+       the hash chain plus database trigger make tampering detectable and blocked.
+How:   pytest tests/unit/services/test_audit_log.py tests/integration/test_ker107_audit_ledger.py -v
 """
 
 from __future__ import annotations

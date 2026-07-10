@@ -5,6 +5,9 @@ FastAPI Query types); these models define the response shape only: one
 DecisionLogRecord per retained AI decision, wrapped in a DecisionLogResponse
 with its count. No raw input snapshot ever appears here — only its SHA-256
 fingerprint (GDPR alignment, KER-203 AC-6).
+
+How:   exercised by tests/integration/test_ker203_ai_decision_log.py and the
+       ai-decisions router.
 """
 
 from __future__ import annotations

@@ -3,6 +3,10 @@
 One row per (tenant, category) routing decision: which Jira account remediation tasks are
 assigned to and how many days the SLA allows. A NULL control_category row is the tenant's
 default rule, used when no category-specific rule exists.
+
+Why:   gap remediation must land with the right owner and deadline automatically,
+       or gaps sit unassigned.
+How:   pytest tests/unit/services/test_remediation_service.py -v
 """
 
 from __future__ import annotations

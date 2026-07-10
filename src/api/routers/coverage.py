@@ -1,5 +1,9 @@
 """FastAPI router for the control-coverage dashboard endpoints mounted at /api/v1/coverage.
-Thin read-only translation layer — status resolution lives in coverage_service (KER-109)."""
+Thin read-only translation layer — status resolution lives in coverage_service (KER-109).
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_coverage.py -v
+"""
 
 from __future__ import annotations
 

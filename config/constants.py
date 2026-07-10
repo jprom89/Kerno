@@ -344,3 +344,11 @@ TRUST_CENTER_CACHE_TTL_SECONDS: int = 300
 # window the same external_ref may legitimately be re-ingested (the upstream
 # system may have changed the underlying record).
 WEBHOOK_DEDUP_WINDOW_HOURS: int = 24
+
+# ---------------------------------------------------------------------------
+# Unit conversions
+# ---------------------------------------------------------------------------
+
+# Milliseconds per second — used by the batch jobs when converting monotonic
+# durations to the millisecond values emitted in structured logs.
+MILLISECONDS_PER_SECOND: int = 1000

@@ -3,6 +3,11 @@
 Control search (get_similar_controls) applies a per-tenant bias vector via pgvector's negative
 inner product operator; evidence record search (retrieve_similar_records) uses cosine distance
 against the context_records.embedding column added by migration 015.
+
+Why:   this is where each tenant's learned calibration actually changes what the
+       product recommends (query pattern: LEARNING_PIPELINE_SPEC.md Section 5.3).
+How:   pytest tests/unit/services/test_retrieval_service.py -v
+       (live ranking proof: tests/integration/test_ker201_bias_recalculation.py)
 """
 
 from __future__ import annotations

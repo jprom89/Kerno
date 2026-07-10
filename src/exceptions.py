@@ -1,5 +1,10 @@
 """Single home for all custom exception classes used across the application.
-Always import from here — never from individual service modules — to prevent circular dependencies."""
+Always import from here — never from individual service modules — to prevent circular dependencies.
+
+Why:   one import location keeps exception identity stable across layers, so a
+       caught TenantContextMissingError is always the same class everywhere.
+How:   exercised by every service and router test; no standalone tests.
+"""
 
 
 class TenantContextMissingError(Exception):
@@ -24,3 +29,16 @@ class ConfigurationError(Exception):
 class JiraClientError(Exception):
     """Raised when a Jira API call fails or the Jira connection is not configured.
     Callers map this to HTTP 503 — the remediation feature is unavailable, not broken."""
+
+
+class WebhookAuthenticationError(Exception):
+    """Raised when a webhook delivery fails authentication (KER-205) — unknown or
+    malformed registration id, inactive registration, missing/malformed signature
+    header, or HMAC mismatch. One error type for all four causes, so the HTTP layer
+    maps every failure to the same 401 and a caller can never probe which part failed."""
+
+
+class UnsupportedEventTypeError(ValueError):
+    """Raised when an authenticated webhook delivery carries an event_type outside
+    the supported set (KER-205). The router maps this to 422 — only ever AFTER the
+    signature has verified, so event types cannot be probed without a valid secret."""

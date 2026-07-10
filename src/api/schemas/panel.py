@@ -1,5 +1,10 @@
 """Pydantic response models for the embedded side-panel read endpoint (KER-108).
-Read-only shapes narrowly scoped to what the panel renders; the write path stays on the overrides schemas."""
+Read-only shapes narrowly scoped to what the panel renders; the write path stays on the overrides schemas.
+
+Why:   request/response contracts live apart from routing so the API surface
+       is reviewable in one place.
+How:   pytest tests/unit/api/test_panel.py -v
+"""
 
 from __future__ import annotations
 

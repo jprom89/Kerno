@@ -4,6 +4,9 @@ This package also defines ``Base``, the single SQLAlchemy declarative base that
 every model inherits from. Alembic uses ``Base.metadata`` to know the full set
 of tables when it generates and applies migrations, so every model module must
 import ``Base`` from here rather than declaring its own.
+
+How:   model files have no executable logic; they are tested through the
+       services that use them (tests/unit/services/, tests/unit/models/).
 """
 
 from __future__ import annotations

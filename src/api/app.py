@@ -1,5 +1,11 @@
 """FastAPI application factory for the Kerno DORA RoI API.
-Registers all routers, exception handlers, a startup env check, and serves the static dashboard from /dashboard/."""
+Registers all routers, exception handlers, a startup env check, and serves the static dashboard from /dashboard/.
+
+Why:   one factory builds the whole app so tests can construct isolated instances
+       with their own dependency overrides.
+How:   run locally with: uvicorn src.api.app:app --reload --port 8000
+       exercised by every test under tests/unit/api/.
+"""
 
 from __future__ import annotations
 

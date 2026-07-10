@@ -1,6 +1,10 @@
 """FastAPI router for the manual scheduler trigger mounted at /api/v1/scheduler.
 Internal/admin surface (KER-201) — the nightly batch runs via the cron entrypoint in
-src/scheduler/nightly_bias_recalculation.py; this endpoint recalculates one tenant on demand."""
+src/scheduler/nightly_bias_recalculation.py; this endpoint recalculates one tenant on demand.
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_scheduler.py -v
+"""
 
 from __future__ import annotations
 

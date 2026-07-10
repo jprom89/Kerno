@@ -42,6 +42,8 @@ import logging
 import time
 import uuid
 
+from config.constants import MILLISECONDS_PER_SECOND
+
 # The connection factory, active-tenant lookup, session adapter, and platform
 # scheduler identity are imported from the KER-201 scheduler rather than
 # reimplemented — one home for the batch plumbing, so the two nightly jobs can
@@ -102,7 +104,7 @@ def _prune_one_tenant(db_session_factory, tenant_id: uuid.UUID) -> dict:
         with db_session_factory() as conn:
             resolve_and_set_tenant_context(_TenantSession(tenant_id), conn)
             deleted_count = prune_old_logs(conn, tenant_id)
-        duration_ms = int((time.monotonic() - start_ms) * 1000)
+        duration_ms = int((time.monotonic() - start_ms) * MILLISECONDS_PER_SECOND)
         logger.info(
             "Tenant AI-decision log prune succeeded.",
             extra={
@@ -114,7 +116,7 @@ def _prune_one_tenant(db_session_factory, tenant_id: uuid.UUID) -> dict:
         )
         return {"success": True, "deleted_count": deleted_count, "error": None}
     except Exception as exc:
-        duration_ms = int((time.monotonic() - start_ms) * 1000)
+        duration_ms = int((time.monotonic() - start_ms) * MILLISECONDS_PER_SECOND)
         logger.error(
             "Tenant AI-decision log prune failed.",
             extra={

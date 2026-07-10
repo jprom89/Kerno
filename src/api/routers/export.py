@@ -1,5 +1,9 @@
 """FastAPI router for the evidence pack export endpoint mounted at /api/v1/export.
-Thin translation layer — pack assembly and serialisation live in export_service (KER-111)."""
+Thin translation layer — pack assembly and serialisation live in export_service (KER-111).
+
+Why:   HTTP concerns stay here so the service layer remains framework-free.
+How:   pytest tests/unit/api/test_export.py -v
+"""
 
 from __future__ import annotations
 

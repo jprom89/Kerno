@@ -3,6 +3,10 @@
 Tracks the link between a control, the Jira issue remediating it, and the re-review flag set
 when Jira reports closure. The close-callback validates the (tenant, control, issue key)
 triple against this table so an attacker cannot flag arbitrary controls for re-review.
+
+Why:   the Jira link-back must be verifiable so closure callbacks cannot flag
+       arbitrary controls.
+How:   pytest tests/unit/services/test_remediation_service.py -v
 """
 
 from __future__ import annotations

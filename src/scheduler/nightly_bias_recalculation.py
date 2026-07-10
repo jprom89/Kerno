@@ -61,6 +61,8 @@ import uuid
 
 import psycopg2
 
+from config.constants import MILLISECONDS_PER_SECOND
+
 # _ExecutableConn is imported rather than reimplemented so the cron entrypoint
 # converts :name parameters (and vector values) exactly the way every other
 # caller does — dependencies.py is the single home for that adaptation logic.
@@ -119,7 +121,7 @@ def run_tenant_recalculation(conn, session) -> RecalculationRunResult:
     tenant_id = resolve_and_set_tenant_context(session, conn)
     logger.info("NIGHTLY_RECALCULATION started tenant=%s", tenant_id)
     override_count, dimensions, status = _recalculate_tenant_bias(conn, tenant_id)
-    duration_ms = int((time.monotonic() - start_ms) * 1000)
+    duration_ms = int((time.monotonic() - start_ms) * MILLISECONDS_PER_SECOND)
     logger.info(
         "NIGHTLY_RECALCULATION completed tenant=%s override_count=%d "
         "dimensions=%d duration_ms=%d status=%s",
@@ -225,7 +227,7 @@ def _recalculate_one_tenant(db_session_factory, tenant_id: uuid.UUID) -> dict:
     start_ms = time.monotonic()
     try:
         override_count = _execute_tenant_recalculation(db_session_factory, tenant_id)
-        duration_ms = int((time.monotonic() - start_ms) * 1000)
+        duration_ms = int((time.monotonic() - start_ms) * MILLISECONDS_PER_SECOND)
         logger.info(
             "Tenant bias recalculation succeeded.",
             extra={
@@ -242,7 +244,7 @@ def _recalculate_one_tenant(db_session_factory, tenant_id: uuid.UUID) -> dict:
             "error": None,
         }
     except Exception as exc:
-        duration_ms = int((time.monotonic() - start_ms) * 1000)
+        duration_ms = int((time.monotonic() - start_ms) * MILLISECONDS_PER_SECOND)
         logger.error(
             "Tenant bias recalculation failed.",
             extra={

@@ -13,6 +13,11 @@ decision) and ``reviewer_confidence_weight`` (how much their decision is trusted
 in the nightly recalculation). A vCISO's override counts for 1.0; an internal
 admin's counts for 0.5. These weights come from config/constants.py and must
 never be hard-coded here. (LEARNING_PIPELINE_SPEC.md Section 5.2.)
+
+How to run or test
+------------------
+Model files have no executable logic of their own; the override path is tested
+through the service: pytest tests/unit/services/test_override_service.py -v
 """
 
 from __future__ import annotations

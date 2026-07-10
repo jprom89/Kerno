@@ -54,10 +54,9 @@ from src.api.schemas.webhooks import (
     WebhookRotateResponse,
 )
 from src.db.rls import set_tenant_context
+from src.exceptions import UnsupportedEventTypeError, WebhookAuthenticationError
 from src.services.audit_log import append_audit_entry
 from src.services.webhook_service import (
-    UnsupportedEventTypeError,
-    WebhookAuthenticationError,
     is_duplicate,
     normalise_event,
     record_dedup,

@@ -1,5 +1,10 @@
 """Pydantic response models for the control-coverage dashboard endpoints (KER-109).
-Read-only shapes mirroring the coverage_service dataclasses — no write models here."""
+Read-only shapes mirroring the coverage_service dataclasses — no write models here.
+
+Why:   request/response contracts live apart from routing so the API surface
+       is reviewable in one place.
+How:   pytest tests/unit/api/test_coverage.py -v
+"""
 
 from __future__ import annotations
 

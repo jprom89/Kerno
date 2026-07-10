@@ -4,6 +4,8 @@ The public status response deliberately carries summary counts ONLY — no
 control-level detail, no evidence references, no audit entries, and never a
 tenant_id (the slug is the only identifier a public caller sees). The
 visibility schemas serve the authenticated opt-in toggle.
+
+How:   pytest tests/unit/api/test_trust_center.py -v
 """
 
 from __future__ import annotations

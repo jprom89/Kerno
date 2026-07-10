@@ -1,5 +1,10 @@
 """ORM model for dora_submission_windows: global reference data for competent-authority
-filing windows; no tenant scope, no RLS."""
+filing windows; no tenant scope, no RLS.
+
+Why:   filing deadlines are platform-wide reference data every tenant shares, so
+       this table deliberately has no tenant scope.
+How:   pytest tests/unit/models/test_dora_submission_window.py -v
+"""
 
 from __future__ import annotations
 

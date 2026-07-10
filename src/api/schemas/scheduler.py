@@ -1,6 +1,9 @@
 """Pydantic response model for the manual scheduler trigger endpoint (KER-201).
 Reports what one real per-tenant recalculation did: how many overrides were
-processed, the bias vector's dimension count, and whether anything was written."""
+processed, the bias vector's dimension count, and whether anything was written.
+
+How:   pytest tests/unit/api/test_scheduler.py -v
+"""
 
 from __future__ import annotations
 

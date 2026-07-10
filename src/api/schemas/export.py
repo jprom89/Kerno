@@ -4,6 +4,8 @@ These pydantic models ARE the pack's schema: serialise_pack() output round-trips
 EvidencePack.model_validate_json(), and EvidencePack.model_json_schema() emits the formal
 JSON Schema for external auditors. A pack is self-contained — every entry carries enough
 context to verify coverage without querying the live system.
+
+How:   pytest tests/unit/services/test_export_service.py tests/unit/api/test_export.py -v
 """
 
 from __future__ import annotations
