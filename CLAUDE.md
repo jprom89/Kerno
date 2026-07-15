@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.6 | Updated: 2026-07-11 | Changes: Sprint 2b complete — KER-203/204/205 delivered -->
+<!-- Version: 1.7 | Updated: 2026-07-15 | Changes: §8 accuracy fixes post-Sprint 2b; quality pass c390a50 -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -260,7 +260,7 @@ what the story specifies — no more, no less.
 | KER-105 | AI control mapping engine | Yes | src/services/mapping_service.py |
 | KER-106 | Override capture and storage | Yes | src/services/override_service.py |
 | KER-107 | Anonymisation pipeline | Yes | src/services/anonymisation.py |
-| KER-108 | Jira side-panel integration | Yes | src/integrations/jira.py |
+| KER-108 | Jira side-panel integration | Yes | src/api/routers/panel.py, src/dashboard/js/panel.js, src/services/jira_client.py |
 | KER-109 | Trust Center status display | Yes | src/api/trust_center.py |
 | KER-110 | Webhook ingestion endpoint | Yes | src/api/webhooks.py |
 | KER-111 | Evidence pack export | Yes | src/services/export_service.py |
@@ -276,12 +276,15 @@ what the story specifies — no more, no less.
   above that scope corresponds to the KER-112 row ("Audit log write", now
   implemented by the ledger), while the table's KER-107 row ("Anonymisation
   pipeline") also shipped earlier in src/services/anonymisation.py.
-- KER-108 — ✅ Done (MVP). Implemented as src/api/routers/panel.py,
+- KER-108 — ✅ Done. Implemented as src/api/routers/panel.py,
   src/api/schemas/panel.py, src/dashboard/panel.html, and
-  src/dashboard/js/panel.js (src/integrations/jira.py deferred — the MVP is the
-  embedded panel surface itself). Jira iframe token hand-off deferred
-  post-Sprint 1. reviewer_role and reviewer_id are user-provided pending
-  per-user JWT claims.
+  src/dashboard/js/panel.js; the Jira API client is
+  src/services/jira_client.py (KER-110). Path correction (v1.7): the file
+  src/integrations/jira.py named by earlier drafts was never created and no
+  src/integrations/ package exists — the table row above now lists the real
+  files. Jira iframe token hand-off remains deferred. The old note that
+  reviewer_role/reviewer_id were user-provided is resolved: both come from the
+  verified per-user JWT since KER-202.
 - KER-109 — ✅ Done. Coverage summary + drill-down. Override-wins resolution
   matrix. WCAG AA. Links to KER-108 panel per control. Implemented as
   src/services/coverage_service.py, src/api/routers/coverage.py,
@@ -289,7 +292,7 @@ what the story specifies — no more, no less.
   src/dashboard/js/coverage.js. Numbering note: the active sprint backlog
   labels the control-coverage dashboard KER-109; the table's KER-109 row
   ("Trust Center status display", src/api/trust_center.py) is the external
-  Trust Center surface and remains open.
+  Trust Center surface — ✅ Done in Sprint 2b (KER-204, commit 8ef9fbc).
 - KER-110 — ✅ Done. Remediation routing: gap → Jira task with SLA due date and
   assignee. Closure → re_review_flagged_at. Both actions in KER-107 audit
   ledger. Migration 017 unapplied to dev DB — run alembic upgrade head before
@@ -297,7 +300,7 @@ what the story specifies — no more, no less.
   src/services/jira_client.py, and src/api/routers/remediation.py. Numbering
   note: the active sprint backlog labels remediation routing KER-110; the
   table's KER-110 row ("Webhook ingestion endpoint", src/api/webhooks.py) is
-  the generic ingestion surface and remains open.
+  the generic ingestion surface — ✅ Done in Sprint 2b (KER-205, commit 793223f).
 - KER-111 — ✅ Done. Deterministic JSON evidence pack export per control family.
   Covers system-of-record statuses, evidence refs, human decisions, and KER-107
   audit extract. Generation recorded in ledger. Validates against EvidencePack
