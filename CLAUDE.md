@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.7 | Updated: 2026-07-15 | Changes: §8 accuracy fixes post-Sprint 2b; quality pass c390a50 -->
+<!-- Version: 1.8 | Updated: 2026-07-15 | Changes: Added §14 Sprint 3 backlog KER-301–304, KER-303 AC-1 predicate corrected 15 Jul 2026 -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -871,4 +871,339 @@ Baseline: the full 373-test suite must stay green throughout.
 > 4. ✅ KER-205 security tests 9a–9c passing (commit 793223f).
 > 5. ✅ Nothing pushed — confirmed (commits 61a108f, 8ef9fbc, 793223f are
 >    local only pending explicit push approval).
+
+---
+
+## §14 — Sprint 3 Backlog
+
+**Sprint goal:** Ship a dashboard MVP that a Compliance Lead or vCISO can use
+to evaluate Kerno without touching Jira — in time for design partner sessions
+before the September 2026 beta rollout.
+
+### Stack decision (recorded 15 July 2026, product owner)
+
+- **Frontend:** Next.js (React), TypeScript, Tailwind CSS, App Router — lives
+  at `frontend/` in this mono-repo; deployed to Vercel. No UI component
+  library dependency: build only what is needed.
+- **Backend:** the existing FastAPI service, unchanged in architecture,
+  deployed publicly over HTTPS before the first design partner session.
+- **Auth:** JWT from the existing KER-202 login endpoint, held in an httpOnly
+  cookie managed by a Next.js API route — never in localStorage, never
+  readable by client-side JavaScript.
+- **API communication:** Next.js → FastAPI over HTTPS; CORS restricted to the
+  Vercel preview and production domains.
+- **Frontend tests:** Jest + React Testing Library — a separate suite; the
+  431-test backend baseline stays green throughout.
+
+### Pre-sprint deployment note (action required — not a story)
+
+The FastAPI backend must be reachable over HTTPS before design partners can
+use the dashboard. This is a deployment task, not a code change. Options in
+order of speed: (1) Railway or Render — connect the repo, set env vars,
+~10 minutes, free tier sufficient for beta (recommended); (2) Fly.io — more
+config, more control; (3) existing VPS — nginx + certbot. Must happen before
+the first design partner session.
+
+### Baseline (verified 15 July 2026, commit 8eabc93)
+
+CLAUDE.md v1.7; migration head w8x9y0z1 (022 — webhook tables); 431 tests
+passing, 0 failed; no frontend exists — this sprint creates it. Sprint 2 auth
+infrastructure is live: per-user JWT (KER-202), require_role(), six seeded
+RBAC roles, scrypt login. Endpoint verification against the draft (performed
+before this backlog was written): POST /api/v1/auth/login exists;
+GET /api/v1/auth/me does NOT (KER-301 creates it); the coverage surface is
+GET /api/v1/coverage/summary and /coverage/controls (KER-109); NO
+recommendations-list endpoint exists (KER-303 adds one); the export surface is
+GET /api/v1/export/evidence-pack?control_family=… and it already returns
+Content-Disposition: attachment; the internal coverage endpoint is UNCACHED —
+no invalidation call exists or is needed, and PUT /api/v1/trust-center/
+visibility is NOT a cache control (it flips public visibility — never call it
+for refresh).
+
+---
+
+### KER-301 — Auth UI and session management
+
+**Priority:** Must-have · **Points:** 5 · **Reg tie:** EU AI Act Article 14
+(human oversight requires identified human actors — the UI must surface who
+is logged in and what role they hold).
+
+**Acceptance criteria:**
+1. Next.js project initialised at `frontend/` (TypeScript, Tailwind CSS, App
+   Router). No UI component library dependency.
+2. Login page at `/login`: email + password form, POST to FastAPI
+   `/api/v1/auth/login` via the Next.js API route `/api/auth/login`, which
+   sets the returned JWT as an httpOnly cookie. The JWT never reaches
+   localStorage or client-side JS.
+3. All `/dashboard/*` routes are protected: unauthenticated requests redirect
+   to `/login`.
+4. Persistent session: the JWT is re-validated on each dashboard page load
+   via `GET /api/v1/auth/me` (created in this story — returns `{ email, role }`
+   decoded from the verified token; the endpoint does not exist today).
+5. Logout: `/api/auth/logout` clears the httpOnly cookie and redirects to
+   `/login`.
+6. Nav header on every dashboard page: Kerno logo, logged-in user email,
+   role badge, logout button.
+7. FastAPI CORS: add `CORSMiddleware` (none exists today) reading a
+   comma-separated `ALLOWED_ORIGINS` env var at startup; documented in
+   `.env.example` with the Vercel preview + production domains.
+8. Frontend unit tests (Jest/RTL): valid login → cookie set + redirect;
+   logout → cookie cleared; protected route without cookie → redirect.
+
+**Design decisions (KER-301):**
+1. **Cookie is set by the Next.js API route, not the browser.** FastAPI
+   returns the JWT in the response body (existing TokenResponse contract,
+   unchanged); the Next.js route sets it as httpOnly/Secure/SameSite. The
+   token never exists in client-readable storage.
+2. **Role is decoded server-side** in Next.js middleware for route protection;
+   the client receives only email + role as display strings via
+   /api/v1/auth/me.
+3. **GET /api/v1/auth/me is a new backend endpoint** (verified absent): it
+   decodes the presented JWT with the existing dependency helpers and returns
+   { email, role } — no database read (identity lives in the verified token,
+   per the KER-202 users-table design note).
+4. **KERNO_API_URL (server-side env var, never NEXT_PUBLIC_*)** is the only
+   place the FastAPI base URL lives. The browser never calls FastAPI
+   directly: all FastAPI calls go through Next.js route handlers and server
+   components, which hold the httpOnly cookie. Documented in
+   frontend/lib/api.ts and .env.example (decided 15 July 2026).
+
+**Files to create:** `frontend/` (Next.js project scaffold),
+`frontend/app/login/page.tsx`, `frontend/app/dashboard/layout.tsx` (auth
+guard), `frontend/app/api/auth/login/route.ts`,
+`frontend/app/api/auth/logout/route.ts`, `frontend/middleware.ts`,
+`frontend/components/NavHeader.tsx`, frontend tests.
+**Files to modify:** `src/api/app.py` (CORSMiddleware + ALLOWED_ORIGINS),
+`src/api/routers/auth.py` (+ GET /me), `src/api/schemas/auth.py`
+(+ MeResponse), `.env.example` (ALLOWED_ORIGINS),
+`tests/unit/api/test_auth.py` (+ /me tests).
+**Migration:** No.
+
+**Story DoD (inherits §11 per-file review protocol, frontend files included):**
+every file passes its §11 gate; backend suite green (431 + new /me tests);
+Jest suite green; `next build` exits 0; cookie flags verified httpOnly in a
+browser inspector.
+
+---
+
+### KER-302 — NIS2 coverage dashboard
+
+**Priority:** Must-have · **Points:** 8 · **Reg tie:** NIS2 Articles 21, 23
+(demonstrable security posture — internal view; the KER-204 Trust Center is
+the public view).
+
+**Acceptance criteria:**
+1. Dashboard home at `/dashboard`: overall met/partial/gap counts plus a
+   breakdown by NIS2 category, sourced from `GET /api/v1/coverage/summary`
+   (KER-109 — verified to exist and to return exactly these counts per
+   category; no new read logic needed).
+2. Coverage breakdown as a visual category grid: each category card shows
+   met (green) / partial (amber) / gap (red) counts with a percentage bar.
+   WCAG AA contrast.
+3. Last-recalculated timestamp shown on the dashboard. **Verified gap: no
+   endpoint exposes this today.** Before writing any code, check where
+   `POST /api/v1/scheduler/run-recalculation` writes a completion timestamp
+   (look for an updated_at or completed_at column in the scheduler or
+   retrieval_bias tables). Use that verified column; do not add a new column
+   without confirming it does not already exist. Extend the
+   `GET /api/v1/coverage/summary` response with a nullable
+   `last_recalculated_at`. A `null` value renders as "Never calibrated" in
+   the UI.
+4. Manual recalculate button calls `POST /api/v1/scheduler/run-recalculation`
+   (KER-201); shown only to `compliance_lead` and `vciso`; the response's
+   status and fresh timestamp update the display.
+5. Clicking a category card navigates to `/dashboard/controls?category=…` —
+   the control list from `GET /api/v1/coverage/controls?category=…` with
+   met/partial/gap status badges per control.
+6. Auditor sees the dashboard read-only (no recalculate button); all other
+   roles see the full view. UI gating only — the backend endpoint keeps its
+   existing auth semantics.
+7. Responsive at 1280px+ desktop.
+
+**Design decisions (KER-302):**
+1. **No cache layer in the frontend and none needed in the backend** — the
+   KER-109 coverage endpoint is computed live per request (verified); after
+   any state-changing action the dashboard simply re-fetches.
+2. **`frontend/lib/api.ts` is the single typed fetch wrapper** for all FastAPI
+   calls (auth header from the httpOnly cookie via Next.js route handlers /
+   server components); every later story imports it rather than calling
+   `fetch` directly.
+
+**Files to create:** `frontend/app/dashboard/page.tsx`,
+`frontend/app/dashboard/controls/page.tsx`,
+`frontend/components/CoverageGrid.tsx`, `frontend/components/ControlList.tsx`,
+`frontend/lib/api.ts`.
+**Files to modify:** `src/api/schemas/coverage.py` and
+`src/services/coverage_service.py` (+ `last_recalculated_at` in the summary —
+after verifying the source column per AC-3),
+`tests/unit/api/test_coverage.py`,
+`tests/unit/services/test_coverage_service.py`.
+**Migration:** No.
+
+**Story DoD (inherits §11):** every file passes its §11 gate; backend suite
+green; Jest suite green; category grid verified against seeded dev data;
+`last_recalculated_at` source column confirmed in a code comment before use.
+
+---
+
+### KER-303 — Recommendation review UI
+
+**Priority:** Must-have · **Points:** 8 · **Reg tie:** EU AI Act Article 14
+(human oversight — this UI is the human-in-the-loop surface).
+
+**Acceptance criteria:**
+1. Page at `/dashboard/recommendations`: paginated list of open recommendations
+   showing control_id, status, confidence (percentage + colour badge),
+   evidence count, generated_at. **Verified gap: no list endpoint exists** —
+   this story adds read-only `GET /api/v1/recommendations` (JWT-scoped,
+   paginated; `page`/`page_size` query params) over the existing
+   recommendations table. "Open" is defined by the following exact predicate
+   (corrected 15 July 2026 — overrides link to controls via
+   original_control_id; there is NO overrides.recommendation_id column, and
+   `IN (SELECT recommendation_id FROM overrides)` must not appear anywhere):
+
+     is_superseded = FALSE
+     AND NOT EXISTS (
+         SELECT 1 FROM overrides o
+         WHERE o.original_control_id = recommendations.control_id
+         AND o.created_at > recommendations.generated_at
+     )
+
+   The created_at > generated_at guard is required — an override predating
+   the recommendation does not close it. Note: because map_control supersedes
+   prior rows on every regeneration, is_superseded = FALSE yields at most one
+   open row per control.
+
+2. Each row has three actions mapping **exactly** onto the KER-106 backend
+   vocabulary (decided 15 July 2026 — there is no `override` or `dismiss`
+   action; `edit` and `reject` REQUIRE `corrected_control_id`; a request with
+   any other action_type value will 422):
+   - **Approve** button → action_type="approve", submits immediately, no form.
+   - **Edit** button → action_type="edit", opens the inline form (AC-3).
+   - **Reject** button → action_type="reject", opens the same inline form.
+
+3. The shared Edit/Reject inline form: `justification` text (required,
+   pre-filled with the recommendation's `rationale`) AND a required
+   `corrected_control_id` chosen from a searchable dropdown populated via
+   `GET /api/v1/coverage/controls` (verified — no `/api/v1/controls` route
+   exists; the KER-109 endpoint provides control_id/ref/title). The form may
+   not be submitted without both fields.
+
+4. Approve requires no justification and no corrected control.
+
+5. After any action: row removed from the open list, success toast, coverage
+   re-fetched on next dashboard view. **NO invalidation call** — the coverage
+   endpoint is uncached (verified), and `PUT /api/v1/trust-center/visibility`
+   must **never** be used as a refresh mechanism (it changes public visibility,
+   not internal state).
+
+6. Filtering: confidence band (all/high/medium/low) and NIS2 category —
+   client-side on the fetched page.
+
+7. Auditor role: action buttons hidden; read-only list. (The backend already
+   enforces this: auditor POSTs to /overrides get 403 via
+   OVERRIDE_CAPABLE_ROLES.)
+
+8. Empty state: clear message when no open recommendations exist.
+
+**Design decisions (KER-303):**
+1. **Confidence badge colours key off the server's `confidence_level` field**
+   (high/medium/low, derived from HIGH_/MEDIUM_CONFIDENCE_THRESHOLD in
+   config/constants.py), never off frontend-hardcoded cutoffs — one source
+   of truth, no drift.
+2. **The new list endpoint is read-only and thin**: router + schema + a
+   `list_open_recommendations()` read in `recommendation_service`; "open"
+   uses the exact corrected predicate in AC-1 (control + time join).
+   No writes, no migration.
+
+**Files to create:** `frontend/app/dashboard/recommendations/page.tsx`,
+`frontend/components/RecommendationList.tsx`,
+`frontend/components/OverrideForm.tsx`, `frontend/components/Toast.tsx`,
+`src/api/routers/recommendations.py`, `src/api/schemas/recommendations.py`,
+`tests/unit/api/test_recommendations.py`.
+**Files to modify:** `src/services/recommendation_service.py` (+ list read),
+`src/api/app.py` (register router),
+`tests/unit/services/test_recommendation_service.py`.
+**Migration:** No.
+
+**Story DoD (inherits §11):** every file passes its §11 gate; backend suite
+green including the new list-endpoint tests; Jest suite green; the three
+action mappings verified against a live backend (approve → 201; edit/reject
+→ 422 without corrected_control_id, 201 with).
+
+---
+
+### KER-304 — Evidence pack export button
+
+**Priority:** Should-have · **Points:** 3 · **Reg tie:** NIS2 Article 23
+(evidence for competent authority reporting).
+
+**Acceptance criteria:**
+1. Export button on `/dashboard` and on each category detail page
+   (`/dashboard/controls?category=…`).
+2. Calls the existing KER-111 endpoint at its verified path:
+   `GET /api/v1/export/evidence-pack?control_family=…` (the draft path
+   /api/v1/evidence-pack/export does not exist). The page passes the NIS2
+   category value as `control_family` — **verify the category/family
+   vocabulary match** against compliance_controls during implementation before
+   wiring the query parameter.
+3. Browser receives a file download. Verified: the endpoint already returns
+   Content-Disposition: attachment with a safe filename — no backend change
+   required; the frontend streams the response through a same-origin route
+   handler or uses an authenticated fetch + blob anchor.
+4. Loading spinner during export; button disabled while in progress.
+5. Export is tenant-scoped server-side via the JWT — no tenant_id anywhere
+   in the request.
+6. UI role-gating: visible to compliance_lead, vciso, security_engineer,
+   platform_engineer; hidden for auditor and end_customer_admin. **Recorded
+   honestly: this is UX-layer gating only** — the backend endpoint currently
+   accepts any authenticated role (tenant-scoped + rate-limited); adding
+   require_role() server-side is a Sprint 4 decision, not assumed here.
+
+**Files to create:** `frontend/components/ExportButton.tsx`.
+**Files to modify:** `frontend/app/dashboard/page.tsx`,
+`frontend/app/dashboard/controls/page.tsx`.
+**Migration:** No.
+
+**Story DoD (inherits §11):** every file passes its §11 gate; a real export
+downloaded from the dev backend for at least one control family; suites green.
+
+---
+
+### Dependency table
+
+| Story       | Depends on          | Notes                                      |
+|-------------|---------------------|--------------------------------------------|
+| KER-301     | —                   | Must land first — all other stories need auth |
+| KER-302     | KER-301             | Needs auth guard + api.ts wrapper          |
+| KER-303     | KER-301             | Needs auth guard + api.ts wrapper          |
+| KER-304     | KER-302             | Needs dashboard pages to attach the button |
+| KER-302 + KER-303 | Each other    | Independent after KER-301                  |
+
+Recommended order: KER-301 → KER-302 → KER-303 → KER-304 (302 before 303
+so api.ts and the controls data shapes exist before the heavier review UI).
+
+### Capacity table
+
+| Set           | Stories                                   | Points |
+|---------------|-------------------------------------------|--------|
+| Must-have     | KER-301 (5) + KER-302 (8) + KER-303 (8)  | 21     |
+| Should-have   | KER-304 (3)                               | 3      |
+| Sprint 3 total |                                          | 24     |
+
+Target close: ~1 August 2026. Backend baseline: the 431-test suite must stay
+green throughout (plus the new KER-301/302/303 backend tests); the frontend
+Jest suite is separate.
+
+> ### 🏁 Sprint 3 — Definition of Done (banner)
+> Sprint 3 is closed only when **all of the following hold**:
+> 1. **Backend:** all 431 baseline tests plus the new KER-301 (/me), KER-302
+>    (summary timestamp), and KER-303 (recommendations list) tests are green,
+>    0 failed.
+> 2. **Frontend:** the Jest suite is green, including the KER-301 auth-flow
+>    tests (login sets cookie, logout clears it, protected-route redirect).
+> 3. `next build` exits 0 — no type errors, no lint errors.
+> 4. **CORS:** FastAPI allows the Vercel preview and production domains via
+>    ALLOWED_ORIGINS.
+> 5. **Deployment note actioned:** the FastAPI backend is reachable over HTTPS.
 
