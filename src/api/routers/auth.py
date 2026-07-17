@@ -1,19 +1,24 @@
-"""FastAPI router for the authentication endpoint mounted at /api/v1/auth.
+"""FastAPI router for the authentication endpoints mounted at /api/v1/auth.
 
-What:  Provides a single POST /login endpoint that accepts email + password,
-       delegates credential verification to auth_service, and returns a signed JWT.
-Why:   The dashboard login page needs an issuance endpoint; the existing API only
-       validates JWTs. This router is the entry point for all new sessions.
+What:  POST /login accepts email + password, delegates credential verification
+       to auth_service, and returns a signed JWT. GET /me (KER-301) validates
+       a presented JWT and returns the email + role display strings.
+Why:   The dashboard login page needs an issuance endpoint, and every dashboard
+       page load re-validates the session and shows who is logged in (EU AI Act
+       Article 14 — identified human actors).
 How:   Registered in src/api/app.py. Run tests with:
        pytest tests/unit/api/test_auth.py -v
 """
 
 from __future__ import annotations
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_conn
-from src.api.schemas.auth import LoginRequest, TokenResponse
+# _jwt_secret and _oauth2_scheme are imported so /me reads the token with the
+# same security scheme and secret every other authenticated endpoint uses.
+from src.api.dependencies import _jwt_secret, _oauth2_scheme, get_conn
+from src.api.schemas.auth import LoginRequest, MeResponse, TokenResponse
 from src.services.auth_service import authenticate_and_issue_token
 
 router = APIRouter()
@@ -31,3 +36,26 @@ def login(body: LoginRequest, conn=Depends(get_conn)) -> TokenResponse:
     if token is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
     return TokenResponse(access_token=token, token_type="bearer")
+
+
+@router.get("/me")
+def me(token: str | None = Depends(_oauth2_scheme)) -> MeResponse:
+    """Return the logged-in user's email and role from the verified JWT (KER-301).
+
+    No database read: identity lives in the verified token (KER-202 — only the
+    login query ever reads the users table). Any missing, expired, or invalid
+    token is a uniform 401 so the dashboard's session check fails closed.
+    """
+    if token is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="invalid token")
+    email = payload.get("email")
+    role = payload.get("role")
+    if not email or not role:
+        raise HTTPException(status_code=401, detail="token missing identity claims")
+    return MeResponse(email=email, role=role)

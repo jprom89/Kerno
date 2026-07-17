@@ -21,6 +21,7 @@ except ImportError:
     pass
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -44,6 +45,18 @@ async def _lifespan(app: FastAPI):
     yield
 
 
+def _allowed_origins() -> list[str]:
+    """Return the cross-origin allow-list from the ALLOWED_ORIGINS env var (KER-301).
+
+    Comma-separated origins (the Next.js dev server plus the Vercel preview and
+    production domains — see .env.example). An unset or empty variable yields an
+    empty list, which means no cross-origin browser access at all: CORS fails
+    closed rather than open.
+    """
+    raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+
 def create_app() -> FastAPI:
     """Return a fully configured FastAPI application instance."""
     app = FastAPI(lifespan=_lifespan)
@@ -51,6 +64,16 @@ def create_app() -> FastAPI:
     # SEC-05: register the shared rate limiter and its 429 handler.
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # KER-301: allow the dashboard's origins only. Credentials are enabled for
+    # the httpOnly session cookie; an empty allow-list disables CORS entirely.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(register.router, prefix="/api/v1/register", tags=["register"])
