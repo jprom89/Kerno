@@ -58,6 +58,24 @@ class ScoringResult:
 
 
 @dataclasses.dataclass(frozen=True)
+class OpenRecommendation:
+    """One row of the review queue (KER-303) — a current recommendation with no
+    later override, enriched with catalogue metadata for display and filtering."""
+
+    recommendation_id: str
+    control_id: str
+    control_ref: str | None
+    control_title: str | None
+    category: str | None
+    status: str
+    confidence_level: str
+    confidence_score: float
+    rationale: str
+    evidence_count: int
+    generated_at: datetime
+
+
+@dataclasses.dataclass(frozen=True)
 class RecommendationOutput:
     """Return type for all public recommendation service functions."""
 
@@ -126,6 +144,44 @@ FROM compliance_controls
 WHERE control_id = :control_id
 """
 
+# "Open" predicate (KER-303, corrected 15 July 2026): a recommendation is open
+# when it is current (not superseded) and no override for its control was
+# recorded AFTER it was generated. Overrides link to controls via
+# original_control_id — there is NO overrides.recommendation_id column. The
+# created_at > generated_at guard is required: an override predating the
+# recommendation does not close it. The explicit o.tenant_id filter is defence
+# in depth on top of RLS, per the house pattern in coverage_service.
+_OPEN_PREDICATE = """
+r.tenant_id = :tenant_id
+  AND r.is_superseded = FALSE
+  AND NOT EXISTS (
+      SELECT 1 FROM overrides o
+      WHERE o.tenant_id = r.tenant_id
+        AND o.original_control_id = r.control_id
+        AND o.created_at > r.generated_at
+  )
+"""
+
+# The catalogue join enriches each row with ref/title/category for display and
+# the client-side category filter; LEFT JOIN because a recommendation may
+# reference a control ref that is not in the platform catalogue.
+_SELECT_OPEN_PAGE = f"""
+SELECT r.recommendation_id, r.control_id, cc.control_ref, cc.title, cc.category,
+       r.status, r.confidence_level, r.confidence_score, r.rationale,
+       r.evidence_ids, r.generated_at
+FROM recommendations r
+LEFT JOIN compliance_controls cc ON r.control_id = cc.control_id::text
+WHERE {_OPEN_PREDICATE}
+ORDER BY r.generated_at DESC
+LIMIT :page_size OFFSET :page_offset
+"""
+
+_COUNT_OPEN = f"""
+SELECT count(*)
+FROM recommendations r
+WHERE {_OPEN_PREDICATE}
+"""
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -174,6 +230,46 @@ def get_recommendation(conn, tenant_id, control_id: str) -> RecommendationOutput
         _SELECT_CURRENT, {"tenant_id": tenant_id, "control_id": control_id}
     ).fetchone()
     return _row_to_output(row) if row is not None else None
+
+
+def list_open_recommendations(
+    conn, tenant_id, page: int, page_size: int
+) -> tuple[list[OpenRecommendation], int]:
+    """Return one page of the tenant's open recommendations plus the total count.
+
+    "Open" uses the exact corrected KER-303 predicate (_OPEN_PREDICATE above):
+    current rows with no override recorded after generation. Newest first;
+    page is 1-based. Sets tenant context before querying and raises
+    TenantContextMissingError on a missing or invalid tenant. Read-only.
+    """
+    set_tenant_context(conn, tenant_id)
+    params = {
+        "tenant_id": str(tenant_id),
+        "page_size": page_size,
+        "page_offset": (page - 1) * page_size,
+    }
+    rows = conn.execute(_SELECT_OPEN_PAGE, params).fetchall()
+    count_row = conn.execute(_COUNT_OPEN, {"tenant_id": str(tenant_id)}).fetchone()
+    total = int(count_row[0]) if count_row is not None else 0
+    return [_row_to_open_recommendation(row) for row in rows], total
+
+
+def _row_to_open_recommendation(row) -> OpenRecommendation:
+    """Map one _SELECT_OPEN_PAGE row (by position) to an OpenRecommendation."""
+    evidence_ids = list(row[9]) if row[9] is not None else []
+    return OpenRecommendation(
+        recommendation_id=str(row[0]),
+        control_id=str(row[1]),
+        control_ref=row[2],
+        control_title=row[3],
+        category=row[4],
+        status=row[5],
+        confidence_level=row[6],
+        confidence_score=float(row[7]),
+        rationale=row[8],
+        evidence_count=len(evidence_ids),
+        generated_at=row[10],
+    )
 
 
 def get_recommendation_by_id(

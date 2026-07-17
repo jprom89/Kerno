@@ -35,7 +35,10 @@ from src.models.recommendation import (
     STATUS_PARTIAL,
 )
 from src.services.evidence_service import LINK_STATUS_ACTIVE, LINK_STATUS_BROKEN, EvidenceResult
-from src.services.recommendation_service import generate_recommendation
+from src.services.recommendation_service import (
+    generate_recommendation,
+    list_open_recommendations,
+)
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000077"
 _CONTROL_ID = "NIS2-Art21-1"
@@ -303,3 +306,72 @@ def test_broken_links_noted_in_gaps() -> None:
         result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
     assert result.gaps is not None, "gaps must be set when a broken link is present"
     assert "broken" in result.gaps.lower(), "gaps must mention the broken link"
+
+
+# ── list_open_recommendations (KER-303) ───────────────────────────────────────
+
+
+class _RowsResult:
+    """Serves configured rows for the open-list SELECT and count queries."""
+
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        return self._rows
+
+
+_OPEN_ROW = (
+    "e0000000-0000-4000-e000-000000000001", _CONTROL_ID, "NIS2-21.2a",
+    "Risk analysis policy", "governance", "partial", "medium", 0.66,
+    "Partial coverage.", ["rec-1", "rec-2"], _NOW,
+)
+
+
+def _open_list_spy(rows: list, total: int) -> _SpyConn:
+    return _SpyConn(responses=[
+        ("LEFT JOIN compliance_controls", _RowsResult(rows)),
+        ("SELECT count(*)", _RowsResult([(total,)])),
+    ])
+
+
+def test_open_list_uses_the_corrected_predicate() -> None:
+    spy = _open_list_spy([], 0)
+    list_open_recommendations(spy, _TENANT_ID, page=1, page_size=20)
+    sql = next(s for s, _ in spy.calls if "LEFT JOIN compliance_controls" in str(s))
+    assert "NOT EXISTS" in sql
+    assert "o.original_control_id = r.control_id" in sql
+    assert "o.created_at > r.generated_at" in sql
+    assert "is_superseded = FALSE" in sql
+    # The phantom column from the superseded AC-1 draft must never appear.
+    assert "recommendation_id FROM overrides" not in sql
+
+
+def test_open_list_paginates_and_maps_rows() -> None:
+    spy = _open_list_spy([_OPEN_ROW], 41)
+    items, total = list_open_recommendations(spy, _TENANT_ID, page=3, page_size=20)
+    assert total == 41
+    _, params = next((s, p) for s, p in spy.calls if "LEFT JOIN" in str(s))
+    assert params["page_size"] == 20
+    assert params["page_offset"] == 40  # (page 3 - 1) * 20
+    item = items[0]
+    assert item.control_ref == "NIS2-21.2a"
+    assert item.category == "governance"
+    assert item.evidence_count == 2
+    assert item.confidence_level == "medium"
+
+
+def test_open_list_sets_tenant_context_first() -> None:
+    spy = _open_list_spy([], 0)
+    list_open_recommendations(spy, _TENANT_ID, page=1, page_size=20)
+    assert "SET LOCAL" in str(spy.calls[0][0])
+
+
+def test_open_list_invalid_tenant_raises_before_sql() -> None:
+    spy = _open_list_spy([], 0)
+    with pytest.raises(TenantContextMissingError):
+        list_open_recommendations(spy, None, page=1, page_size=20)
+    assert len(spy.calls) == 0

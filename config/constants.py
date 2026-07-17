@@ -352,3 +352,13 @@ WEBHOOK_DEDUP_WINDOW_HOURS: int = 24
 # Milliseconds per second — used by the batch jobs when converting monotonic
 # durations to the millisecond values emitted in structured logs.
 MILLISECONDS_PER_SECOND: int = 1000
+
+# ---------------------------------------------------------------------------
+# Recommendation review list (KER-303)
+# ---------------------------------------------------------------------------
+
+# Default and maximum page sizes for GET /api/v1/recommendations. The default
+# keeps the review page snappy; the cap stops a caller from dragging the whole
+# table through one request.
+RECOMMENDATIONS_DEFAULT_PAGE_SIZE: int = 20
+RECOMMENDATIONS_MAX_PAGE_SIZE: int = 100

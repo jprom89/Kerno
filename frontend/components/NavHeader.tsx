@@ -29,7 +29,15 @@ export default function NavHeader({ email, role }: NavHeaderProps) {
 
   return (
     <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-      <span className="text-lg font-semibold tracking-tight text-slate-900">Kerno</span>
+      <nav className="flex items-center gap-6">
+        <span className="text-lg font-semibold tracking-tight text-slate-900">Kerno</span>
+        <a href="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">
+          Coverage
+        </a>
+        <a href="/dashboard/recommendations" className="text-sm text-slate-600 hover:text-slate-900">
+          Recommendations
+        </a>
+      </nav>
       <div className="flex items-center gap-4">
         <span className="text-sm text-slate-600">{email}</span>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-700">

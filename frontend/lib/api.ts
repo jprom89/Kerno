@@ -117,3 +117,34 @@ export async function fetchCoverageControls(category?: string): Promise<Coverage
   return (await response.json()) as CoverageControl[];
 }
 
+/** One open recommendation from GET /api/v1/recommendations (KER-303). */
+export interface OpenRecommendation {
+  recommendation_id: string;
+  control_id: string;
+  control_ref: string | null;
+  control_title: string | null;
+  category: string | null;
+  status: string;
+  confidence_level: string;
+  confidence_score: number;
+  rationale: string;
+  evidence_count: number;
+  generated_at: string;
+}
+
+/** The paginated review queue response shape. */
+export interface RecommendationPage {
+  items: OpenRecommendation[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+/** Fetch one page of the open-recommendation review queue. */
+export async function fetchOpenRecommendations(page = 1): Promise<RecommendationPage> {
+  const response = await apiFetch(`/api/v1/recommendations?page=${page}`);
+  if (!response.ok) {
+    throw new Error(`recommendations failed: ${response.status}`);
+  }
+  return (await response.json()) as RecommendationPage;
+}

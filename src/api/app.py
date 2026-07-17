@@ -29,7 +29,7 @@ from slowapi.errors import RateLimitExceeded
 
 from src.api import trust_center, webhooks
 from src.api.rate_limit import limiter
-from src.api.routers import ai_decisions, coverage, export, overrides, panel, register, remediation, scheduler, submissions
+from src.api.routers import ai_decisions, coverage, export, overrides, panel, recommendations, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
 
@@ -85,6 +85,9 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix="/api/v1/export", tags=["export"])
     app.include_router(scheduler.router, prefix="/api/v1/scheduler", tags=["scheduler"])
     app.include_router(ai_decisions.router, prefix="/api/v1", tags=["ai-decisions"])
+    app.include_router(
+        recommendations.router, prefix="/api/v1/recommendations", tags=["recommendations"]
+    )
     # Trust Center (KER-204): the status page is deliberately public (no /api/v1
     # prefix, no auth); the visibility toggle is authenticated and role-gated.
     app.include_router(trust_center.public_router, tags=["trust-center"])
