@@ -10,11 +10,15 @@
  */
 
 import CoverageGrid from "@/components/CoverageGrid";
+import ExportButton from "@/components/ExportButton";
 import RecalculateButton from "@/components/RecalculateButton";
 import { fetchCoverageSummary, fetchMe } from "@/lib/api";
 
 // UI gating only (KER-302 AC-6): the backend enforces auth on the endpoint.
 const RECALCULATE_ROLES = ["compliance_lead", "vciso"];
+
+// UI gating only (KER-304 AC-6): hidden for auditor and end_customer_admin.
+const EXPORT_ROLES = ["compliance_lead", "vciso", "security_engineer", "platform_engineer"];
 
 function formatTimestamp(iso: string | null): string {
   if (!iso) {
@@ -26,6 +30,7 @@ function formatTimestamp(iso: string | null): string {
 export default async function DashboardPage() {
   const [summary, me] = await Promise.all([fetchCoverageSummary(), fetchMe()]);
   const canRecalculate = me !== null && RECALCULATE_ROLES.includes(me.role);
+  const canExport = me !== null && EXPORT_ROLES.includes(me.role);
 
   return (
     <section>
@@ -36,7 +41,12 @@ export default async function DashboardPage() {
             Last recalculated: {formatTimestamp(summary.last_recalculated_at)}
           </p>
         </div>
-        {canRecalculate && <RecalculateButton />}
+        <div className="flex items-center gap-4">
+          {canExport && (
+            <ExportButton families={summary.categories.map((c) => c.category)} />
+          )}
+          {canRecalculate && <RecalculateButton />}
+        </div>
       </div>
 
       <div className="mb-8 grid grid-cols-3 gap-4">

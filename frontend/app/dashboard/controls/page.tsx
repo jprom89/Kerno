@@ -10,7 +10,11 @@
 import Link from "next/link";
 
 import ControlList from "@/components/ControlList";
-import { fetchCoverageControls } from "@/lib/api";
+import ExportButton from "@/components/ExportButton";
+import { fetchCoverageControls, fetchMe } from "@/lib/api";
+
+// UI gating only (KER-304 AC-6): hidden for auditor and end_customer_admin.
+const EXPORT_ROLES = ["compliance_lead", "vciso", "security_engineer", "platform_engineer"];
 
 export default async function ControlsPage({
   searchParams,
@@ -18,7 +22,8 @@ export default async function ControlsPage({
   searchParams: Promise<{ category?: string }>;
 }) {
   const { category } = await searchParams;
-  const controls = await fetchCoverageControls(category);
+  const [controls, me] = await Promise.all([fetchCoverageControls(category), fetchMe()]);
+  const canExport = me !== null && EXPORT_ROLES.includes(me.role);
 
   return (
     <section>
@@ -26,9 +31,12 @@ export default async function ControlsPage({
         <h1 className="text-xl font-semibold capitalize text-slate-900">
           {category ? category.replace(/_/g, " ") : "All controls"}
         </h1>
-        <Link href="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">
-          ← Back to dashboard
-        </Link>
+        <div className="flex items-center gap-4">
+          {canExport && category && <ExportButton family={category} />}
+          <Link href="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">
+            ← Back to dashboard
+          </Link>
+        </div>
       </div>
       <ControlList controls={controls} />
     </section>
