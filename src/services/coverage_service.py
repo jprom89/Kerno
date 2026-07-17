@@ -10,6 +10,7 @@ over-claimed. Run tests with: pytest tests/unit/services/test_coverage_service.p
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime
 
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError  # noqa: F401  re-exported
@@ -100,13 +101,20 @@ class CategoryCoverage:
 
 @dataclasses.dataclass(frozen=True)
 class CoverageSummary:
-    """Tenant-wide coverage totals plus the per-category breakdown."""
+    """Tenant-wide coverage totals plus the per-category breakdown.
+
+    last_recalculated_at is when the tenant's retrieval bias vector was last
+    recalculated (KER-302 AC-3), or None for a never-calibrated tenant. It
+    defaults to None so pure aggregation callers (summarise_coverage, the
+    Trust Center's NIS2 filter) are unaffected.
+    """
 
     total_controls: int
     met: int
     partial: int
     gap: int
     categories: list[CategoryCoverage]
+    last_recalculated_at: datetime | None = None
 
 
 def resolve_system_of_record_status(
@@ -148,13 +156,34 @@ def get_coverage_controls(conn, tenant_id, category: str | None = None) -> list[
 
 
 def get_coverage_summary(conn, tenant_id) -> CoverageSummary:
-    """Return tenant-wide status counts and the per-category breakdown.
+    """Return tenant-wide status counts, per-category breakdown, and calibration age.
 
     Derived from the same rows as get_coverage_controls so the summary always
-    reconciles exactly with the drill-down figures.
+    reconciles exactly with the drill-down figures. Also carries when the
+    tenant's bias vector was last recalculated (KER-302 AC-3).
     """
     controls = get_coverage_controls(conn, tenant_id)
-    return summarise_coverage(controls)
+    summary = summarise_coverage(controls)
+    return dataclasses.replace(
+        summary, last_recalculated_at=_fetch_last_recalculated_at(conn, tenant_id)
+    )
+
+
+def _fetch_last_recalculated_at(conn, tenant_id) -> datetime | None:
+    """Return when this tenant's bias vector was last recalculated, or None.
+
+    Verified source (KER-302 AC-3): retrieval_bias.last_recalculated_at is the
+    only recalculation-completion timestamp in the schema — it is written by
+    persist_retrieval_bias (KER-201) on every real recalculation, for both the
+    manual POST /api/v1/scheduler/run-recalculation path and the nightly cron.
+    None means the tenant has never been calibrated (no retrieval_bias row).
+    Runs under the tenant context set by get_coverage_controls.
+    """
+    row = conn.execute(
+        "SELECT last_recalculated_at FROM retrieval_bias WHERE tenant_id = :tenant_id",
+        {"tenant_id": str(tenant_id)},
+    ).fetchone()
+    return row[0] if row is not None else None
 
 
 def summarise_coverage(controls: list[CoverageControl]) -> CoverageSummary:

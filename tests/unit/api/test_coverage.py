@@ -74,6 +74,8 @@ def test_summary_returns_counts_and_categories():
     assert len(body["categories"]) == 2
     assert body["categories"][0]["category"] == "governance"
     assert body["categories"][0]["total"] == 2
+    # KER-302 AC-3: the calibration timestamp rides the summary response.
+    assert "last_recalculated_at" in body
 
 
 def test_controls_expose_system_of_record_resolution():

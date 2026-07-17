@@ -64,3 +64,56 @@ export async function fetchMe(): Promise<Me | null> {
   }
 }
 
+/** One NIS2 category's met/partial/gap counts (KER-109 shape). */
+export interface CategoryCoverage {
+  category: string;
+  met: number;
+  partial: number;
+  gap: number;
+  total: number;
+}
+
+/** The tenant-wide coverage summary from GET /api/v1/coverage/summary (KER-302). */
+export interface CoverageSummary {
+  total_controls: number;
+  met: number;
+  partial: number;
+  gap: number;
+  categories: CategoryCoverage[];
+  last_recalculated_at: string | null;
+}
+
+/** One control row from GET /api/v1/coverage/controls (KER-109 system of record). */
+export interface CoverageControl {
+  control_id: string;
+  control_ref: string;
+  title: string;
+  category: string;
+  framework: string;
+  status: string;
+  status_source: string;
+  human_confirmed: boolean;
+  confidence_level: string | null;
+  confidence_score: number | null;
+  evidence_count: number;
+}
+
+/** Fetch the coverage summary; throws on a non-OK response (layout guarantees auth). */
+export async function fetchCoverageSummary(): Promise<CoverageSummary> {
+  const response = await apiFetch("/api/v1/coverage/summary");
+  if (!response.ok) {
+    throw new Error(`coverage summary failed: ${response.status}`);
+  }
+  return (await response.json()) as CoverageSummary;
+}
+
+/** Fetch the control list, optionally filtered to one NIS2 category. */
+export async function fetchCoverageControls(category?: string): Promise<CoverageControl[]> {
+  const query = category ? `?category=${encodeURIComponent(category)}` : "";
+  const response = await apiFetch(`/api/v1/coverage/controls${query}`);
+  if (!response.ok) {
+    throw new Error(`coverage controls failed: ${response.status}`);
+  }
+  return (await response.json()) as CoverageControl[];
+}
+

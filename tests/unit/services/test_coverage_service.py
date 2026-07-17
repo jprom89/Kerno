@@ -41,14 +41,19 @@ class _RowsResult:
 
 
 class _CoverageSpyConn:
-    def __init__(self, rows: list | None = None) -> None:
+    def __init__(self, rows: list | None = None, bias_timestamp=None) -> None:
         self.calls: list[tuple[str, object]] = []
         self._rows = rows or []
+        self._bias_timestamp = bias_timestamp
 
     def execute(self, sql: str, params=None):
         self.calls.append((sql, params))
         if "compliance_controls" in sql:
             return _RowsResult(self._rows)
+        if "FROM retrieval_bias" in sql:
+            return _RowsResult(
+                [(self._bias_timestamp,)] if self._bias_timestamp else []
+            )
         return _RowsResult([])
 
     def commit(self) -> None:
@@ -170,3 +175,21 @@ def test_summarise_empty_catalogue() -> None:
     assert summary.total_controls == 0
     assert (summary.met, summary.partial, summary.gap) == (0, 0, 0)
     assert summary.categories == []
+
+
+# ── Calibration timestamp (KER-302 AC-3) ──────────────────────────────────────
+
+
+def test_summary_carries_last_recalculated_at() -> None:
+    from datetime import datetime, timezone
+
+    recalculated = datetime(2026, 7, 14, 2, 0, 0, tzinfo=timezone.utc)
+    summary = get_coverage_summary(
+        _CoverageSpyConn(rows=[_row()], bias_timestamp=recalculated), _TENANT_ID
+    )
+    assert summary.last_recalculated_at == recalculated
+
+
+def test_summary_last_recalculated_is_none_for_uncalibrated_tenant() -> None:
+    summary = get_coverage_summary(_CoverageSpyConn(rows=[_row()]), _TENANT_ID)
+    assert summary.last_recalculated_at is None
