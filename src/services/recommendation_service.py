@@ -1,4 +1,12 @@
-"""recommendation_service.py — Explainable recommendation engine for KER-105.
+"""recommendation_service.py — Explainable recommendation engine for KER-105 / KER-401.
+
+PRODUCTION ENGINE OF RECORD (KER-401, 16 July 2026): generate_recommendation is
+the hybrid engine behind POST /api/v1/recommendations/generate. The
+deterministic scorer produces status/confidence/citations (provable by
+construction); the LLM is confined to writing rationale PROSE about a score it
+cannot change, with a template fallback on any LLM failure. Every generation
+emits a KER-203 decision-log row and a KER-107 ledger entry in the same
+transaction as the recommendation write.
 
 What:  Scores a compliance control's evidence coverage and persists a
        recommendation with status, confidence, rationale, cited evidence IDs,
@@ -17,6 +25,9 @@ How to run or test:
 from __future__ import annotations
 
 import dataclasses
+import json
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -25,9 +36,11 @@ from config.constants import (
     HIGH_CONFIDENCE_THRESHOLD,
     MAX_RATIONALE_LENGTH,
     MEDIUM_CONFIDENCE_THRESHOLD,
+    RbacRole,
+    SCORING_ENGINE_VERSION,
 )
 from src.db.rls import set_tenant_context
-from src.exceptions import TenantContextMissingError  # noqa: F401  re-exported
+from src.exceptions import EntryNotFoundError, TenantContextMissingError  # noqa: F401  re-exported
 from src.models.recommendation import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
@@ -36,11 +49,31 @@ from src.models.recommendation import (
     STATUS_MET,
     STATUS_PARTIAL,
 )
+from src.services.ai_decision_log_service import emit_decision_log, hash_snapshot
+from src.services.audit_log import append_audit_entry
 from src.services.evidence_service import (
     LINK_STATUS_ACTIVE,
     EvidenceResult,
     get_evidence_for_control,
 )
+from src.services.llm_client import get_llm_client
+
+logger = logging.getLogger(__name__)
+
+# RBAC roles permitted to trigger recommendation generation (KER-401 AC-1).
+# Explicit list, not derived from the override map: generation is analysis,
+# not decision — platform_engineer (connector scope) and read-only roles are
+# excluded by decision recorded in CLAUDE.md §15.
+GENERATE_CAPABLE_ROLES: tuple[RbacRole, ...] = (
+    RbacRole.COMPLIANCE_LEAD,
+    RbacRole.VCISO,
+    RbacRole.SECURITY_ENGINEER,
+)
+
+# Where the persisted rationale text came from (recorded in the snapshot and
+# mirrored into the decision log's model_version).
+RATIONALE_SOURCE_LLM = "llm"
+RATIONALE_SOURCE_TEMPLATE = "template"
 
 # ---------------------------------------------------------------------------
 # Internal dataclasses
@@ -187,23 +220,39 @@ WHERE {_OPEN_PREDICATE}
 # ---------------------------------------------------------------------------
 
 
-def generate_recommendation(conn, tenant_id, control_id: str) -> RecommendationOutput:
-    """Score a control's evidence and persist a new recommendation.
+def generate_recommendation(
+    conn,
+    tenant_id,
+    control_id: str,
+    triggered_by_user_id: str | None = None,
+    triggered_by_role: str | None = None,
+) -> RecommendationOutput:
+    """Score a control's evidence, add the LLM-written rationale, and persist (KER-401).
 
-    Sets tenant context, fetches all evidence for the control (including broken
-    links), runs the deterministic scoring rules, marks any prior recommendations
-    as superseded, then inserts and returns the new recommendation.
-    Raises TenantContextMissingError if tenant_id is None or empty.
+    The deterministic scorer alone decides status, confidence, and the cited
+    evidence; the LLM only writes the rationale prose (template fallback on any
+    LLM failure — prose is not the decision). The recommendation row, its
+    KER-203 decision-log row, and a KER-107 ledger entry attributing the
+    triggering user all commit or roll back together on the caller's
+    transaction. Raises EntryNotFoundError for an unknown control and
+    TenantContextMissingError if tenant_id is None or empty.
     """
     set_tenant_context(conn, tenant_id)
     control_meta = _fetch_control_meta(conn, control_id)
+    if control_meta is None:
+        raise EntryNotFoundError(f"control {control_id!r} is not in the catalogue")
     evidence = get_evidence_for_control(conn, tenant_id, control_id)
     scoring = _score_evidence(evidence)
     active_evidence = [e for e in evidence if e.link_status == LINK_STATUS_ACTIVE]
-    rationale = _build_rationale(active_evidence, scoring)
+    llm_rationale, llm_opinion = _llm_rationale_and_opinion(control_meta, active_evidence, scoring)
+    rationale = llm_rationale or _build_rationale(active_evidence, scoring)
+    rationale_source = RATIONALE_SOURCE_LLM if llm_rationale else RATIONALE_SOURCE_TEMPLATE
     gaps = _build_gaps(evidence, active_evidence, scoring)
     now = datetime.now(timezone.utc)
     snapshot = _build_snapshot(control_id, control_meta, evidence, now)
+    snapshot["scoring_engine"] = SCORING_ENGINE_VERSION
+    snapshot["rationale_source"] = rationale_source
+    snapshot["llm_opinion"] = llm_opinion
     rec_id = str(uuid.uuid4())
     _supersede_prior(conn, tenant_id, control_id)
     params = _build_insert_params(
@@ -211,6 +260,11 @@ def generate_recommendation(conn, tenant_id, control_id: str) -> RecommendationO
         active_evidence, snapshot, now,
     )
     conn.execute(_INSERT_RECOMMENDATION, params)
+    _record_generation(
+        conn, tenant_id, control_id, rec_id, scoring, rationale, rationale_source,
+        [e.record_id for e in active_evidence], snapshot,
+        triggered_by_user_id, triggered_by_role,
+    )
     return _row_to_output(
         (rec_id, tenant_id, control_id, scoring.status, scoring.confidence_level,
          scoring.confidence_score, rationale, gaps,
@@ -227,7 +281,7 @@ def get_recommendation(conn, tenant_id, control_id: str) -> RecommendationOutput
     """
     set_tenant_context(conn, tenant_id)
     row = conn.execute(
-        _SELECT_CURRENT, {"tenant_id": tenant_id, "control_id": control_id}
+        _SELECT_CURRENT, {"tenant_id": str(tenant_id), "control_id": control_id}
     ).fetchone()
     return _row_to_output(row) if row is not None else None
 
@@ -321,6 +375,157 @@ def _score_evidence(evidence: list[EvidenceResult]) -> ScoringResult:
         status=status,
         confidence_level=confidence_level,
         requires_review=(confidence_level == CONFIDENCE_LOW),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hybrid rationale + generation records (KER-401)
+# ---------------------------------------------------------------------------
+
+
+def _llm_rationale_and_opinion(
+    control_meta: tuple,
+    active_evidence: list[EvidenceResult],
+    scoring: ScoringResult,
+) -> tuple[str | None, dict | None]:
+    """Ask the LLM to explain the fixed score; return (rationale, opinion) or (None, None).
+
+    The score is decided before this call and the prompt says so — the model
+    explains, it does not decide. The same call also returns the model's
+    independent status/confidence opinion, stored in the snapshot only (KER-401
+    AC-4, engine-agreement data for KER-403). ANY failure — missing model env,
+    network, malformed JSON — returns (None, None) and the caller falls back to
+    the deterministic template; prose is not the decision, so the fallback
+    cannot poison scores.
+    """
+    model_id = os.environ.get("KERNO_LLM_MODEL")
+    if not model_id:
+        return None, None
+    try:
+        client = get_llm_client()
+        response = client.chat.complete(
+            model=model_id,
+            messages=_build_rationale_prompt(control_meta, active_evidence, scoring),
+            response_format={"type": "json_object"},
+        )
+        parsed = json.loads(response.choices[0].message.content)
+        rationale = parsed.get("rationale")
+        if not isinstance(rationale, str) or not rationale.strip():
+            return None, None
+        return rationale.strip()[:MAX_RATIONALE_LENGTH], _validate_opinion(parsed)
+    except Exception as exc:
+        logger.warning("LLM rationale unavailable, using template: %s", exc)
+        return None, None
+
+
+def _build_rationale_prompt(
+    control_meta: tuple,
+    active_evidence: list[EvidenceResult],
+    scoring: ScoringResult,
+) -> list[dict]:
+    """Build the rationale-only prompt: the verdict is fixed, the model explains it.
+
+    Also requests the model's own independent assessment in separate fields so
+    one call yields both the prose and the KER-403 agreement signal.
+    """
+    evidence_lines = "\n".join(
+        f"- [{e.record_id}] ({e.source_system or 'unknown'}) {e.title or 'untitled'} - "
+        f"relevance {e.relevance_score if e.relevance_score is not None else DEFAULT_RELEVANCE_SCORE}"
+        for e in active_evidence
+    ) or "(no active evidence records)"
+    system_message = (
+        "You are a compliance analyst writing the explanation section of an "
+        "evidence-coverage assessment for a NIS2/DORA control. The status and "
+        "confidence were computed by a deterministic scoring engine and are "
+        "FINAL - do not dispute them or state different values in the "
+        "rationale. Respond with valid JSON only."
+    )
+    user_message = (
+        f"Control: {control_meta[1]} - {control_meta[2]}\n"
+        f"Deterministic verdict: status={scoring.status}, "
+        f"confidence={scoring.confidence_score:.2f} ({scoring.confidence_level})\n"
+        f"Active evidence:\n{evidence_lines}\n\n"
+        "Respond with a JSON object containing exactly these fields:\n"
+        '- "rationale": 2-4 plain-English sentences explaining WHY this '
+        "evidence justifies the verdict above, naming the strongest evidence "
+        "record(s) by title\n"
+        '- "own_status": your OWN independent judgement, one of "met", '
+        '"partial", "gap"\n'
+        '- "own_confidence": your OWN independent confidence, a float 0.0-1.0'
+    )
+    return [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": user_message},
+    ]
+
+
+def _validate_opinion(parsed: dict) -> dict | None:
+    """Return the model's independent opinion as a clean dict, or None if malformed.
+
+    A malformed opinion never blocks the rationale — it is calibration data,
+    not product output.
+    """
+    status = parsed.get("own_status")
+    confidence = parsed.get("own_confidence")
+    if status not in (STATUS_MET, STATUS_PARTIAL, STATUS_GAP):
+        return None
+    if not isinstance(confidence, (int, float)) or not 0.0 <= float(confidence) <= 1.0:
+        return None
+    return {"status": status, "confidence": float(confidence)}
+
+
+def _record_generation(
+    conn,
+    tenant_id,
+    control_id: str,
+    rec_id: str,
+    scoring: ScoringResult,
+    rationale: str,
+    rationale_source: str,
+    evidence_ids: list[str],
+    snapshot: dict,
+    triggered_by_user_id: str | None,
+    triggered_by_role: str | None,
+) -> None:
+    """Write the KER-203 decision-log row and the KER-107 ledger entry for one generation.
+
+    Same connection and transaction as the recommendation INSERT: all three
+    records commit or roll back together (KER-401 AC-5/AC-6). model_version
+    names both the deterministic scorer and the rationale source, so any
+    retained decision is attributable to the exact logic that produced it.
+    The ledger entry attributes the triggering user's verified JWT identity;
+    a None user means a system-initiated run (future batch trigger).
+    """
+    rationale_model = (
+        os.environ.get("KERNO_LLM_MODEL", "unknown")
+        if rationale_source == RATIONALE_SOURCE_LLM
+        else RATIONALE_SOURCE_TEMPLATE
+    )
+    emit_decision_log(
+        conn,
+        tenant_id,
+        control_id=control_id,
+        evidence_ids=evidence_ids,
+        input_snapshot_hash=hash_snapshot(snapshot),
+        output_status=scoring.status,
+        confidence_score=scoring.confidence_score,
+        rationale_extract=rationale,
+        model_version=f"{SCORING_ENGINE_VERSION}+{rationale_model}",
+    )
+    append_audit_entry(
+        conn,
+        tenant_id,
+        actor_id=triggered_by_user_id,
+        actor_role=triggered_by_role or "system",
+        action_type="recommendation_generated",
+        object_type="recommendation",
+        object_id=rec_id,
+        control_id=control_id,
+        after_state={
+            "status": scoring.status,
+            "confidence_score": scoring.confidence_score,
+            "rationale_source": rationale_source,
+        },
     )
 
 
@@ -426,12 +631,17 @@ def _status_reason(status: str, score: float) -> str:
     )
 
 
-def _fetch_control_meta(conn, control_id: str) -> tuple:
-    """Fetch (control_id, control_ref, title) from compliance_controls."""
+def _fetch_control_meta(conn, control_id: str) -> tuple | None:
+    """Fetch (control_id, control_ref, title) from compliance_controls, or None.
+
+    None means the control is not in the catalogue — the generation entry
+    point turns that into EntryNotFoundError (HTTP 404) rather than silently
+    scoring a phantom control (KER-401 AC-1).
+    """
     row = conn.execute(
         _SELECT_CONTROL_META, {"control_id": control_id}
     ).fetchone()
-    return row if row is not None else (control_id, "", "")
+    return row
 
 
 def _build_snapshot(
@@ -463,10 +673,14 @@ def _build_snapshot(
 
 
 def _supersede_prior(conn, tenant_id, control_id: str) -> None:
-    """Mark all prior non-superseded recommendations for this pair as superseded."""
+    """Mark all prior non-superseded recommendations for this pair as superseded.
+
+    tenant_id is stringified for the driver — psycopg2 cannot adapt UUID
+    objects (found by the KER-401 live-DB integration test).
+    """
     conn.execute(
         _SUPERSEDE_PRIOR,
-        {"tenant_id": tenant_id, "control_id": control_id},
+        {"tenant_id": str(tenant_id), "control_id": control_id},
     )
 
 
@@ -493,7 +707,9 @@ def _build_insert_params(
         "gaps": gaps,
         "evidence_ids": [e.record_id for e in active_evidence],
         "requires_review": scoring.requires_review,
-        "input_snapshot": snapshot,
+        # Serialised for psycopg2 — a raw dict is not adaptable; the column is
+        # JSON, so the string form round-trips identically (KER-401 fix).
+        "input_snapshot": json.dumps(snapshot),
         "generated_at": now,
     }
 

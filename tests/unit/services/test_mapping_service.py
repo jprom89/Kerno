@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from config.constants import LOW_CONFIDENCE_THRESHOLD
+from config.constants import MEDIUM_CONFIDENCE_THRESHOLD
 from src.exceptions import MappingError, TenantContextMissingError
 from src.services.mapping_service import (
     ControlInput,
@@ -253,7 +253,10 @@ def test_low_confidence_sets_requires_human_review_true():
 
 
 def test_confidence_exactly_at_threshold_does_not_require_human_review():
-    threshold_payload = {**_VALID_LLM_PAYLOAD, "confidence": LOW_CONFIDENCE_THRESHOLD}
+    # KER-401 AC-7: review is required exactly when the level is low, i.e.
+    # strictly below MEDIUM_CONFIDENCE_THRESHOLD; at the threshold the level
+    # is medium and no review flag is set.
+    threshold_payload = {**_VALID_LLM_PAYLOAD, "confidence": MEDIUM_CONFIDENCE_THRESHOLD}
     spy = _SpyConn()
     mock_client = _mock_llm_client(json.dumps(threshold_payload))
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \

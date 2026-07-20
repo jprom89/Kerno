@@ -5,6 +5,12 @@ LLM or validation failure, TenantContextMissingError when tenant context is miss
 Every persisted recommendation also writes one ai_decision_log row in the same
 transaction (KER-203) — no recommendation can exist without its retained decision record.
 
+RESERVED PATH (KER-401, 16 July 2026): this LLM-decides-everything engine has
+no production trigger. The production engine of record is the hybrid path in
+recommendation_service.py (deterministic score + LLM rationale). This module
+is kept intact for KER-403 engine-comparison work; do not wire it to a trigger
+without a recorded decision.
+
 Why:   the mapping decision is the product's core output; validation, persistence,
        and the retained decision record must happen in one auditable place.
 How:   pytest tests/unit/services/test_mapping_service.py -v
@@ -13,7 +19,6 @@ How:   pytest tests/unit/services/test_mapping_service.py -v
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 import logging
 import os
@@ -25,14 +30,13 @@ from mistralai.client.errors import MistralError
 
 from config.constants import (
     HIGH_CONFIDENCE_THRESHOLD,
-    LOW_CONFIDENCE_THRESHOLD,
     MAX_REASONING_WORDS,
     MEDIUM_CONFIDENCE_THRESHOLD,
 )
 from src.db.rls import set_tenant_context
 from src.exceptions import MappingError, TenantContextMissingError  # noqa: F401
 from src.models.recommendation import CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENCE_MEDIUM
-from src.services.ai_decision_log_service import emit_decision_log
+from src.services.ai_decision_log_service import emit_decision_log, hash_snapshot
 from src.services.audit_log import write_audit_event
 from src.services.llm_client import get_llm_client
 
@@ -133,7 +137,9 @@ def map_control(
     raw_response = _call_llm(messages, model_id)
     parsed = _parse_llm_response(raw_response)
     confidence_level = _derive_confidence_level(parsed["confidence"])
-    requires_human_review = parsed["confidence"] < LOW_CONFIDENCE_THRESHOLD
+    # One definition of "needs a human" across both engines (KER-401 AC-7):
+    # review is required exactly when the derived level is CONFIDENCE_LOW.
+    requires_human_review = confidence_level == CONFIDENCE_LOW
     snapshot = _build_input_snapshot(control, evidence, model_id, now)
     rec_id = str(uuid.uuid4())
     _supersede_prior(conn, tenant_id, control.control_id)
@@ -347,15 +353,13 @@ def _persist_recommendation(
 
 
 def _hash_input_snapshot(snapshot: dict) -> str:
-    """Return the SHA-256 hex digest of the canonical JSON form of the snapshot.
+    """Return the canonical snapshot digest via the single hashing home.
 
-    Canonical means sorted keys and no insignificant whitespace, so the same
-    inputs always produce the same digest regardless of dict ordering. Only
-    this hash reaches ai_decision_log — never the snapshot itself — which is
-    what keeps personal data out of the retained log (KER-203 AC-6).
+    Delegates to ai_decision_log_service.hash_snapshot (KER-401) so every
+    decision-log emitter hashes identically. Only the hash reaches
+    ai_decision_log — never the snapshot itself (KER-203 AC-6).
     """
-    canonical_json = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return hash_snapshot(snapshot)
 
 
 def _record_decision_log(

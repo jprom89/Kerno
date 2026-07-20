@@ -40,3 +40,29 @@ class RecommendationListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class GenerateRecommendationRequest(BaseModel):
+    """The on-demand generation trigger body (KER-401): which control to analyse."""
+
+    control_id: str
+
+
+class GeneratedRecommendationResponse(BaseModel):
+    """The freshly generated recommendation as returned by the trigger endpoint.
+
+    Status, confidence, and evidence_ids come from the deterministic scorer
+    only; rationale_source discloses whether the prose came from the LLM or
+    the template fallback — the demo surface never hides a degraded run.
+    """
+
+    recommendation_id: str
+    control_id: str
+    status: str
+    confidence_level: str
+    confidence_score: float
+    rationale: str
+    rationale_source: str
+    evidence_ids: list[str]
+    requires_review: bool
+    generated_at: datetime

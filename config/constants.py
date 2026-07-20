@@ -211,11 +211,10 @@ HIGH_CONFIDENCE_THRESHOLD: float = 0.75
 # (PROMPT_doc13_decision_layer.md §4.1 Step 3-4)
 MEDIUM_CONFIDENCE_THRESHOLD: float = 0.40
 
-# Confidence score below which an LLM-generated recommendation is flagged
-# for human review. The mapping service sets requires_review=True when
-# the LLM's returned confidence is strictly less than this value.
-# (KER-105 — mapping_service.py)
-LOW_CONFIDENCE_THRESHOLD: float = 0.5
+# LOW_CONFIDENCE_THRESHOLD was deleted in KER-401 (16 July 2026): its value
+# (0.5) exceeded MEDIUM_CONFIDENCE_THRESHOLD (0.40), producing contradictory
+# labels. "Needs a human" is now defined once, in both engines, as
+# confidence_level == CONFIDENCE_LOW — i.e. below MEDIUM_CONFIDENCE_THRESHOLD.
 
 # Score assigned to evidence records that have no explicit relevance_score.
 # Represents a neutral "present but unscored" signal.
@@ -362,3 +361,13 @@ MILLISECONDS_PER_SECOND: int = 1000
 # table through one request.
 RECOMMENDATIONS_DEFAULT_PAGE_SIZE: int = 20
 RECOMMENDATIONS_MAX_PAGE_SIZE: int = 100
+
+# ---------------------------------------------------------------------------
+# Hybrid recommendation engine (KER-401)
+# ---------------------------------------------------------------------------
+
+# Version marker for the deterministic evidence scorer, recorded in every
+# ai_decision_log row the hybrid path emits (alongside the rationale source)
+# so any retained decision can be attributed to the exact scoring logic that
+# produced it.
+SCORING_ENGINE_VERSION: str = "evidence-rules-v1"

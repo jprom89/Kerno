@@ -84,3 +84,91 @@ def test_unauthenticated_request_returns_401():
     app = create_app()
     app.dependency_overrides[get_conn] = _override_get_conn
     assert TestClient(app).get("/api/v1/recommendations").status_code == 401
+
+
+# ── POST /api/v1/recommendations/generate (KER-401) ───────────────────────────
+
+_GENERATE_PATCH = "src.api.routers.recommendations.generate_recommendation"
+_USER_ID = "d0000000-0000-4000-d000-000000000004"
+
+
+def _generated_output():
+    from src.services.recommendation_service import RecommendationOutput
+
+    return RecommendationOutput(
+        recommendation_id="f0000000-0000-4000-f000-000000000001",
+        tenant_id=_TENANT_ID,
+        control_id="c0000000-0000-4000-c000-000000000001",
+        status="met",
+        confidence_level="high",
+        confidence_score=0.9,
+        rationale="The evidence demonstrates full coverage.",
+        gaps=None,
+        evidence_ids=["rec-1"],
+        requires_review=False,
+        input_snapshot={"rationale_source": "llm", "llm_opinion": {"status": "met", "confidence": 0.8}},
+        generated_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+        is_superseded=False,
+    )
+
+
+def _generate_app(role: str = "compliance_lead"):
+    from src.api.dependencies import get_role
+    from src.api.routers.overrides import get_reviewer_id
+
+    app = create_app()
+    app.dependency_overrides[get_tenant_id] = lambda: _TENANT_ID
+    app.dependency_overrides[get_reviewer_id] = lambda: _USER_ID
+    app.dependency_overrides[get_role] = lambda: role
+    app.dependency_overrides[get_conn] = _override_get_conn
+    return app
+
+
+def test_generate_returns_201_with_scorer_verdict_and_rationale_source():
+    with patch(_GENERATE_PATCH, return_value=_generated_output()) as mock_generate:
+        response = TestClient(_generate_app()).post(
+            "/api/v1/recommendations/generate",
+            json={"control_id": "c0000000-0000-4000-c000-000000000001"},
+        )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "met"
+    assert body["confidence_level"] == "high"
+    assert body["rationale_source"] == "llm"
+    assert body["evidence_ids"] == ["rec-1"]
+    # The service receives the SESSION identity, never anything body-supplied.
+    kwargs = mock_generate.call_args.kwargs
+    assert kwargs["triggered_by_user_id"] == _USER_ID
+    assert kwargs["triggered_by_role"] == "compliance_lead"
+
+
+def test_generate_unknown_control_returns_404():
+    from src.exceptions import EntryNotFoundError
+
+    with patch(_GENERATE_PATCH, side_effect=EntryNotFoundError("no such control")):
+        response = TestClient(_generate_app()).post(
+            "/api/v1/recommendations/generate", json={"control_id": "ghost"}
+        )
+    assert response.status_code == 404
+
+
+def test_generate_role_gate():
+    for role, expected in (
+        ("compliance_lead", 201), ("vciso", 201), ("security_engineer", 201),
+        ("platform_engineer", 403), ("end_customer_admin", 403), ("auditor", 403),
+    ):
+        with patch(_GENERATE_PATCH, return_value=_generated_output()):
+            response = TestClient(_generate_app(role)).post(
+                "/api/v1/recommendations/generate",
+                json={"control_id": "c0000000-0000-4000-c000-000000000001"},
+            )
+        assert response.status_code == expected, f"{role} expected {expected}"
+
+
+def test_generate_unauthenticated_returns_401():
+    app = create_app()
+    app.dependency_overrides[get_conn] = _override_get_conn
+    response = TestClient(app).post(
+        "/api/v1/recommendations/generate", json={"control_id": "x"}
+    )
+    assert response.status_code == 401

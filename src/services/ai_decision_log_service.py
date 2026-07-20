@@ -40,11 +40,26 @@ Live-database proof (emit inside map_control, query, prune window):
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from config.constants import AI_DECISION_LOG_RETENTION_DAYS
 from src.db.rls import set_tenant_context
+
+
+def hash_snapshot(snapshot: dict) -> str:
+    """Return the SHA-256 hex digest of the canonical JSON form of a snapshot.
+
+    Canonical means sorted keys and no insignificant whitespace, so identical
+    inputs always produce identical digests regardless of dict ordering. This
+    is the single home for snapshot hashing (KER-401): every path that emits a
+    decision-log row derives input_snapshot_hash here, so the runbook's
+    re-derivation procedure works for all of them.
+    """
+    canonical_json = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 _INSERT_DECISION_LOG = """
 INSERT INTO ai_decision_log (

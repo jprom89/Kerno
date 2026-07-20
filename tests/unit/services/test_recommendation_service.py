@@ -2,7 +2,8 @@
 
 Plain-English summary
 ---------------------
-Fifteen tests verify the recommendation service without a live database.
+Verifies the recommendation service without a live database (scoring, the
+KER-401 hybrid rationale path, the KER-303 open list, and persistence).
 A spy connection records every execute() call. get_evidence_for_control is
 patched to return pre-built EvidenceResult lists, isolating the scoring and
 persistence logic from the evidence retrieval layer. Tests cover: STATUS_MET /
@@ -19,6 +20,7 @@ How to run
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -139,6 +141,22 @@ def _default_spy() -> _SpyConn:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_llm(monkeypatch):
+    """Force the template-rationale path in every test unless one installs its own mock.
+
+    Without this, generate_recommendation would construct a real Mistral client
+    whenever the developer's .env carries a key, and unit tests would hit the
+    network (KER-401).
+    """
+    def _raise_disabled():
+        raise RuntimeError("LLM disabled in unit tests")
+
+    monkeypatch.setattr(
+        "src.services.recommendation_service.get_llm_client", _raise_disabled
+    )
+
+
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
 
@@ -225,7 +243,8 @@ def test_input_snapshot_persisted() -> None:
     ]
     assert len(insert_calls) == 1, "Exactly one INSERT expected"
     _, params = insert_calls[0]
-    snapshot = params["input_snapshot"]
+    # input_snapshot is serialised for the live driver (KER-401 fix).
+    snapshot = json.loads(params["input_snapshot"])
     assert snapshot["control_id"] == _CONTROL_ID
     assert snapshot["evidence_count"] == 1
     assert "generated_at" in snapshot
@@ -375,3 +394,98 @@ def test_open_list_invalid_tenant_raises_before_sql() -> None:
     with pytest.raises(TenantContextMissingError):
         list_open_recommendations(spy, None, page=1, page_size=20)
     assert len(spy.calls) == 0
+
+
+# ── KER-401: hybrid rationale, fallback, and generation records ───────────────
+
+
+def _mock_rationale_client(payload: dict):
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    choice = MagicMock()
+    choice.message.content = json.dumps(payload)
+    client.chat.complete.return_value = MagicMock(choices=[choice])
+    return client
+
+
+def test_llm_writes_rationale_but_cannot_alter_the_score(monkeypatch) -> None:
+    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    client = _mock_rationale_client({
+        "rationale": "The Security Patch record demonstrates active remediation.",
+        "own_status": "partial",
+        "own_confidence": 0.55,
+    })
+    monkeypatch.setattr(
+        "src.services.recommendation_service.get_llm_client", lambda: client
+    )
+    spy = _default_spy()
+    evidence = [_make_evidence(relevance_score=0.9)]  # scorer says met/high
+    with patch(_PATCH_TARGET, return_value=evidence):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    # Prose from the LLM; verdict from the scorer — the opinion is recorded
+    # but provably does NOT leak into the persisted decision (KER-401 AC-2/4).
+    assert result.rationale == "The Security Patch record demonstrates active remediation."
+    assert result.status == STATUS_MET
+    assert result.confidence_level == CONFIDENCE_HIGH
+    assert result.input_snapshot["rationale_source"] == "llm"
+    assert result.input_snapshot["llm_opinion"] == {"status": "partial", "confidence": 0.55}
+
+
+def test_template_fallback_on_llm_failure() -> None:
+    # The autouse guard makes the LLM raise; generation must still succeed.
+    spy = _default_spy()
+    evidence = [_make_evidence(relevance_score=0.9)]
+    with patch(_PATCH_TARGET, return_value=evidence):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    assert result.input_snapshot["rationale_source"] == "template"
+    assert result.input_snapshot["llm_opinion"] is None
+    assert result.rationale  # deterministic template text, never empty
+
+
+def test_malformed_opinion_keeps_rationale_and_drops_opinion(monkeypatch) -> None:
+    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    client = _mock_rationale_client({
+        "rationale": "Coverage is adequate.",
+        "own_status": "definitely-fine",  # not a valid status
+        "own_confidence": 0.9,
+    })
+    monkeypatch.setattr(
+        "src.services.recommendation_service.get_llm_client", lambda: client
+    )
+    spy = _default_spy()
+    with patch(_PATCH_TARGET, return_value=[_make_evidence()]):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    assert result.input_snapshot["rationale_source"] == "llm"
+    assert result.input_snapshot["llm_opinion"] is None
+
+
+def test_generation_emits_decision_log_and_ledger_on_same_conn() -> None:
+    spy = _default_spy()
+    with patch(_PATCH_TARGET, return_value=[_make_evidence()]):
+        generate_recommendation(
+            spy, _TENANT_ID, _CONTROL_ID,
+            triggered_by_user_id="d0000000-0000-4000-d000-000000000004",
+            triggered_by_role="compliance_lead",
+        )
+
+    log_params = next(p for s, p in spy.calls if "INSERT INTO ai_decision_log" in str(s))
+    assert log_params["control_id"] == _CONTROL_ID
+    assert log_params["model_version"].startswith("evidence-rules-v1+")
+    assert len(log_params["input_snapshot_hash"]) == 64
+
+    audit_params = next(p for s, p in spy.calls if "INSERT INTO audit_log" in str(s))
+    assert audit_params["action_type"] == "recommendation_generated"
+    assert audit_params["actor_id"] == "d0000000-0000-4000-d000-000000000004"
+    assert audit_params["actor_role"] == "compliance_lead"
+
+
+def test_unknown_control_raises_entry_not_found() -> None:
+    from src.exceptions import EntryNotFoundError
+
+    spy = _SpyConn()  # no compliance_controls row configured
+    with pytest.raises(EntryNotFoundError):
+        generate_recommendation(spy, _TENANT_ID, "ghost-control")
