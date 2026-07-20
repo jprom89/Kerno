@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.8 | Updated: 2026-07-15 | Changes: Added §14 Sprint 3 backlog KER-301–304, KER-303 AC-1 predicate corrected 15 Jul 2026 -->
+<!-- Version: 1.9 | Updated: 2026-07-18 | Changes: Added §15 post-diligence roadmap — KER-401 production trigger + hybrid engine; KER-402/403/404 deferred; §11 live-database rule -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -411,6 +411,18 @@ Write either:
 - "No — blocked by: <reason>. Waiting for instruction."
 
 ---
+
+### Live-database rule (added 18 July 2026 — lesson from KER-401)
+
+**New paths that touch the database must have at least one live-DB integration
+test before being considered Done, not just mocked unit tests.**
+
+Why this is a rule and not advice: the rules-based scoring path passed its
+full unit suite for months while it would have failed on first real use — a
+raw dict passed as a JSON parameter and raw UUID objects that psycopg2 cannot
+adapt. Mocks proved those functions "work". They had never once executed
+against PostgreSQL. A spy connection tests the SQL you *wrote*; only a real
+connection tests the SQL the driver can *run*.
 
 ### Why this protocol exists
 
@@ -1207,3 +1219,116 @@ Jest suite is separate.
 >    ALLOWED_ORIGINS.
 > 5. **Deployment note actioned:** the FastAPI backend is reachable over HTTPS.
 
+
+---
+
+## §15 — Post-Diligence Roadmap (recorded 16 July 2026)
+
+**Context:** technical due diligence (15 July 2026) found that neither
+recommendation engine had a production caller, that the KER-201 feedback loop
+terminates in an unconsumed ranking, and that LOW_CONFIDENCE_THRESHOLD (0.5)
+contradicted MEDIUM_CONFIDENCE_THRESHOLD (0.40). This section is the approved
+response. Sprint goal: make the recommendation engine real — reachable in
+production, coherent in its thresholds, and honest to the demo claim:
+"every recommendation shows its confidence level, cites the exact evidence it
+relied on, and is never final until a named human approves, edits, or rejects
+it, with that decision permanently logged."
+
+### KER-401 — Production trigger + hybrid recommendation engine
+
+- **Priority:** Must-have · **Points:** 7 · **Reg tie:** EU AI Act Article 14
+  (human-initiated analysis, human-gated outcome); Articles 12/19 (decision
+  retention via KER-203 on the new path).
+
+**Engine decision (approved 16 July 2026):** hybrid (c) built on
+generate_recommendation's chassis — the deterministic evidence scorer produces
+status/confidence/citations (provable by construction: evidence_ids IS the
+list the mean was computed over), and the LLM is confined to writing the
+rationale PROSE explaining a score it cannot change. map_control's
+LLM-decides-everything path stays intact but UNWIRED — reserved, documented,
+not deprecated. Chassis choice is forced by types: map_control's EvidenceInput
+has no relevance_score, so it cannot feed the scorer.
+
+**Acceptance criteria:**
+1. POST /api/v1/recommendations/generate, body { control_id }. JWT tenant +
+   require_role(GENERATE_CAPABLE_ROLES = compliance_lead, vciso,
+   security_engineer). Rate limit 10/minute (SEC-05 pattern — each call may
+   invoke the LLM). Unknown control_id → 404 (EntryNotFoundError). 201 with
+   the persisted recommendation, including rationale_source.
+2. Status, confidence_score, confidence_level, and evidence_ids come ONLY
+   from the deterministic scorer (_score_evidence). The LLM cannot alter them.
+3. The LLM writes the rationale text from (control meta, evidence records,
+   scoring result). On ANY LLM failure — missing key, network, bad JSON — the
+   existing template rationale is used instead. Prose is not the decision, so
+   this fallback cannot poison scores. The snapshot records
+   rationale_source: "llm" | "template".
+4. The SAME single LLM call also returns the model's independent opinion of
+   status and confidence, stored in the snapshot as llm_opinion (never
+   persisted to the scored columns) — free engine-agreement data for KER-403.
+   A mapping's snapshot MUST record this opinion alongside the deterministic
+   score (approved addition, 16 July 2026 — cheap now, expensive to retrofit).
+5. KER-203 invariant extended to the new path: every generation emits exactly
+   one ai_decision_log row in the same transaction as the recommendation
+   write (commit/rollback together), with input_snapshot_hash = SHA-256 of
+   the canonical snapshot JSON and model_version identifying both the scoring
+   engine (SCORING_ENGINE_VERSION) and the rationale source. Proven by a
+   live-DB integration test — spies are not sufficient for this AC.
+6. Each generation appends a KER-107 ledger entry
+   (action="recommendation_generated") attributing the triggering user's
+   verified JWT identity (actor_id = user_id), in the same transaction.
+7. LOW_CONFIDENCE_THRESHOLD is DELETED. requires_human_review :=
+   (confidence_level == CONFIDENCE_LOW) in both engines — one definition of
+   "needs a human". HIGH (0.75) and MEDIUM (0.40) unchanged: swapping
+   arbitrary numbers is not calibration (KER-403 earns that right).
+   Known behavioural delta: mappings with confidence in [0.40, 0.50) are no
+   longer review-flagged. Note: §14 KER-303's "80/50" badge prose never
+   matched the code; the frontend keys off the server's confidence_level, so
+   no frontend change.
+8. The LLM rationale prompt gets one round of real-output iteration against
+   seeded evidence BEFORE any design partner sees output (approved risk
+   mitigation — the first LLM output must not be the demo).
+
+**Deferred by decision (16 July 2026), named future hooks:**
+- Nightly batch + link-creation triggers (reuse KER-201 cron plumbing;
+  remediation's re_review_flagged_at — currently written by Jira closures and
+  consumed by NOTHING — becomes a batch predicate then. Do not wire it now.)
+- KER-402 — dashboard "Analyse" button (frontend proxy + wiring, ~2 pts).
+- KER-403 — calibration measurement, REPORT-ONLY (~3 pts): override-rate per
+  confidence band per tenant; no auto-adjustment below ≥50 human-reviewed
+  recommendations per band per tenant.
+- KER-404 — retrieval-augmented correction memory (~8 pts): inject similar
+  past human corrections into generation via the (already built, tested)
+  biased retrieval. Gated on weeks of real design-partner override volume.
+- Fine-tuning: never (constitution §1).
+
+**Files to create:** src/api (generate endpoint pieces in the existing
+recommendations router/schemas), tests/integration/test_ker401_generation.py.
+**Files to modify:** config/constants.py (delete LOW_CONFIDENCE_THRESHOLD,
+add SCORING_ENGINE_VERSION), src/services/recommendation_service.py (hybrid
+core + GENERATE_CAPABLE_ROLES + decision-log/ledger emission),
+src/services/mapping_service.py (requires_human_review unification; reserved
+note), src/services/ai_decision_log_service.py (public hash_snapshot — single
+home for canonical snapshot hashing), src/api/schemas/recommendations.py,
+src/api/routers/recommendations.py, affected tests.
+**Migration:** No.
+
+**Story DoD (inherits §11):** every file passes its §11 gate; full backend
+suite green; live-DB integration test proves the same-transaction decision-log
+invariant on the new path (commit AND rollback directions); prompt iterated
+once against seeded evidence with real output (or explicitly blocked on a
+valid MISTRAL_API_KEY and flagged); nothing committed or pushed without
+explicit approval.
+
+### Pre-demo actions (named tasks — need owners, not stories)
+
+1. **Curate evidence-link relevance scores for the design-partner demo
+   tenant.** Owner: product owner (or delegate). Must happen BEFORE any
+   partner sees KER-401 output: with uncurated links the deterministic scorer
+   truthfully emits a uniform wall of 0.5/"partial/medium", undercutting the
+   exact claim being demonstrated. (Recorded 16 July 2026.)
+2. **Valid MISTRAL_API_KEY in the demo environment** — required for LLM
+   rationale prose (the engine degrades safely to template text without it,
+   but a partner demo should show the real prose). Also required for AC-8's
+   prompt iteration.
+3. Carried from §14, still open: backend HTTPS deployment; ALLOWED_ORIGINS
+   real Vercel domains.
