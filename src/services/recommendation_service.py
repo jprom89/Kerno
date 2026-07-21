@@ -438,7 +438,9 @@ def _build_rationale_prompt(
         "evidence-coverage assessment for a NIS2/DORA control. The status and "
         "confidence were computed by a deterministic scoring engine and are "
         "FINAL - do not dispute them or state different values in the "
-        "rationale. Respond with valid JSON only."
+        "rationale. Do not quote numeric relevance or confidence values in the "
+        "rationale text - those are internal scoring artifacts, not "
+        "customer-facing prose. Respond with valid JSON only."
     )
     user_message = (
         f"Control: {control_meta[1]} - {control_meta[2]}\n"

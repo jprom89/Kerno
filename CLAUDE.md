@@ -1296,6 +1296,16 @@ has no relevance_score, so it cannot feed the scorer.
 - KER-403 — calibration measurement, REPORT-ONLY (~3 pts): override-rate per
   confidence band per tenant; no auto-adjustment below ≥50 human-reviewed
   recommendations per band per tenant.
+  **Known methodological flaw to fix in KER-403 (recorded 20 July 2026):** the
+  snapshot's llm_opinion is NOT an independent second opinion. The rationale
+  prompt shows the model the deterministic verdict before asking for its own
+  status/confidence, so llm_opinion is anchored to the scorer. First real runs
+  confirmed this — the model echoed the deterministic score closely (0.85→0.9,
+  0.2→0.2, 0.5→0.6). Do NOT treat llm_opinion as independent corroboration in
+  any calibration metric until the prompt is changed to withhold the verdict
+  when soliciting the opinion (e.g. a separate opinion-first call, or a single
+  call that asks for the opinion before revealing the score). Until then it
+  measures agreement-with-anchor, not engine agreement.
 - KER-404 — retrieval-augmented correction memory (~8 pts): inject similar
   past human corrections into generation via the (already built, tested)
   biased retrieval. Gated on weeks of real design-partner override volume.
