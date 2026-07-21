@@ -28,12 +28,16 @@ import dataclasses
 import json
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
 from config.constants import (
     DEFAULT_RELEVANCE_SCORE,
     HIGH_CONFIDENCE_THRESHOLD,
+    LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS,
+    LLM_RATE_LIMIT_BACKOFF_FACTOR,
+    LLM_RATE_LIMIT_MAX_RETRIES,
     MAX_RATIONALE_LENGTH,
     MEDIUM_CONFIDENCE_THRESHOLD,
     RbacRole,
@@ -402,13 +406,10 @@ def _llm_rationale_and_opinion(
     if not model_id:
         return None, None
     try:
-        client = get_llm_client()
-        response = client.chat.complete(
-            model=model_id,
-            messages=_build_rationale_prompt(control_meta, active_evidence, scoring),
-            response_format={"type": "json_object"},
+        content = _complete_with_backoff(
+            model_id, _build_rationale_prompt(control_meta, active_evidence, scoring)
         )
-        parsed = json.loads(response.choices[0].message.content)
+        parsed = json.loads(content)
         rationale = parsed.get("rationale")
         if not isinstance(rationale, str) or not rationale.strip():
             return None, None
@@ -416,6 +417,51 @@ def _llm_rationale_and_opinion(
     except Exception as exc:
         logger.warning("LLM rationale unavailable, using template: %s", exc)
         return None, None
+
+
+def _complete_with_backoff(model_id: str, messages: list[dict]) -> str:
+    """Call the rationale LLM, retrying with exponential backoff ONLY on a 429.
+
+    Backoff is LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS * FACTOR**attempt (1s, 2s,
+    4s). A non-rate-limit error, or exhausting the retries, propagates to the
+    caller — which falls back to the deterministic template. Narrow by design:
+    only rate-limiting is retried, so a genuine outage fails fast to template
+    instead of stalling every generation for seven seconds.
+    """
+    client = get_llm_client()
+    for attempt in range(LLM_RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            response = client.chat.complete(
+                model=model_id, messages=messages,
+                response_format={"type": "json_object"},
+            )
+            return response.choices[0].message.content
+        except Exception as exc:
+            if attempt < LLM_RATE_LIMIT_MAX_RETRIES and _is_rate_limit_error(exc):
+                backoff = LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS * (
+                    LLM_RATE_LIMIT_BACKOFF_FACTOR ** attempt
+                )
+                logger.info(
+                    "Mistral rate-limited (attempt %d/%d); backing off %.0fs",
+                    attempt + 1, LLM_RATE_LIMIT_MAX_RETRIES, backoff,
+                )
+                time.sleep(backoff)
+                continue
+            raise
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True only for a Mistral HTTP 429 rate-limit error.
+
+    Checks the SDK exception's raw_response status first, then falls back to
+    matching rate-limit tokens in the message. Deliberately narrow — every
+    other error must NOT be retried; it falls straight through to the template.
+    """
+    raw_response = getattr(exc, "raw_response", None)
+    if getattr(raw_response, "status_code", None) == 429:
+        return True
+    text = str(exc).lower()
+    return "rate limit" in text or "rate_limited" in text or "status 429" in text
 
 
 def _build_rationale_prompt(
@@ -559,23 +605,25 @@ def _derive_confidence_level(confidence_score: float) -> str:
 def _build_rationale(
     active_evidence: list[EvidenceResult], scoring: ScoringResult
 ) -> str:
-    """Build a plain-language rationale string capped at MAX_RATIONALE_LENGTH.
+    """Build the deterministic fallback rationale — customer-facing, no raw scores.
 
-    Names the active evidence count, the highest-relevance source and title
-    (if any), the resulting status, and why it was assigned.
+    Used when the LLM rationale is unavailable (KER-401). Names the active
+    evidence count and the strongest record, then explains the status in words.
+    It must NOT leak relevance or confidence numbers: this path runs precisely
+    when the LLM is down, so it cannot be the one that exposes internals — the
+    same rule the LLM rationale prompt already follows.
     """
     count = len(active_evidence)
     best = _best_evidence(active_evidence)
     best_desc = (
-        f" The highest-relevance record is '{best.title}' from {best.source_system}."
+        f" The strongest evidence is '{best.title}' from {best.source_system}."
         if best and best.title
         else ""
     )
     text = (
-        f"Found {count} active evidence record(s) for this control.{best_desc} "
-        f"Confidence score: {scoring.confidence_score:.2f}. "
+        f"Assessed {count} active evidence record(s) for this control.{best_desc} "
         f"Status set to '{scoring.status}': "
-        + _status_reason(scoring.status, scoring.confidence_score)
+        + _status_reason(scoring.status)
     )
     return text[:MAX_RATIONALE_LENGTH]
 
@@ -618,19 +666,17 @@ def _best_evidence(active: list[EvidenceResult]) -> EvidenceResult | None:
     )
 
 
-def _status_reason(status: str, score: float) -> str:
-    """Return a one-sentence explanation of why status was assigned."""
+def _status_reason(status: str) -> str:
+    """Return a one-sentence, number-free explanation of why the status was assigned.
+
+    Prose only — no thresholds or scores, so the fallback rationale it feeds
+    (_build_rationale) never exposes internal scoring artifacts (KER-401).
+    """
     if status == STATUS_MET:
-        return f"score meets the high-confidence threshold of {HIGH_CONFIDENCE_THRESHOLD}."
+        return "the evidence sufficiently demonstrates coverage of this control."
     if status == STATUS_PARTIAL:
-        return (
-            f"score meets the medium-confidence threshold of {MEDIUM_CONFIDENCE_THRESHOLD} "
-            f"but is below the high threshold of {HIGH_CONFIDENCE_THRESHOLD}."
-        )
-    return (
-        f"score {score:.2f} is below the medium-confidence threshold of "
-        f"{MEDIUM_CONFIDENCE_THRESHOLD} or no evidence was found."
-    )
+        return "the evidence partially covers this control but is not comprehensive."
+    return "the available evidence is insufficient to demonstrate coverage of this control."
 
 
 def _fetch_control_meta(conn, control_id: str) -> tuple | None:

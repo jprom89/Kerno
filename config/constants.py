@@ -371,3 +371,16 @@ RECOMMENDATIONS_MAX_PAGE_SIZE: int = 100
 # so any retained decision can be attributed to the exact scoring logic that
 # produced it.
 SCORING_ENGINE_VERSION: str = "evidence-rules-v1"
+
+# ---------------------------------------------------------------------------
+# Hybrid engine LLM retry policy (KER-401)
+# ---------------------------------------------------------------------------
+
+# Retry policy for the hybrid engine's rationale LLM call. ONLY a Mistral 429
+# rate-limit is retried; every other failure falls straight through to the
+# deterministic template. Backoff is BASE * FACTOR**attempt (1s, 2s, 4s), so
+# a burst of generations rides out Mistral's per-minute limit instead of
+# degrading to template prose mid-demo.
+LLM_RATE_LIMIT_MAX_RETRIES: int = 3
+LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS: float = 1.0
+LLM_RATE_LIMIT_BACKOFF_FACTOR: float = 2.0

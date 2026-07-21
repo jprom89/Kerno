@@ -434,15 +434,26 @@ def test_llm_writes_rationale_but_cannot_alter_the_score(monkeypatch) -> None:
 
 
 def test_template_fallback_on_llm_failure() -> None:
-    # The autouse guard makes the LLM raise; generation must still succeed.
+    # The autouse guard makes the LLM raise; generation must still succeed via
+    # the template path — which must NOT leak numeric scores/thresholds (KER-401),
+    # exactly the same rule the LLM prompt follows. This test is the standing
+    # coverage that the fallback path itself stays scrubbed.
+    import re
+
     spy = _default_spy()
-    evidence = [_make_evidence(relevance_score=0.9)]
+    evidence = [_make_evidence(relevance_score=0.2)]  # a gap — the case that used to leak
     with patch(_PATCH_TARGET, return_value=evidence):
         result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
 
     assert result.input_snapshot["rationale_source"] == "template"
     assert result.input_snapshot["llm_opinion"] is None
     assert result.rationale  # deterministic template text, never empty
+    # No decimal scores (0.32), no threshold/relevance/confidence-score wording.
+    assert not re.search(r"\d\.\d", result.rationale), f"numeric leak: {result.rationale!r}"
+    lowered = result.rationale.lower()
+    assert "confidence score" not in lowered
+    assert "threshold" not in lowered
+    assert "relevance" not in lowered
 
 
 def test_malformed_opinion_keeps_rationale_and_drops_opinion(monkeypatch) -> None:
@@ -489,3 +500,71 @@ def test_unknown_control_raises_entry_not_found() -> None:
     spy = _SpyConn()  # no compliance_controls row configured
     with pytest.raises(EntryNotFoundError):
         generate_recommendation(spy, _TENANT_ID, "ghost-control")
+
+
+# ── KER-401: 429 backoff (narrow, rate-limit only) ────────────────────────────
+
+
+def _rate_limit_error():
+    """A stand-in for Mistral's SDKError carrying a 429 raw_response."""
+    from unittest.mock import MagicMock
+
+    exc = Exception("API error occurred: Status 429. Body: rate_limited")
+    exc.raw_response = MagicMock(status_code=429)
+    return exc
+
+
+def test_backoff_retries_then_recovers_on_rate_limit(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "src.services.recommendation_service.time.sleep", lambda s: sleeps.append(s)
+    )
+    calls = {"n": 0}
+
+    def _complete(**kwargs):
+        calls["n"] += 1
+        if calls["n"] <= 2:  # 429 on the first two attempts, then succeed
+            raise _rate_limit_error()
+        choice = MagicMock()
+        choice.message.content = json.dumps({
+            "rationale": "Recovered prose naming the evidence.",
+            "own_status": "met", "own_confidence": 0.8,
+        })
+        return MagicMock(choices=[choice])
+
+    client = MagicMock()
+    client.chat.complete.side_effect = _complete
+    monkeypatch.setattr("src.services.recommendation_service.get_llm_client", lambda: client)
+
+    spy = _default_spy()
+    with patch(_PATCH_TARGET, return_value=[_make_evidence(relevance_score=0.9)]):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    assert result.input_snapshot["rationale_source"] == "llm"
+    assert result.rationale == "Recovered prose naming the evidence."
+    assert sleeps == [1.0, 2.0]  # backed off 1s then 2s before the 3rd call recovered
+    assert calls["n"] == 3
+
+
+def test_non_rate_limit_error_falls_straight_through_no_retry(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "src.services.recommendation_service.time.sleep", lambda s: sleeps.append(s)
+    )
+    client = MagicMock()
+    client.chat.complete.side_effect = Exception("connection reset")  # NOT a 429
+    monkeypatch.setattr("src.services.recommendation_service.get_llm_client", lambda: client)
+
+    spy = _default_spy()
+    with patch(_PATCH_TARGET, return_value=[_make_evidence()]):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    assert result.input_snapshot["rationale_source"] == "template"  # fell straight through
+    assert sleeps == []  # no backoff for a non-rate-limit error
+    assert client.chat.complete.call_count == 1  # tried once, no retries
