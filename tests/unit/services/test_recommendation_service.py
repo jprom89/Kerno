@@ -38,6 +38,7 @@ from src.models.recommendation import (
 )
 from src.services.evidence_service import LINK_STATUS_ACTIVE, LINK_STATUS_BROKEN, EvidenceResult
 from src.services.recommendation_service import (
+    ScoringResult,
     generate_recommendation,
     list_open_recommendations,
 )
@@ -568,3 +569,67 @@ def test_non_rate_limit_error_falls_straight_through_no_retry(monkeypatch) -> No
     assert result.input_snapshot["rationale_source"] == "template"  # fell straight through
     assert sleeps == []  # no backoff for a non-rate-limit error
     assert client.chat.complete.call_count == 1  # tried once, no retries
+
+
+# ── KER-401: rationale prompt feeds content, not scores ───────────────────────
+
+
+def test_rationale_prompt_includes_body_and_excludes_scores() -> None:
+    from src.services.recommendation_service import _build_rationale_prompt
+
+    meta = ("NIS2-21.2e", "NIS2-21.2e", "Security in acquisition and development")
+    evidence = [_make_evidence(relevance_score=0.42, title="Secure SDLC Policy v1.0")]
+    evidence[0] = evidence[0].__class__(**{**evidence[0].__dict__,
+                                           "body": "Mandatory code review and SAST gates."})
+    scoring = ScoringResult(confidence_score=0.32, status="gap",
+                            confidence_level="low", requires_review=True)
+    messages = _build_rationale_prompt(meta, evidence, scoring)
+    prompt = " ".join(m["content"] for m in messages)
+    # The evidence line the model reads (everything after "Active evidence:").
+    evidence_section = prompt.split("Active evidence:", 1)[1]
+
+    # The evidence CONTENT is present…
+    assert "Mandatory code review and SAST gates." in prompt
+    assert "Secure SDLC Policy v1.0" in prompt
+    # …but no relevance/confidence numbers reach the model at all…
+    assert "0.42" not in prompt
+    assert "0.32" not in prompt
+    # …and the evidence lines carry no relevance score wording (the instruction
+    # legitimately uses the word "relevance" to forbid it — that is not a leak).
+    assert "relevance" not in evidence_section.lower()
+    # The verdict is present as status + level only (no raw score).
+    assert "status=gap" in prompt
+    assert "confidence level=low" in prompt
+
+
+def test_rationale_prompt_truncates_long_body() -> None:
+    from config.constants import EVIDENCE_BODY_PROMPT_CHAR_LIMIT
+    from src.services.recommendation_service import _build_rationale_prompt
+
+    long_body = "A" * (EVIDENCE_BODY_PROMPT_CHAR_LIMIT + 500)
+    evidence = [_make_evidence(relevance_score=0.9)]
+    evidence[0] = evidence[0].__class__(**{**evidence[0].__dict__, "body": long_body})
+    meta = ("c", "REF", "Title")
+    scoring = ScoringResult(confidence_score=0.9, status="met",
+                            confidence_level="high", requires_review=False)
+    prompt = " ".join(m["content"] for m in _build_rationale_prompt(meta, evidence, scoring))
+
+    assert "A" * EVIDENCE_BODY_PROMPT_CHAR_LIMIT in prompt        # cap kept
+    assert "A" * (EVIDENCE_BODY_PROMPT_CHAR_LIMIT + 1) not in prompt  # nothing past it
+    assert "…" in prompt                                          # ellipsis marks the cut
+
+
+def test_rationale_prompt_carries_verdict_alignment_clause() -> None:
+    # Regression lock for the mismatch fix (KER-401): the prompt must instruct
+    # the model not to let a thorough-sounding document pull its wording away
+    # from a gap/partial verdict. The behavioural proof is a live-LLM check;
+    # this guards the instruction against silent removal.
+    from src.services.recommendation_service import _build_rationale_prompt
+
+    meta = ("c", "REF", "Title")
+    scoring = ScoringResult(confidence_score=0.18, status="gap",
+                            confidence_level="low", requires_review=True)
+    prompt = " ".join(m["content"] for m in _build_rationale_prompt(meta, [_make_evidence()], scoring)).lower()
+    assert "gap" in prompt and "partial" in prompt
+    assert "thorough" in prompt or "comprehensive" in prompt  # the sounds-strong caveat
+    assert "final" in prompt  # verdict is fixed

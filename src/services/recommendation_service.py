@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 
 from config.constants import (
     DEFAULT_RELEVANCE_SCORE,
+    EVIDENCE_BODY_PROMPT_CHAR_LIMIT,
     HIGH_CONFIDENCE_THRESHOLD,
     LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS,
     LLM_RATE_LIMIT_BACKOFF_FACTOR,
@@ -471,32 +472,42 @@ def _build_rationale_prompt(
 ) -> list[dict]:
     """Build the rationale-only prompt: the verdict is fixed, the model explains it.
 
-    Also requests the model's own independent assessment in separate fields so
-    one call yields both the prose and the KER-403 agreement signal.
+    The model reasons from each record's actual CONTENT (title + body), never
+    from internal relevance/confidence scores — those are not shown to it, so it
+    cannot leak them in prose, in numbers or in words like "low relevance"
+    (KER-401). Bodies are capped at EVIDENCE_BODY_PROMPT_CHAR_LIMIT so a large
+    ingested document cannot bloat the prompt. Also requests the model's own
+    independent assessment in separate fields so one call yields both the prose
+    and the KER-403 agreement signal.
     """
     evidence_lines = "\n".join(
-        f"- [{e.record_id}] ({e.source_system or 'unknown'}) {e.title or 'untitled'} - "
-        f"relevance {e.relevance_score if e.relevance_score is not None else DEFAULT_RELEVANCE_SCORE}"
+        f"- '{e.title or 'untitled'}' ({e.source_system or 'unknown'}): "
+        f"{_truncate_evidence_body(e.body)}"
         for e in active_evidence
     ) or "(no active evidence records)"
     system_message = (
         "You are a compliance analyst writing the explanation section of an "
         "evidence-coverage assessment for a NIS2/DORA control. The status and "
-        "confidence were computed by a deterministic scoring engine and are "
-        "FINAL - do not dispute them or state different values in the "
-        "rationale. Do not quote numeric relevance or confidence values in the "
-        "rationale text - those are internal scoring artifacts, not "
-        "customer-facing prose. Respond with valid JSON only."
+        "confidence level were computed by a deterministic scoring engine and "
+        "are FINAL. Do not dispute them, and do not let your wording imply a "
+        "different outcome: if the verdict is 'gap' or 'partial', the rationale "
+        "must clearly read as insufficient or incomplete coverage even when an "
+        "evidence document sounds thorough or comprehensive - a well-written "
+        "document can still be out of scope, outdated, or too narrow. Write only "
+        "about what the evidence documents contain and whether they cover the "
+        "control; never mention internal relevance or confidence scores, "
+        "numbers, or ratings. Respond with valid JSON only."
     )
     user_message = (
         f"Control: {control_meta[1]} - {control_meta[2]}\n"
         f"Deterministic verdict: status={scoring.status}, "
-        f"confidence={scoring.confidence_score:.2f} ({scoring.confidence_level})\n"
+        f"confidence level={scoring.confidence_level}\n"
         f"Active evidence:\n{evidence_lines}\n\n"
         "Respond with a JSON object containing exactly these fields:\n"
         '- "rationale": 2-4 plain-English sentences explaining WHY this '
-        "evidence justifies the verdict above, naming the strongest evidence "
-        "record(s) by title\n"
+        "evidence justifies the verdict above, citing the relevant evidence "
+        "record(s) by title. Describe what each record is and whether it covers "
+        "the control.\n"
         '- "own_status": your OWN independent judgement, one of "met", '
         '"partial", "gap"\n'
         '- "own_confidence": your OWN independent confidence, a float 0.0-1.0'
@@ -505,6 +516,20 @@ def _build_rationale_prompt(
         {"role": "system", "content": system_message},
         {"role": "user", "content": user_message},
     ]
+
+
+def _truncate_evidence_body(body: str | None) -> str:
+    """Return the evidence body capped at EVIDENCE_BODY_PROMPT_CHAR_LIMIT for the prompt.
+
+    A large ingested document is trimmed (with an ellipsis) so one record cannot
+    bloat the rationale prompt during a live session; a missing body becomes a
+    clear placeholder rather than an empty line (KER-401).
+    """
+    if not body:
+        return "(no description available)"
+    if len(body) <= EVIDENCE_BODY_PROMPT_CHAR_LIMIT:
+        return body
+    return body[:EVIDENCE_BODY_PROMPT_CHAR_LIMIT].rstrip() + "…"
 
 
 def _validate_opinion(parsed: dict) -> dict | None:

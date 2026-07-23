@@ -384,3 +384,9 @@ SCORING_ENGINE_VERSION: str = "evidence-rules-v1"
 LLM_RATE_LIMIT_MAX_RETRIES: int = 3
 LLM_RATE_LIMIT_BACKOFF_BASE_SECONDS: float = 1.0
 LLM_RATE_LIMIT_BACKOFF_FACTOR: float = 2.0
+
+# Max characters of an evidence record's body fed into the rationale LLM prompt
+# (KER-401). Real ingested documents can be large; the hybrid engine reasons
+# from content, so it needs the substance but not the whole file — this cap
+# keeps a single large document from bloating the prompt during a live session.
+EVIDENCE_BODY_PROMPT_CHAR_LIMIT: int = 600
