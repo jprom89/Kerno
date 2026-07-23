@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 1.9 | Updated: 2026-07-18 | Changes: Added §15 post-diligence roadmap — KER-401 production trigger + hybrid engine; KER-402/403/404 deferred; §11 live-database rule -->
+<!-- Version: 2.0 | Updated: 2026-07-22 | Changes: §15 — approved demo claim (corrected provenance sentence); KER-405 logged and HELD pending compliance-lead validation -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -1309,7 +1309,37 @@ has no relevance_score, so it cannot feed the scorer.
 - KER-404 — retrieval-augmented correction memory (~8 pts): inject similar
   past human corrections into generation via the (already built, tested)
   biased retrieval. Gated on weeks of real design-partner override volume.
-- Fine-tuning: never (constitution §1).
+- KER-405 — decision-provenance hardening (~6–8 pts, recorded 22 July 2026):
+  found by auditing the pitch sentence "prove to an auditor exactly how every
+  decision was made" against the live schema. Four named gaps, in priority
+  order:
+  1. **Relevance scores have zero provenance** (the structural one — the score
+     IS the verdict): link/score creation and mutation must write KER-107
+     ledger entries with verified JWT identity, and control_evidence_links
+     needs change-history or immutability. Today linked_by is a free string,
+     unledgered, silently editable.
+  2. ai_decision_log has no append-only trigger (audit_log has two) — retained
+     by convention, not enforced. Migration adds the same trigger pair.
+  3. justification_text is UI-required but server-optional for edit/reject —
+     enforce in _validate_override_input so "why" is a guarantee, not a habit.
+  4. The recommendation snapshot attests evidence identity (id/title/score)
+     but not content — add each record's content_hash so "what the evidence
+     said at decision time" is provable.
+  **HOLD — do not build (decided 22 July 2026):** gated on validation with a
+  real compliance lead. We have not confirmed that "prove exactly how every
+  decision was made" is the claim buyers care about, versus the narrower
+  corrected sentence already being sufficient — building provenance-on-
+  provenance before that validation repeats the KER-401 pattern (rigor on an
+  unconfirmed claim). Three possible outcomes from this week's conversations —
+  listen for all three, and do not collapse the third into "no signal":
+  1. Evidence-score provenance is what compliance leads/auditors actually
+     probe → KER-405 is the immediate next build.
+  2. They care about speed/cost/integration with existing tools instead →
+     reprioritise toward automated evidence linking (the EuroComply gap).
+  3. **Indifference to both** — "I don't think about compliance tooling this
+     way at all" / "my current process works fine" → NOT a build prompt of any
+     kind; it is the wrong-buyer-persona signal, a different pivot class than
+     choosing between 1 and 2. Record it as its own finding if it occurs.
 
 **Files to create:** src/api (generate endpoint pieces in the existing
 recommendations router/schemas), tests/integration/test_ker401_generation.py.
@@ -1328,6 +1358,22 @@ invariant on the new path (commit AND rollback directions); prompt iterated
 once against seeded evidence with real output (or explicitly blocked on a
 valid MISTRAL_API_KEY and flagged); nothing committed or pushed without
 explicit approval.
+
+### Approved demo claim (recorded 22 July 2026)
+
+The demo and any deck must use THIS sentence — verified true against the live
+schema, word by word:
+
+> "Every recommendation and every human decision made in Kerno is traceable
+> to named evidence, a reproducible score, a named human, and a timestamp —
+> with tamper-evident, database-enforced logging of every human decision."
+
+The stronger form ("prove to an auditor exactly how every compliance decision
+was made") is NOT approved: it overclaims at four verified points (see
+KER-405) and must not be used unless KER-405 ships. The strongest true things
+today: evidence citation is provable by construction (evidence_ids IS the
+scored list), human decisions are hash-chained with DB-enforced append-only
+triggers, and every generation is retained with a re-derivable input hash.
 
 ### Pre-demo actions (named tasks — need owners, not stories)
 
