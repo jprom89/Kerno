@@ -1511,6 +1511,18 @@ pypdf), FILE_STRUCTURE.md (add the new files; fix the line-56 exporter name).
 Auto-suggested control links. Embedding generation. Bulk row-wise CSV import.
 Original-file storage. Any change to the scoring engine.
 
+### Backlog item — FILE_STRUCTURE.md reconciliation (~1 pt, not started)
+
+Recorded 28 July 2026 while shipping KER-406. FILE_STRUCTURE.md is stale well
+beyond the single line corrected in that commit: it described an `api/routes/`
+directory that does not exist (the real one is `api/routers/`) and listed
+`embedding_service.py`, which has NEVER been built — no embedding-generation
+service exists and `context_records.embedding` is never populated. Worth
+noting as a cause, not just a symptom: a structure document asserting a
+foundation that was never laid is part of why the intake gap went unnoticed
+for this long. KER-406 annotated the specific entries rather than rewriting
+the file; a full reconciliation against the real tree is its own small task.
+
 ### Sequencing
 
 Orphan fix (shipped, 7e6fc3c) → KER-406 backend → KER-407 UI. This runs AHEAD

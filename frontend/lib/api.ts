@@ -148,3 +148,33 @@ export async function fetchOpenRecommendations(page = 1): Promise<Recommendation
   }
   return (await response.json()) as RecommendationPage;
 }
+
+/** One evidence record in the tenant's library (KER-406). */
+export interface EvidenceRecord {
+  record_id: string;
+  source_system: string;
+  external_id: string | null;
+  record_type: string;
+  title: string | null;
+  created_at: string;
+  link_count: number;
+}
+
+/** The evidence library response shape. */
+export interface EvidencePage {
+  items: EvidenceRecord[];
+  total: number;
+}
+
+/**
+ * Fetch the tenant's evidence library, optionally filtered by link status.
+ * `linked=false` surfaces orphans — records nothing has been linked to yet.
+ */
+export async function fetchEvidence(linked?: boolean): Promise<EvidencePage> {
+  const query = linked === undefined ? "" : `?linked=${linked}`;
+  const response = await apiFetch(`/api/v1/evidence${query}`);
+  if (!response.ok) {
+    throw new Error(`evidence list failed: ${response.status}`);
+  }
+  return (await response.json()) as EvidencePage;
+}

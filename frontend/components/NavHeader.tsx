@@ -37,6 +37,9 @@ export default function NavHeader({ email, role }: NavHeaderProps) {
         <a href="/dashboard/recommendations" className="text-sm text-slate-600 hover:text-slate-900">
           Recommendations
         </a>
+        <a href="/dashboard/evidence" className="text-sm text-slate-600 hover:text-slate-900">
+          Evidence
+        </a>
       </nav>
       <div className="flex items-center gap-4">
         <span className="text-sm text-slate-600">{email}</span>
