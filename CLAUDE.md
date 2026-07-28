@@ -1325,6 +1325,12 @@ has no relevance_score, so it cannot feed the scorer.
   4. The recommendation snapshot attests evidence identity (id/title/score)
      but not content — add each record's content_hash so "what the evidence
      said at decision time" is provable.
+  5. **Link provenance is inherited, never independent** (found 28 July 2026
+     while scoping intake): control_evidence_links has NO tenant_id column —
+     its RLS policy isolates indirectly, via a subquery to the record's
+     tenant_id. A link therefore can never be more trustworthy than the
+     context_record it hangs off, which caps how strong gap #1's provenance
+     can be made without also hardening the record. Logged, not acted on.
   **HOLD — do not build (decided 22 July 2026):** gated on validation with a
   real compliance lead. We have not confirmed that "prove exactly how every
   decision was made" is the claim buyers care about, versus the narrower

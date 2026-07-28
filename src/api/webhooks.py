@@ -56,6 +56,7 @@ from src.api.schemas.webhooks import (
 from src.db.rls import set_tenant_context
 from src.exceptions import UnsupportedEventTypeError, WebhookAuthenticationError
 from src.services.audit_log import append_audit_entry
+from src.services.evidence_service import link_evidence
 from src.services.webhook_service import (
     is_duplicate,
     normalise_event,
@@ -86,6 +87,16 @@ VALUES
 
 _STATUS_INGESTED = "ingested"
 _STATUS_DUPLICATE = "duplicate"
+
+# Resolves a delivery's human-readable control_ref to the catalogue UUID.
+# compliance_controls is global platform data (no tenant column), so this
+# lookup needs no tenant scoping; the LINK it feeds is tenant-isolated through
+# its context_record (control_evidence_links has no tenant_id of its own).
+_SELECT_CONTROL_BY_REF = """
+SELECT control_id
+FROM compliance_controls
+WHERE control_ref = :control_ref AND is_active = TRUE
+"""
 
 
 @router.post("", status_code=201)
@@ -187,14 +198,65 @@ async def ingest_webhook(
         normalised = normalise_event(event.event_type, event.external_ref, event.payload)
     except UnsupportedEventTypeError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    # Resolved BEFORE the dedupe short-circuit and before any write, so a
+    # sender naming an unknown control gets the same 422 whether or not the
+    # delivery is a repeat, and never leaves a half-written record behind.
+    control_id = _resolve_control_ref(conn, event.control_ref)
     if is_duplicate(conn, tenant_id, event.source_system, event.external_ref):
         # A repeat delivery is acknowledged, not re-created: 200, zero writes.
         response.status_code = status.HTTP_200_OK
         return WebhookIngestResponse(status=_STATUS_DUPLICATE, correlation_id=None)
     record_id = _persist_context_record(conn, tenant_id, event.source_system, normalised)
+    if control_id is not None:
+        _link_ingested_evidence(
+            conn, tenant_id, control_id, record_id,
+            request.headers.get("X-Kerno-Webhook-Id", ""),
+        )
     record_dedup(conn, tenant_id, event.source_system, event.external_ref)
     _record_ingest_ledger_entry(conn, tenant_id, record_id, event)
     return WebhookIngestResponse(status=_STATUS_INGESTED, correlation_id=record_id)
+
+
+def _resolve_control_ref(conn, control_ref: str | None) -> str | None:
+    """Return the catalogue control_id for a delivery's control_ref, or None if unset.
+
+    An unknown or inactive ref raises 422 rather than storing an unlinkable
+    record: silently accepting evidence that names a control we do not have is
+    exactly the orphan bug this resolution closes. Returns None only when the
+    sender supplied no ref at all (still permitted — see the AC-3 unlinked
+    list in KER-406 for how those are surfaced).
+    """
+    if not control_ref:
+        return None
+    row = conn.execute(_SELECT_CONTROL_BY_REF, {"control_ref": control_ref}).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=422, detail=f"unknown control_ref {control_ref!r}"
+        )
+    return str(row[0])
+
+
+def _link_ingested_evidence(
+    conn, tenant_id: str, control_id: str, record_id: str, webhook_id: str
+) -> None:
+    """Link the freshly ingested record to its control, on the same transaction.
+
+    relevance_score is deliberately left NULL: an automated delivery carries no
+    human assessment of how well the evidence covers the control, and the
+    scorer already treats an unscored link as DEFAULT_RELEVANCE_SCORE. A human
+    can set a real score later. linked_by records the VERIFIED registration id
+    (the HMAC-authenticated identity) rather than the caller-supplied
+    source_system string.
+    """
+    link_evidence(
+        conn,
+        tenant_id,
+        control_id=control_id,
+        record_id=record_id,
+        linked_by=f"webhook:{webhook_id}",
+        relevance_score=None,
+        note=None,
+    )
 
 
 def _parse_ingest_body(body_bytes: bytes) -> WebhookIngestRequest:

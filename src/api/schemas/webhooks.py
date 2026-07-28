@@ -52,6 +52,13 @@ class WebhookIngestRequest(BaseModel):
 
     tenant_id_hint is diagnostic only — the real tenant is resolved from the
     registration whose secret verified the signature, never from this field.
+
+    control_ref is the human-readable control reference (e.g. "NIS2-21.2b")
+    this evidence supports. Optional, but supplying it is what stops the
+    delivery becoming an orphan record: with it the ingest links the evidence
+    to that control on arrival. An unknown ref is a 422 — a sender that names
+    a control we do not have is misconfigured, and silently storing an
+    unlinkable record is the bug this field exists to close.
     """
 
     source_system: str
@@ -59,6 +66,7 @@ class WebhookIngestRequest(BaseModel):
     external_ref: str
     payload: dict
     tenant_id_hint: str | None = None
+    control_ref: str | None = None
 
 
 class WebhookIngestResponse(BaseModel):

@@ -46,12 +46,14 @@ class _RowResult:
 class _SpyConn:
     """Serves registration + dedup lookups; records all SQL for assertions."""
 
-    def __init__(self, registration_row=..., dedup_hit=False):
+    def __init__(self, registration_row=..., dedup_hit=False, known_control_id=None):
         self.calls: list[tuple[str, object]] = []
         self._registration_row = (
             (_TENANT_ID, _SECRET, True) if registration_row is ... else registration_row
         )
         self._dedup_hit = dedup_hit
+        # None means the catalogue lookup finds nothing (unknown control_ref).
+        self._known_control_id = known_control_id
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
@@ -65,6 +67,10 @@ class _SpyConn:
             return _RowResult(
                 (_REGISTRATION_ID, _TENANT_ID, "jira", datetime.now(timezone.utc), True)
             )
+        if "FROM compliance_controls" in sql:
+            return _RowResult((self._known_control_id,) if self._known_control_id else None)
+        if "FROM control_evidence_links" in sql:
+            return _RowResult(None)  # no pre-existing link -> link_evidence inserts
         if "FROM webhook_ingest_dedup" in sql:
             return _RowResult((1,) if self._dedup_hit else None)
         if "UPDATE webhook_registrations" in sql:
@@ -255,3 +261,53 @@ def test_ingest_unknown_event_type_with_bad_signature_is_still_401():
     body = _event_body(event_type="slack.message.posted")
     response = _post_ingest(_ingest_app(spy), body, _sign(body, secret="0" * 64))
     assert response.status_code == 401
+
+
+# ── Orphan fix: control_ref links evidence on arrival ─────────────────────────
+
+_CONTROL_UUID = "c0000000-0000-4000-c000-0000000000aa"
+
+
+def test_ingest_with_control_ref_links_evidence_on_arrival():
+    # The orphan bug: ingested evidence used to land with control_id=None and
+    # no way to reach it. With a control_ref the delivery links immediately.
+    spy = _SpyConn(known_control_id=_CONTROL_UUID)
+    body = _event_body(control_ref="NIS2-21.2b")
+    response = _post_ingest(_ingest_app(spy), body, _sign(body))
+
+    assert response.status_code == 201
+    link_params = next(p for s, p in spy.calls if "INSERT INTO control_evidence_links" in s)
+    assert link_params["control_id"] == _CONTROL_UUID
+    # linked_by carries the VERIFIED registration id, not the caller's source_system.
+    assert link_params["linked_by"] == f"webhook:{_REGISTRATION_ID}"
+    # An automated link carries no human relevance assessment.
+    assert link_params["relevance_score"] is None
+
+
+def test_ingest_with_unknown_control_ref_is_422_and_writes_nothing():
+    spy = _SpyConn(known_control_id=None)  # catalogue lookup finds nothing
+    body = _event_body(control_ref="NIS2-99.9z")
+    response = _post_ingest(_ingest_app(spy), body, _sign(body))
+
+    assert response.status_code == 422
+    statements = " ".join(spy.statements())
+    assert "INSERT INTO context_records" not in statements, "no half-written record"
+    assert "INSERT INTO control_evidence_links" not in statements
+
+
+def test_ingest_without_control_ref_still_succeeds_unlinked():
+    # Backward compatibility: existing senders omit control_ref entirely.
+    spy = _SpyConn(known_control_id=_CONTROL_UUID)
+    body = _event_body()
+    response = _post_ingest(_ingest_app(spy), body, _sign(body))
+
+    assert response.status_code == 201
+    assert "INSERT INTO control_evidence_links" not in " ".join(spy.statements())
+
+
+def test_unknown_control_ref_rejected_even_when_delivery_is_a_duplicate():
+    # The 422 must not depend on dedupe state, or the contract would vary by
+    # delivery order.
+    spy = _SpyConn(known_control_id=None, dedup_hit=True)
+    body = _event_body(control_ref="NIS2-99.9z")
+    assert _post_ingest(_ingest_app(spy), body, _sign(body)).status_code == 422

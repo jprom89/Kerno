@@ -322,14 +322,27 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     FORCE RLS (migration 018) means even the owner role only sees one tenant's
     rows at a time, so the cleanup iterates the tenants and deletes each
     tenant's rows under that tenant's context.
+
+    control_evidence_links is deleted FIRST and by subquery, not by the
+    standard pattern: it holds a foreign key to context_records (so it must go
+    before them) and it has NO tenant_id column of its own — its tenant
+    identity is inherited from the record it points at.
     """
     conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
     for tenant_id in (TENANT_A_ID, TENANT_B_ID):
         conn.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_id)])
+        conn.execute(
+            "DELETE FROM control_evidence_links WHERE record_id IN "
+            "(SELECT record_id FROM context_records WHERE tenant_id = %s)",
+            [str(tenant_id)],
+        )
         for table in (
             "audit_log", "ai_decision_log", "overrides", "retrieval_bias",
             "tenant_embeddings", "context_records", "remediation_tasks",
             "remediation_routing_rules",
+            # KER-205 (migration 022) — both hold FKs to tenants, so the final
+            # DELETE FROM tenants fails if they are left behind.
+            "webhook_ingest_dedup", "webhook_registrations",
         ):
             conn.execute(
                 f"DELETE FROM {table} WHERE tenant_id = %s",
