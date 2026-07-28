@@ -38,6 +38,18 @@ class WebhookAuthenticationError(Exception):
     maps every failure to the same 401 and a caller can never probe which part failed."""
 
 
+class UnsupportedFileTypeError(ValueError):
+    """Raised when an uploaded evidence file has an extension the intake cannot
+    turn into text (KER-406). The router maps this to 422 — we reject rather
+    than store an unreadable blob the scorer could never use."""
+
+
+class EvidenceExtractionError(Exception):
+    """Raised when a supported file type cannot be read — corrupt PDF, undecodable
+    bytes, or an empty extraction (KER-406). Distinct from UnsupportedFileTypeError:
+    the type was right, the content was not."""
+
+
 class UnsupportedEventTypeError(ValueError):
     """Raised when an authenticated webhook delivery carries an event_type outside
     the supported set (KER-205). The router maps this to 422 — only ever AFTER the

@@ -31,6 +31,11 @@ dependencies = [
     # Async file I/O — required by FastAPI StaticFiles for dashboard serving
     "aiofiles>=23.0",
 
+    # Evidence intake — PDF text extraction (KER-406). Declared explicitly:
+    # it was previously only a transitive dependency, which violates SEC-06
+    # reproducible installs.
+    "pypdf>=4.0.0",
+
     # Database
     "psycopg2-binary>=2.9.9",
     "sqlalchemy>=2.0.0,<3.0.0",

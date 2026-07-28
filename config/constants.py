@@ -390,3 +390,21 @@ LLM_RATE_LIMIT_BACKOFF_FACTOR: float = 2.0
 # from content, so it needs the substance but not the whole file — this cap
 # keeps a single large document from bloating the prompt during a live session.
 EVIDENCE_BODY_PROMPT_CHAR_LIMIT: int = 600
+
+# ---------------------------------------------------------------------------
+# Evidence intake (KER-406)
+# ---------------------------------------------------------------------------
+
+# Largest evidence document accepted by POST /api/v1/evidence, in bytes.
+# 10 MB comfortably covers a policy document or a SOC 2 report while keeping a
+# single upload from exhausting a request worker's memory during extraction.
+MAX_EVIDENCE_UPLOAD_BYTES: int = 10 * 1024 * 1024
+
+# Filename extensions the intake can turn into text. PDF is included because
+# real compliance evidence is overwhelmingly PDF (§16 decision 1); anything
+# outside this set is rejected rather than stored as an unreadable blob.
+SUPPORTED_EVIDENCE_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".csv", ".pdf"})
+
+# source_system value stamped on manually uploaded evidence, distinguishing it
+# from webhook-ingested records (which carry their sender's system).
+UPLOAD_SOURCE_SYSTEM: str = "upload"

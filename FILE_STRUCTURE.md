@@ -41,7 +41,10 @@ src/
 ├── services/                          ← Business logic — no framework dependencies
 │   ├── __init__.py
 │   ├── anonymisation.py               ← Anonymisation pipeline — strips PII before telemetry (KER-102)
-│   ├── embedding_service.py           ← Embedding generation and pgvector storage (KER-103)
+│   ├── embedding_service.py           ← NOT BUILT — no embedding-generation service exists;
+│   │                                     context_records.embedding is never populated (verified 28 Jul 2026)
+│   ├── evidence_intake.py             ← Upload text extraction: txt/md/csv/pdf (KER-406)
+│   ├── evidence_service.py            ← Evidence link/read layer — link_evidence(), get_evidence_for_control()
 │   ├── retrieval_service.py           ← RAG query execution with tenant bias injection (KER-104)
 │   ├── recommendation_service.py      ← AI recommendation engine stub (KER-105)
 │   ├── override_service.py            ← Override capture, weighting, audit emission (KER-106/107)
@@ -50,10 +53,11 @@ src/
 │
 ├── api/                               ← HTTP layer (FastAPI routers)
 │   ├── __init__.py
-│   ├── routes/
+│   ├── routers/                       ← (real directory name; was "routes/")
 │   │   ├── controls.py                ← Control mapping endpoints
 │   │   ├── overrides.py               ← Override submission endpoints
-│   │   ├── evidence.py                ← Evidence pack export (KER-111)
+│   │   ├── export.py                  ← Evidence pack export (KER-111)
+│   │   ├── evidence.py                ← Evidence intake: upload, list, link/unlink (KER-406)
 │   │   └── health.py                  ← Health check endpoint
 │   ├── dependencies.py                ← Auth session resolution, tenant_id extraction
 │   └── middleware.py                  ← Request logging, error handling

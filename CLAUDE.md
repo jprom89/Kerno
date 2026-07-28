@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.0 | Updated: 2026-07-22 | Changes: §15 — approved demo claim (corrected provenance sentence); KER-405 logged and HELD pending compliance-lead validation -->
+<!-- Version: 2.1 | Updated: 2026-07-28 | Changes: Added §16 Evidence Intake (KER-406/407); orphan fix shipped 7e6fc3c; KER-405 gap #5 logged -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -1394,3 +1394,131 @@ triggers, and every generation is retained with a re-derivable input hash.
    prompt iteration.
 3. Carried from §14, still open: backend HTTPS deployment; ALLOWED_ORIGINS
    real Vercel domains.
+
+---
+
+## §16 — Evidence Intake (recorded 28 July 2026)
+
+**Context:** scoping found the product had **no usable data intake**. Verified in
+code: no upload/import endpoint of any kind; the only production writer of
+context_records was the webhook ingest; `link_evidence()` existed with ZERO
+callers; and the ingest passed `control_id=None`, so ingested evidence was an
+orphan by design. A customer who bought and wired webhooks perfectly would
+accumulate documents, create zero links, and score every control "gap — no
+evidence". The working demo existed only because evidence links were hand-seeded
+by a script with direct database access.
+
+**Prerequisite, already shipped:** the orphan fix (commit 7e6fc3c) — webhook
+ingest accepts an optional `control_ref` and links on arrival.
+
+**Correction to an earlier claim (recorded here so it is not repeated):** the
+pgvector auto-suggest foundation is thinner than previously stated. The
+retrieval queries exist, but there is **no embedding-generation service in
+src/** and **nothing populates `context_records.embedding`**. Auto-suggest
+therefore requires an external embedding API integration built from scratch —
+not "connecting a wire".
+
+### KER-406 — Evidence intake, backend
+
+- **Priority:** Must-have · **Points:** 6 · **Reg tie:** NIS2 Art. 21 (the
+  evidence base underpinning every control assessment).
+
+**Acceptance criteria:**
+1. `POST /api/v1/evidence` (multipart) — one file per request. Extracts text,
+   creates a context_records row: `source_system='upload'`, caller-supplied
+   `record_type`, `external_id` = truncated filename (VARCHAR(255)),
+   `title` = caller-supplied or filename, `body` = extracted text,
+   `content_hash` = SHA-256 of the extracted text (fits VARCHAR(64) exactly).
+2. Duplicate upload (same content_hash, same tenant) returns the EXISTING
+   record rather than creating a twin.
+3. `GET /api/v1/evidence?linked=false` — lists the tenant's records with a
+   link-status filter. This is what makes webhook-ingested orphans visible and
+   actionable.
+4. **(REVISED — see design decision 8)** `POST /api/v1/evidence/{record_id}/links`
+   with `{control_id, relevance_score, note}`. Both ids are **pre-validated**
+   before `link_evidence()` is called: a tenant-scoped SELECT for the record,
+   a catalogue SELECT for the control. Either lookup empty → an IDENTICAL 404.
+   Score outside [RELEVANCE_SCORE_MIN, RELEVANCE_SCORE_MAX] → 422.
+5. `DELETE /api/v1/evidence/{record_id}/links/{control_id}` — sets
+   `removed_at` (soft), never a hard delete, preserving link history.
+6. `linked_by` is populated from the **verified JWT user_id**, never a free
+   string (approved decision 5; a narrow data-integrity fix that does NOT
+   un-hold KER-405).
+7. Every write emits a KER-107 ledger entry. Upload and link are gated to
+   `compliance_lead, vciso, security_engineer`; auditor is read-only;
+   platform_engineer is deliberately excluded (connector/webhook permissions
+   are a separate concern — do not conflate).
+
+**Approved design decisions (KER-406):**
+1. **PDF supported in the MVP**, with `pypdf` DECLARED in pyproject — it is
+   currently only transitive, which violates SEC-06 reproducibility. Real
+   compliance evidence is overwhelmingly PDF; a text-only MVP would be close
+   to useless.
+2. **Original files are NOT retained.** No blob storage exists; we store
+   extracted text only. An auditor asking for the original signed PDF gets
+   text. This is the same class of gap as KER-405 finding #4 and stays on hold
+   with it — accepted for MVP, not solved.
+3. **CSV is file-as-document** (one upload = one evidence record). Row-wise
+   import (one row = one record, e.g. an asset register) is explicitly OUT OF
+   SCOPE — it needs column mapping and is its own future story.
+4. **Embedding is skipped at upload**; `context_records.embedding` stays NULL.
+   Building an embedding service now would bolt an unrelated, riskier system
+   (external API, rate limits, retry handling) onto a story whose job is
+   making evidence linkable at all. The column is already nullable, so a
+   future backfill walks `WHERE embedding IS NULL` at zero migration cost.
+5. **Idempotency is DB-enforced**: `uq_control_evidence_links_pair`
+   UNIQUE (control_id, record_id) — verified empirically to collide — so
+   `link_evidence()`'s upsert is necessary, not defensive.
+6. **`link_evidence()` is reused as-is.** It already validates the relevance
+   score, sets tenant context, and upserts correctly. KER-406 gives it an HTTP
+   surface; it is not rewritten.
+7. **File placement** (§4): `src/api/routers/evidence.py`,
+   `src/api/schemas/evidence.py`, text extraction in
+   `src/services/evidence_intake.py`. `evidence_service.py` remains the
+   existing link/read layer. FILE_STRUCTURE.md line 56 is stale — it names
+   `services/evidence.py` for the exporter, which is really
+   `services/export_service.py`; correct it in this story.
+8. **Pre-validate ids; never remap driver exceptions to 404.** Verified
+   empirically: a nonexistent control_id raises `ForeignKeyViolation`, but a
+   nonexistent record_id raises `InsufficientPrivilege` — because
+   control_evidence_links has NO tenant_id column and its RLS policy isolates
+   via a subquery to the record's tenant. A cross-tenant record raises the
+   SAME error as a nonexistent one, which is the correct no-existence-oracle
+   behaviour and must be preserved. So: pre-validate, return an identical 404
+   for either miss, and treat any driver exception reaching link_evidence()
+   afterwards as a genuine 500 (a real bug or a TOCTOU race — backstopped by
+   the unique constraint and FKs, so the worst case is a 500, never bad data).
+   The policy's WITH CHECK is None, so pre-validation does real work on the
+   insert path rather than decorating it.
+
+**Files to create:** src/api/routers/evidence.py, src/api/schemas/evidence.py,
+src/services/evidence_intake.py, tests/unit/api/test_evidence.py,
+tests/unit/services/test_evidence_intake.py,
+tests/integration/test_ker406_evidence_intake.py
+**Files to modify:** src/api/app.py (register router), pyproject.toml (declare
+pypdf), FILE_STRUCTURE.md (add the new files; fix the line-56 exporter name).
+**Migration:** No — every table and constraint already exists.
+
+### KER-407 — Evidence UI
+
+- **Priority:** Must-have · **Points:** 4. A `/dashboard/evidence` page:
+  drag-drop upload, record list with a linked/unlinked filter, and a link
+  action using a searchable control picker plus a relevance-score input
+  (reusing the KER-303 picker pattern).
+
+### Non-goals for this build (explicit)
+
+Auto-suggested control links. Embedding generation. Bulk row-wise CSV import.
+Original-file storage. Any change to the scoring engine.
+
+### Sequencing
+
+Orphan fix (shipped, 7e6fc3c) → KER-406 backend → KER-407 UI. This runs AHEAD
+of the outstanding Sprint 3 HTTPS/domain work: intake determines whether the
+product is usable at all, which outranks the logistical gate for partner
+sessions. KER-405 and the PDF evidence-pack export both stay on hold.
+
+**Story DoD (inherits §11):** every file passes its §11 gate; the full backend
+suite stays green; and **every new database path — upload, dedupe-on-
+content_hash, link, soft-delete-via-removed_at — has a live-DB integration
+test before being marked Done**, not merely mocked unit tests.
