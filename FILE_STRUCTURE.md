@@ -149,6 +149,20 @@ tests/
 
 ---
 
+## Documentation
+
+```
+docs/
+├── ai_decision_log_runbook.md         ← KER-203: retention, hashing, prune job
+└── kerno_nis2_operating_cycle.md      ← Sales deck: founder-delivered NIS2 cycle
+```
+
+Pitch and runbook prose lives here. Product source remains under `src/`.
+FILE_STRUCTURE.md is otherwise stale (recorded 28 July 2026); this section
+only places the files that actually exist under `docs/`.
+
+---
+
 ## Data Classification Quick Reference
 
 | Directory / File | Data Class | Crosses Tenant Boundary? |
