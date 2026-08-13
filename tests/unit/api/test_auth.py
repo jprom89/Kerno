@@ -62,7 +62,7 @@ def test_valid_credentials_return_200_with_token():
         client = TestClient(_app())
         response = client.post(
             "/api/v1/auth/login",
-            json={"email": "admin@example.com", "password": "correct"},
+            json={"email": "admin@example.com", "password": "correct", "tenant_slug": "acme"},
         )
     assert response.status_code == 200
     body = response.json()
@@ -75,7 +75,7 @@ def test_wrong_password_returns_401():
         client = TestClient(_app())
         response = client.post(
             "/api/v1/auth/login",
-            json={"email": "admin@example.com", "password": "wrong"},
+            json={"email": "admin@example.com", "password": "wrong", "tenant_slug": "acme"},
         )
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid credentials"
@@ -86,7 +86,7 @@ def test_unknown_email_returns_401():
         client = TestClient(_app())
         response = client.post(
             "/api/v1/auth/login",
-            json={"email": "nobody@nowhere.com", "password": "irrelevant"},
+            json={"email": "nobody@nowhere.com", "password": "irrelevant", "tenant_slug": "acme"},
         )
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid credentials"

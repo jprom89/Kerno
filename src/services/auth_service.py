@@ -33,16 +33,27 @@ from config.constants import (
     SCRYPT_SALT_LENGTH,
 )
 
-# Reads users before any tenant context exists (login bootstrap). Email is unique
-# per tenant, so LIMIT 1 (oldest) makes the lookup deterministic if the same
-# address were ever provisioned in two tenants. (Migration 019 documents why the
-# users table is not FORCE-RLS'd, which is what lets this pre-context read run.)
-_SELECT_USER_BY_EMAIL = """
-SELECT user_id, tenant_id, password_hash, role, is_active
-FROM users
-WHERE email = :email
-ORDER BY created_at ASC
-LIMIT 1
+# Reads users before any tenant context exists (login bootstrap; migration 019
+# documents why the users table is not FORCE-RLS'd, which is what lets this
+# pre-context read run).
+#
+# The organisation is part of the credential (KER-408 / Ticket C1). Email is
+# unique only PER TENANT — uq_users_tenant_email is UNIQUE (tenant_id, email) —
+# so an email alone does not identify a user. The previous query selected the
+# OLDEST matching row across all tenants, which meant a person provisioned in
+# two organisations could authenticate against the wrong tenant's row and
+# receive a JWT for an organisation that was not theirs. Joining on
+# tenants.tenant_slug (UNIQUE, migration 021) makes the lookup exact: the pair
+# (tenant_slug, email) identifies at most one user, so no ordering is needed
+# and no ambiguity exists.
+#
+# Email is deliberately NOT globally unique: one vCISO or consultant legitimately
+# holds accounts across several client organisations, which is the core persona.
+_SELECT_USER_BY_SLUG_AND_EMAIL = """
+SELECT u.user_id, u.tenant_id, u.password_hash, u.role, u.is_active
+FROM users u
+JOIN tenants t ON t.tenant_id = u.tenant_id
+WHERE t.tenant_slug = :tenant_slug AND u.email = :email
 """
 
 # Dummy hash used when the email is not found, so that the verification path
@@ -137,18 +148,32 @@ def _issue_jwt(user_id: str, email: str, role: str, tenant_id: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def authenticate_and_issue_token(conn, email: str, password: str) -> str | None:
+def authenticate_and_issue_token(
+    conn, email: str, password: str, tenant_slug: str
+) -> str | None:
     """Verify credentials against the users table. Return a per-user JWT or None.
 
-    Returns None (not an exception) on any failure — unknown email, wrong password,
-    or inactive user — so the caller returns a uniform 401 with no detail that
-    reveals which field is wrong. The dummy verify call keeps timing consistent
-    between 'email not found' and 'password wrong' paths. The users lookup runs
-    before tenant context exists (login bootstrap); it is safe because the caller
-    verifies the password before this function returns any token.
+    The organisation slug is part of the credential, not a hint: (tenant_slug,
+    email) identifies exactly one user, so authentication can never bind to a
+    different organisation's account (KER-408 / Ticket C1).
+
+    Returns None (not an exception) on any failure — unknown organisation,
+    unknown email, wrong password, or inactive user — so the caller returns a
+    uniform 401 that reveals which field was wrong for none of them. The dummy
+    verify keeps timing consistent across every not-found path, so an attacker
+    cannot enumerate valid organisation slugs any more than valid emails. The
+    users lookup runs before tenant context exists (login bootstrap); it is safe
+    because the password is verified before any token is returned.
     """
     normalised_email = email.lower().strip()
-    row = conn.execute(_SELECT_USER_BY_EMAIL, {"email": normalised_email}).fetchone()
+    normalised_slug = tenant_slug.lower().strip()
+    if not normalised_slug:
+        _dummy_verify()
+        return None
+    row = conn.execute(
+        _SELECT_USER_BY_SLUG_AND_EMAIL,
+        {"tenant_slug": normalised_slug, "email": normalised_email},
+    ).fetchone()
     if row is None:
         _dummy_verify()
         return None

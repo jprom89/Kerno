@@ -123,6 +123,11 @@ def main() -> None:
         with conn:
             seeded_emails = _apply_seed(conn.cursor(), dev_password)
         print(f"Dev tenant seeded: {_DEV_EMAIL} (password set)")
+        print(
+            "Log in with organisation 'dev-tenant' — since KER-408 the organisation "
+            "slug is part of the credential, because an email is unique only within "
+            "one organisation."
+        )
         if seeded_emails:
             print(f"Seeded {len(seeded_emails)} per-role dev users: " + ", ".join(seeded_emails))
         else:

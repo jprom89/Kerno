@@ -19,9 +19,15 @@ const push = jest.fn();
 const refresh = jest.fn();
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
+let mockSearch = "";
+
 function fillAndSubmit() {
+  fireEvent.change(screen.getByLabelText("Organisation"), {
+    target: { value: "acme-gmbh" },
+  });
   fireEvent.change(screen.getByLabelText("Email"), {
     target: { value: "lead@kerno.local" },
   });
@@ -52,8 +58,31 @@ describe("LoginPage", () => {
     fillAndSubmit();
 
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("Invalid email or password."),
+      expect(screen.getByRole("alert")).toHaveTextContent(/Invalid organisation, email, or password/),
     );
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("sends the organisation slug as part of the credential", async () => {
+    global.fetch = fetchResult(true);
+    render(<LoginPage />);
+    fillAndSubmit();
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    const sent = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    // KER-408: email alone does not identify an account.
+    expect(sent.tenant_slug).toBe("acme-gmbh");
+    expect(sent.email).toBe("lead@kerno.local");
+  });
+
+  it("pre-fills the organisation from an ?org= link", async () => {
+    mockSearch = "org=from-the-link";
+    global.fetch = fetchResult(true);
+    render(<LoginPage />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Organisation")).toHaveValue("from-the-link"),
+    );
+    mockSearch = "";
   });
 });

@@ -72,15 +72,19 @@ def test_hash_password_round_trips():
 
 def test_login_queries_users_table_by_email():
     spy = _UserSpyConn(_user_row())
-    authenticate_and_issue_token(spy, "Admin@Example.com ", _PASSWORD)
+    authenticate_and_issue_token(spy, "Admin@Example.com ", _PASSWORD, "acme")
     sql, params = spy.calls[0]
     assert "FROM users" in sql
     assert params["email"] == "admin@example.com"  # normalised (lowercased/stripped)
+    # KER-408: the organisation is part of the lookup, and the query must not
+    # fall back to picking one row out of several by age.
+    assert "tenant_slug" in sql
+    assert "ORDER BY" not in sql.upper(), "an exact (slug, email) match needs no ordering"
 
 
 def test_valid_credentials_issue_token_with_user_claims():
     spy = _UserSpyConn(_user_row(role="compliance_lead"))
-    token = authenticate_and_issue_token(spy, "u@x.io", _PASSWORD)
+    token = authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "acme")
     assert token is not None
     claims = jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
     assert claims["sub"] == _USER_ID
@@ -95,33 +99,57 @@ def test_valid_credentials_issue_token_with_user_claims():
 
 def test_unknown_email_returns_none():
     spy = _UserSpyConn(None)
-    assert authenticate_and_issue_token(spy, "nobody@x.io", _PASSWORD) is None
+    assert authenticate_and_issue_token(spy, "nobody@x.io", _PASSWORD, "acme") is None
 
 
 def test_wrong_password_returns_none():
     spy = _UserSpyConn(_user_row())
-    assert authenticate_and_issue_token(spy, "u@x.io", "wrong-password") is None
+    assert authenticate_and_issue_token(spy, "u@x.io", "wrong-password", "acme") is None
 
 
 def test_inactive_user_returns_none():
     spy = _UserSpyConn(_user_row(is_active=False))
-    assert authenticate_and_issue_token(spy, "u@x.io", _PASSWORD) is None
+    assert authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "acme") is None
 
 
 def test_missing_password_hash_returns_none():
     spy = _UserSpyConn((_USER_ID, _TENANT_ID, None, "vciso", True))
-    assert authenticate_and_issue_token(spy, "u@x.io", _PASSWORD) is None
+    assert authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "acme") is None
 
 
 def test_failure_paths_do_not_raise():
     # Each failure path must return None rather than raising, so the router can
     # map every failure to a uniform 401 without leaking which field was wrong.
     for spy in (_UserSpyConn(None), _UserSpyConn(_user_row(is_active=False))):
-        assert authenticate_and_issue_token(spy, "u@x.io", "x") is None
+        assert authenticate_and_issue_token(spy, "u@x.io", "x", "acme") is None
 
 
 def test_role_is_carried_verbatim_from_the_user_row():
     spy = _UserSpyConn(_user_row(role="auditor"))
-    token = authenticate_and_issue_token(spy, "u@x.io", _PASSWORD)
+    token = authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "acme")
     claims = jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
     assert claims["role"] == "auditor"
+
+
+# ── KER-408 / Ticket C1: the organisation is a credential ──────────────────────
+
+
+def test_blank_organisation_is_rejected_without_a_query():
+    spy = _UserSpyConn(_user_row())
+    assert authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "   ") is None
+    assert spy.calls == [], "a blank organisation must not reach the database"
+
+
+def test_organisation_slug_is_normalised_and_bound():
+    spy = _UserSpyConn(_user_row())
+    authenticate_and_issue_token(spy, "u@x.io", _PASSWORD, "  ACME-GmbH  ")
+    _, params = spy.calls[0]
+    assert params["tenant_slug"] == "acme-gmbh"
+
+
+def test_unknown_organisation_looks_exactly_like_a_wrong_password():
+    # Both return None with no distinguishing signal — no organisation oracle.
+    unknown_org = _UserSpyConn(None)
+    wrong_password = _UserSpyConn(_user_row())
+    assert authenticate_and_issue_token(unknown_org, "u@x.io", _PASSWORD, "ghost") is None
+    assert authenticate_and_issue_token(wrong_password, "u@x.io", "nope", "acme") is None

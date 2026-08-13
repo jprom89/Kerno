@@ -1,8 +1,10 @@
 /**
  * app/api/auth/login/route.ts — the ONLY place the JWT becomes a cookie (KER-301).
  *
- * What:  POST { email, password } → FastAPI /api/v1/auth/login → on success,
- *        set the returned JWT as an httpOnly cookie and return { ok: true }.
+ * What:  POST { email, password, tenant_slug } → FastAPI /api/v1/auth/login →
+ *        on success, set the returned JWT as an httpOnly cookie and return
+ *        { ok: true }. The organisation slug is part of the credential
+ *        (KER-408): email alone does not identify one account.
  * Why:   FastAPI returns the token in the response body; setting it here as
  *        httpOnly/SameSite means the token never exists in client-readable
  *        storage — no localStorage, no client-side JS access (design
@@ -19,11 +21,11 @@ import { apiBaseUrl, SESSION_COOKIE } from "@/lib/api";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 86400;
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const { email, password } = await request.json();
+  const { email, password, tenant_slug: tenantSlug } = await request.json();
   const backendResponse = await fetch(`${apiBaseUrl()}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, tenant_slug: tenantSlug }),
     cache: "no-store",
   });
   if (!backendResponse.ok) {

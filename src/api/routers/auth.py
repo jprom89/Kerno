@@ -29,10 +29,13 @@ def login(body: LoginRequest, conn=Depends(get_conn)) -> TokenResponse:
     """Authenticate with email and password, return a signed per-user JWT on success.
 
     Returns 401 with the detail 'invalid credentials' for any failure — unknown
-    email, wrong password, or inactive user — to prevent leaking which field is
-    incorrect. The service layer uses timing-consistent verification (KER-202).
+    organisation, unknown email, wrong password, or inactive user — to prevent
+    leaking which field is incorrect. The service layer uses timing-consistent
+    verification (KER-202), extended to organisation lookup in KER-408.
     """
-    token = authenticate_and_issue_token(conn, body.email, body.password)
+    token = authenticate_and_issue_token(
+        conn, body.email, body.password, body.tenant_slug
+    )
     if token is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
     return TokenResponse(access_token=token, token_type="bearer")

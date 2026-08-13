@@ -1,6 +1,6 @@
 """Pydantic request and response models for the authentication endpoints.
 
-What:  Defines LoginRequest (email + password) and TokenResponse (JWT string) for
+What:  Defines LoginRequest (organisation + email + password) and TokenResponse for
        POST /api/v1/auth/login, and MeResponse (email + role) for
        GET /api/v1/auth/me (KER-301).
 Why:   Provides validated input parsing and typed response serialisation for the
@@ -15,10 +15,16 @@ from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
-    """Credentials submitted to the login endpoint."""
+    """Credentials submitted to the login endpoint.
+
+    tenant_slug is part of the credential, not a convenience: email is unique
+    only per tenant, so email+password alone does not identify one account
+    (KER-408 / Ticket C1).
+    """
 
     email: str
     password: str
+    tenant_slug: str
 
 
 class TokenResponse(BaseModel):
