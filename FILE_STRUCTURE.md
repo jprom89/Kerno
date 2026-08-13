@@ -154,7 +154,8 @@ tests/
 ```
 docs/
 ├── ai_decision_log_runbook.md         ← KER-203: retention, hashing, prune job
-└── kerno_nis2_operating_cycle.md      ← Sales deck: founder-delivered NIS2 cycle
+├── kerno_nis2_operating_cycle.md      ← Sales deck: founder-delivered NIS2 cycle
+└── nis2_operating_cycle_runbook.md    ← How to deliver the cycle if you are not GRC
 ```
 
 Pitch and runbook prose lives here. Product source remains under `src/`.
