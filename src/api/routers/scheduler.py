@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_tenant_id, require_role
 from src.api.rate_limit import limiter
 from src.api.schemas.scheduler import RecalculationRunResponse
-from src.scheduler.nightly_bias_recalculation import run_tenant_recalculation
+from src.scheduler.nightly_bias_recalculation import (
+    RECALCULATION_CAPABLE_ROLES,
+    run_tenant_recalculation,
+)
 
 router = APIRouter()
 
@@ -34,6 +37,7 @@ class _SessionContext:
 def run_recalculation(
     request: Request,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*RECALCULATION_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> RecalculationRunResponse:
     """Run a real bias recalculation for the authenticated tenant (KER-201).

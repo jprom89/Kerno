@@ -17,7 +17,7 @@ _JWT_SECRET = "test-secret-for-unit-tests"
 os.environ["KERNO_JWT_SECRET"] = _JWT_SECRET
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_role, get_tenant_id
 from src.exceptions import EntryNotFoundError, TenantContextMissingError
 from src.services.dora_roi_service import RegisterEntryOutput, ReportingWindowOutput
 
@@ -66,6 +66,7 @@ def _app_both_overrides():
     """App with get_conn and get_tenant_id both overridden — for endpoint logic tests."""
     _app = create_app()
     _app.dependency_overrides[get_tenant_id] = lambda: _TENANT_ID
+    _app.dependency_overrides[get_role] = lambda: "compliance_lead"
     _app.dependency_overrides[get_conn] = _override_get_conn
     return _app
 

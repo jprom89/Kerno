@@ -1534,3 +1534,114 @@ sessions. KER-405 and the PDF evidence-pack export both stay on hold.
 suite stays green; and **every new database path — upload, dedupe-on-
 content_hash, link, soft-delete-via-removed_at — has a live-DB integration
 test before being marked Done**, not merely mocked unit tests.
+
+---
+
+## §17 — Security Audit Response (recorded 13 August 2026)
+
+A nine-section security audit produced the work below. Tickets A–D are the
+approved response; everything under "Recorded, not scoped" is deliberately
+parked so it is not lost, not because it has been assessed and cleared.
+
+### Ticket status
+
+| Ticket | Scope | Status |
+|---|---|---|
+| C1 | Require the organisation at login — tenant collision (KER-408) | ✅ done, commit ed3f3f2 |
+| A | require_role() on six ungated mutating/sensitive routes | in progress |
+| B | Lock down the legacy dashboard and OpenAPI docs outside dev | not started |
+| D | Server-side justification_text enforcement + ai_decision_log append-only triggers | not started |
+| C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | **held — its own PR, needs a real DB role** |
+
+### Ticket A — authorisation matrix (approved)
+
+| Route | Roles |
+|---|---|
+| POST /api/v1/scheduler/run-recalculation | compliance_lead, vciso |
+| GET /api/v1/export/evidence-pack | compliance_lead, vciso, security_engineer, platform_engineer |
+| POST /api/v1/remediation/trigger | platform_engineer |
+| POST /api/v1/remediation/close-callback | platform_engineer |
+| POST + PATCH /api/v1/register/entries | compliance_lead, vciso |
+| POST /api/v1/submissions/runs | compliance_lead, vciso |
+
+Each allow-list is a named constant beside its own service rather than a shared
+central list: the routes share membership today but not authority, and a single
+list would make one role change silently move several gates. The matrix is
+restated as literal strings in tests/unit/api/test_rbac_gates.py so that editing
+a constant fails a test instead of quietly redefining policy.
+
+Two mutating routes are ungated by design and named as such in that test file:
+`POST /api/v1/auth/login` runs before authentication, and
+`POST /api/v1/webhooks/ingest` is authenticated by its HMAC signature. A
+structural sweep fails on any other ungated mutating route, which is what makes
+this a standing guarantee rather than a one-time cleanup.
+
+### Backlog — remediation close-callback should not be RBAC-gated
+
+`POST /api/v1/remediation/close-callback` is a machine-to-machine endpoint that
+Jira calls when a remediation ticket closes. Ticket A gates it on
+platform_engineer, which matches how it authenticates today (a human's JWT) and
+is strictly better than leaving it open to every authenticated role — but it is
+the wrong control for the shape of the caller. The right design is a per-tenant
+HMAC signature exactly like the KER-205 webhook ingest: the signature is the
+credential, no human token is involved, and no operator has to hold a role for
+an automated callback to work. Redesigning it is its own scoping pass, because
+it changes how the Jira side is configured, not just what the server checks.
+
+### Backlog — DORA register writes leave no audit trail
+
+Found 13 August 2026 while verifying Ticket A against the live stack, and
+confirmed by query rather than by reading code: creating a register entry
+through `POST /api/v1/register/entries` writes the row and nothing else. Eight
+entries were created during that verification run and `audit_log` recorded zero
+entries for them.
+
+This is the same class of gap as KER-405 finding #1. The DORA register is a
+filed regulatory artefact — the thing a competent authority asks to see — and
+today there is no record of who added or amended a line in it, or when. The
+tenant_id and timestamps on the row itself are not an audit trail: they say a
+row exists, not who decided it should. `update_register_entry` has the same
+hole, which is worse, because an amendment silently overwrites the previous
+values with no before_state anywhere.
+
+The fix is the pattern already used by overrides and evidence links: append a
+KER-107 ledger entry in the same transaction as the write, attributing the
+verified JWT user_id, with before_state populated on the PATCH path. Not done
+in Ticket A because Ticket A's scope was authorisation, not provenance, and
+mixing the two would have made the RBAC change unreviewable.
+
+Related: `POST /api/v1/submissions/runs` should be checked at the same time —
+it was not verified whether a submission run (the act of filing) writes a
+ledger entry either.
+
+### Backlog — nonexistent submission window returns 500, not 404
+
+`POST /api/v1/submissions/runs` with a `submission_window_id` that does not
+exist returns HTTP 500. Observed during Ticket A live verification with id
+`b0000000-0000-4000-b000-000000000009` on tenant `40b4be35…`; both permitted
+roles (compliance_lead, vciso) reached the endpoint and got 500 rather than a
+404. Pre-existing and unrelated to RBAC — the gate was working correctly; the
+500 is what happens after it.
+
+Every comparable surface raises `EntryNotFoundError` → 404 for an unknown id
+(see the register and recommendation routers). This one does not, so an
+operator typing a wrong window id sees a server error and a correlation ID
+instead of "no such window". Worth checking whether the underlying
+`build_and_record_submission` raises something unmapped or fails on a NULL
+lookup result before the not-found check.
+
+### Recorded, not scoped
+
+Raised by the audit, parked without estimates:
+
+- Gateway-level rate limiting (the standing §9 SEC-05 open item).
+- JWT revocation and TTL policy — tokens are currently valid until expiry with
+  no way to invalidate one.
+- Webhook signing secrets at rest (pgcrypto) — §13 KER-205 decision 1 deferred
+  this to "Sprint 3" and it did not happen.
+- Cursor-level error swallowing that can mask a failed statement.
+- Connection-pool RESET between checkouts.
+- Jira client authentication format.
+- Page caps on PDF evidence-pack export.
+- Pagination on the evidence list endpoint.
+- FILE_STRUCTURE.md reconciliation (also logged in §16).

@@ -21,7 +21,7 @@ import dataclasses
 import uuid
 from datetime import date, datetime, timezone
 
-from config.constants import MAX_EXIT_SUMMARY_LENGTH
+from config.constants import MAX_EXIT_SUMMARY_LENGTH, RbacRole
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError  # noqa: F401  re-exported
 from src.models.dora_register_entry import (
@@ -33,6 +33,14 @@ from src.models.dora_register_entry import (
     PROVIDER_TYPE_OTHER,
     PROVIDER_TYPE_SOFTWARE,
     PROVIDER_TYPE_TELECOM,
+)
+
+# Roles allowed to create or amend register entries. The register is a filed
+# regulatory artefact, so the two roles accountable for what gets filed are the
+# two that may write it.
+REGISTER_CAPABLE_ROLES: tuple[RbacRole, ...] = (
+    RbacRole.COMPLIANCE_LEAD,
+    RbacRole.VCISO,
 )
 
 _ALLOWED_CRITICALITY_LEVELS = {CRITICALITY_CRITICAL, CRITICALITY_HIGH, CRITICALITY_STANDARD}

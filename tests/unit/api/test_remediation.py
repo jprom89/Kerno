@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_role, get_tenant_id
 from src.exceptions import JiraClientError
 from src.services.remediation_service import RemediationResult, ReReviewResult
 
@@ -40,6 +40,7 @@ def _fake_result() -> RemediationResult:
 def _app_with_overrides():
     _app = create_app()
     _app.dependency_overrides[get_tenant_id] = lambda: _TENANT_ID
+    _app.dependency_overrides[get_role] = lambda: "platform_engineer"
     _app.dependency_overrides[get_conn] = _override_get_conn
     return _app
 

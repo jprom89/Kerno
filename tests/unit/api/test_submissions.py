@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_role, get_tenant_id
 from src.services.dora_roi_submission_service import SubmissionRunOutput, SubmissionWindowOutput
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
@@ -62,6 +62,7 @@ def _make_window_output() -> SubmissionWindowOutput:
 def _app_both_overrides():
     _app = create_app()
     _app.dependency_overrides[get_tenant_id] = lambda: _TENANT_ID
+    _app.dependency_overrides[get_role] = lambda: "compliance_lead"
     _app.dependency_overrides[get_conn] = _override_get_conn
     return _app
 

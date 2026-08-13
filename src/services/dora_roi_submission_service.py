@@ -22,7 +22,7 @@ from datetime import date, datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
-from config.constants import VALIDATION_SEVERITY_FAIL, VALIDATION_SEVERITY_PASS
+from config.constants import RbacRole, VALIDATION_SEVERITY_FAIL, VALIDATION_SEVERITY_PASS
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError
 from src.models.dora_submission_run import (
@@ -30,6 +30,14 @@ from src.models.dora_submission_run import (
     SUBMISSION_STATUS_READY,
 )
 from src.services.dora_roi_export_service import DORAExportPackage, build_export_package
+
+# Roles allowed to start a submission run. Deliberately a separate constant from
+# REGISTER_CAPABLE_ROLES even though the two lists match today: editing the
+# register and filing it are different authorities and may not stay identical.
+SUBMISSION_CAPABLE_ROLES: tuple[RbacRole, ...] = (
+    RbacRole.COMPLIANCE_LEAD,
+    RbacRole.VCISO,
+)
 
 # ---------------------------------------------------------------------------
 # Output dataclasses

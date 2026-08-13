@@ -14,6 +14,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+from config.constants import RbacRole
 from src.api.schemas.export import (
     AuditExtract,
     ControlEntry,
@@ -27,6 +28,16 @@ from src.services.coverage_service import CoverageControl, get_coverage_controls
 from src.services.evidence_service import get_evidence_for_control
 from src.services.recommendation_service import get_recommendation
 from src.services.tenant_context import resolve_and_set_tenant_context
+
+# Roles allowed to export an evidence pack, matching the KER-304 button's
+# visibility exactly. This is a read, but one read pulls the tenant's entire
+# evidence base into a single file, so it is gated like a write.
+EXPORT_CAPABLE_ROLES: tuple[RbacRole, ...] = (
+    RbacRole.COMPLIANCE_LEAD,
+    RbacRole.VCISO,
+    RbacRole.SECURITY_ENGINEER,
+    RbacRole.PLATFORM_ENGINEER,
+)
 
 DECIDED_BY_HUMAN: str = "human_confirmed"
 DECIDED_BY_AI: str = "ai_unconfirmed"

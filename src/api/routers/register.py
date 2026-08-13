@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_tenant_id, require_role
 from src.api.schemas.register import (
     RegisterEntryRequest,
     RegisterEntryResponse,
@@ -17,6 +17,7 @@ from src.api.schemas.register import (
 )
 from src.exceptions import EntryNotFoundError
 from src.services.dora_roi_service import (
+    REGISTER_CAPABLE_ROLES,
     RegisterEntryInput,
     create_register_entry,
     get_register_entry,
@@ -32,6 +33,7 @@ router = APIRouter()
 def create_entry(
     body: RegisterEntryRequest,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*REGISTER_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> RegisterEntryResponse:
     """Create a new register entry for the authenticated tenant."""
@@ -68,6 +70,7 @@ def update_entry(
     entry_id: str,
     body: RegisterEntryRequest,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*REGISTER_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> RegisterEntryResponse:
     """Update an existing register entry by ID, or 404 if not found."""

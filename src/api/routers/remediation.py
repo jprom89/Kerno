@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_tenant_id, require_role
 from src.api.schemas.remediation import (
     CloseCallbackRequest,
     CloseCallbackResponse,
@@ -17,7 +17,11 @@ from src.api.schemas.remediation import (
     TriggerRemediationResponse,
 )
 from src.exceptions import JiraClientError
-from src.services.remediation_service import flag_for_rereview, trigger_remediation
+from src.services.remediation_service import (
+    REMEDIATION_CAPABLE_ROLES,
+    flag_for_rereview,
+    trigger_remediation,
+)
 
 router = APIRouter()
 
@@ -37,6 +41,7 @@ class _SessionContext:
 def trigger(
     body: TriggerRemediationRequest,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*REMEDIATION_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> TriggerRemediationResponse:
     """Create a Jira remediation task for a confirmed gap; 422 if the control is not a gap
@@ -62,6 +67,7 @@ def trigger(
 def close_callback(
     body: CloseCallbackRequest,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*REMEDIATION_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> CloseCallbackResponse:
     """Flag a control for re-review after its Jira remediation task is closed.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_tenant_id, require_role
 from src.api.schemas.submissions import (
     SubmissionRunRequest,
     SubmissionRunResponse,
@@ -17,6 +17,7 @@ from src.api.schemas.submissions import (
 )
 from src.exceptions import EntryNotFoundError
 from src.services.dora_roi_submission_service import (
+    SUBMISSION_CAPABLE_ROLES,
     build_and_record_submission,
     get_submission_run,
     list_open_windows,
@@ -30,6 +31,7 @@ router = APIRouter()
 def create_run(
     body: SubmissionRunRequest,
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*SUBMISSION_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> SubmissionRunResponse:
     """Trigger a submission run for the authenticated tenant and return its record."""

@@ -11,9 +11,13 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from src.api.dependencies import get_conn, get_tenant_id
+from src.api.dependencies import get_conn, get_tenant_id, require_role
 from src.api.rate_limit import limiter
-from src.services.export_service import build_evidence_pack, serialise_pack
+from src.services.export_service import (
+    EXPORT_CAPABLE_ROLES,
+    build_evidence_pack,
+    serialise_pack,
+)
 
 router = APIRouter()
 
@@ -39,6 +43,7 @@ def export_evidence_pack(
     request: Request,
     control_family: str = Query(..., min_length=1),
     tenant_id: str = Depends(get_tenant_id),
+    rbac_role: str = Depends(require_role(*EXPORT_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> Response:
     """Return the control family's evidence pack as a downloadable JSON attachment.

@@ -11,12 +11,23 @@ from __future__ import annotations
 import dataclasses
 from datetime import date, datetime, timedelta, timezone
 
+from config.constants import RbacRole
 from src.models.recommendation import STATUS_GAP
 from src.services.audit_log import append_audit_entry
 from src.services.coverage_service import CoverageControl, get_coverage_controls
 from src.services.jira_client import JiraClient
 from src.services.recommendation_service import get_recommendation
 from src.services.tenant_context import resolve_and_set_tenant_context
+
+# Roles allowed to open a remediation task and to receive its closure callback.
+# platform_engineer owns connector and automation scope in the role taxonomy.
+#
+# The closure callback is the imperfect half of this: it is a machine-to-machine
+# endpoint that Jira calls, so the right control is an HMAC signature like the
+# KER-205 webhook ingest uses, not a role on a human's token. Gating it on
+# platform_engineer matches how it authenticates today and is strictly better
+# than leaving it open to every role; redesigning it is a §17 backlog item.
+REMEDIATION_CAPABLE_ROLES: tuple[RbacRole, ...] = (RbacRole.PLATFORM_ENGINEER,)
 
 _SELECT_CATEGORY_RULE = """
 SELECT rule_id, assignee_jira_account_id, sla_days

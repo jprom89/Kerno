@@ -61,7 +61,7 @@ import uuid
 
 import psycopg2
 
-from config.constants import MILLISECONDS_PER_SECOND
+from config.constants import MILLISECONDS_PER_SECOND, RbacRole
 
 # _ExecutableConn is imported rather than reimplemented so the cron entrypoint
 # converts :name parameters (and vector values) exactly the way every other
@@ -89,6 +89,14 @@ PLATFORM_SCHEDULER_TENANT_ID = uuid.UUID("00000000-0000-4000-8000-000000000000")
 # schema src/api/schemas/scheduler.py).
 STATUS_RECALCULATED = "recalculated"
 STATUS_NO_NEW_OVERRIDES = "no_new_overrides"
+
+# Roles allowed to trigger a manual recalculation through the API. The KER-302
+# dashboard already shows the button to exactly these two roles; until now that
+# was the only thing stopping anyone else, which is to say nothing at all.
+RECALCULATION_CAPABLE_ROLES: tuple[RbacRole, ...] = (
+    RbacRole.COMPLIANCE_LEAD,
+    RbacRole.VCISO,
+)
 
 
 @dataclasses.dataclass(frozen=True)
