@@ -8,6 +8,12 @@ The job in one sentence: you make sure a named file exists in Kerno, it is
 current, and a named human decided something this month. Kerno scores.
 The customer owns the service. You chair.
 
+A NIS2 control is one legal requirement. Example: **Backup, Recovery and
+Crisis Management** means “can you restore this service, and have you
+tested that?” You do not need to memorise the articles. Open
+**Dashboard → Meeting** — each red/amber card says what the control is
+and the exact question to ask.
+
 ---
 
 ## 0. Who you are in the room
@@ -213,21 +219,24 @@ Readout agenda (90 minutes):
 
 ## 4. The monthly 90 minutes
 
+Open **Dashboard → Meeting** before the call. That page is the agenda: it
+pulls live coverage, linked evidence, and open recommendations, and writes
+the exact question to ask for every red and amber control. Share the
+screen. Do not rebuild a Google Doc.
+
 Between meetings you send **one** reminder email for open items, then you
 stop. Missed customer deadlines stay on the register. They are not your
 overrun.
 
-Agenda:
+Agenda (already on the Meeting page):
 
-1. Open the coverage dashboard. Share the screen.
-2. New evidence since last time: anything to link?
-3. Open exceptions only: still open, closed with linked evidence, or slipped.
-4. At most one new treatment decision if something material changed
-   (new vendor, failed restore, expired date). Not an incident — if they
-   are in an incident, end the meeting and tell them to run their own
-   process.
-5. Confirm next date. Export only if they have an auditor / customer
-   asking (one export per six months in the fee).
+1. Share **Dashboard → Meeting**. Read the preamble once.
+2. Walk **Decisions needed today** only. For each card, read “What this is”
+   then the **Ask**. Write their answer on the card (owner, date).
+3. After they speak, record the decision on **Recommendations** (Approve /
+   Edit / leave as gap).
+4. If they are in an incident, end the meeting. That is their process.
+5. Confirm next date. Export only if an auditor or customer is asking.
 
 After the call: update the register the same day. Same table as the pack.
 That table *is* the gap and exception register. Kerno holds the scores and
@@ -297,7 +306,8 @@ you would not have to.
 
 **Each month**
 
+- [ ] Open **Dashboard → Meeting** (live agenda, not a homemade doc)
 - [ ] One reminder sent
-- [ ] 90-minute review held
-- [ ] Register updated the same day
+- [ ] 90-minute review held from that screen
+- [ ] Record decisions in Recommendations after they speak
 - [ ] No incident handled by you

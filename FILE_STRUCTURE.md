@@ -44,6 +44,7 @@ src/
 │   ├── embedding_service.py           ← NOT BUILT — no embedding-generation service exists;
 │   │                                     context_records.embedding is never populated (verified 28 Jul 2026)
 │   ├── evidence_intake.py             ← Upload text extraction: txt/md/csv/pdf (KER-406)
+│   ├── meeting_pack_service.py        ← Monthly exception-review agenda + notes
 │   ├── evidence_service.py            ← Evidence link/read layer — link_evidence(), get_evidence_for_control()
 │   ├── retrieval_service.py           ← RAG query execution with tenant bias injection (KER-104)
 │   ├── recommendation_service.py      ← AI recommendation engine stub (KER-105)
@@ -58,6 +59,7 @@ src/
 │   │   ├── overrides.py               ← Override submission endpoints
 │   │   ├── export.py                  ← Evidence pack export (KER-111)
 │   │   ├── evidence.py                ← Evidence intake: upload, list, link/unlink (KER-406)
+│   │   ├── meetings.py                ← Monthly exception-review pack (GET /pack)
 │   │   └── health.py                  ← Health check endpoint
 │   ├── dependencies.py                ← Auth session resolution, tenant_id extraction
 │   └── middleware.py                  ← Request logging, error handling

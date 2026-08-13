@@ -178,3 +178,41 @@ export async function fetchEvidence(linked?: boolean): Promise<EvidencePage> {
   }
   return (await response.json()) as EvidencePage;
 }
+
+/** One NIS2 control on the monthly exception-review agenda. */
+export interface MeetingControl {
+  control_id: string;
+  control_ref: string;
+  title: string;
+  category: string;
+  what_this_means: string;
+  status: string;
+  evidence_count: number;
+  evidence_titles: string[];
+  open_recommendation_rationale: string | null;
+  ask_in_the_meeting: string;
+  skip_unless_asked: boolean;
+}
+
+/** The live meeting pack from GET /api/v1/meetings/pack. */
+export interface MeetingPack {
+  generated_at: string;
+  met: number;
+  partial: number;
+  gap: number;
+  total_controls: number;
+  decisions_needed: MeetingControl[];
+  skip_unless_asked: MeetingControl[];
+  notes_markdown: string;
+  preamble: string;
+  review_minutes: number;
+}
+
+/** Fetch the agenda the chair should read in this month's review. */
+export async function fetchMeetingPack(): Promise<MeetingPack> {
+  const response = await apiFetch("/api/v1/meetings/pack");
+  if (!response.ok) {
+    throw new Error(`meeting pack failed: ${response.status}`);
+  }
+  return (await response.json()) as MeetingPack;
+}

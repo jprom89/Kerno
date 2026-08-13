@@ -408,3 +408,15 @@ SUPPORTED_EVIDENCE_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".csv"
 # source_system value stamped on manually uploaded evidence, distinguishing it
 # from webhook-ingested records (which carry their sender's system).
 UPLOAD_SOURCE_SYSTEM: str = "upload"
+
+# ---------------------------------------------------------------------------
+# Monthly meeting pack (founder-delivered NIS2 operating cycle)
+# ---------------------------------------------------------------------------
+
+# How many characters of a recommendation rationale to paste into the meeting
+# notes. The chair needs the gist, not the full LLM prose, on a 90-minute call.
+MEETING_PACK_RATIONALE_EXCERPT_CHARS: int = 240
+
+# Duration of the exception review the pack is written for, in minutes. Matches
+# the NIS2 operating-cycle offer (one 90-minute monthly session).
+MEETING_REVIEW_MINUTES: int = 90
