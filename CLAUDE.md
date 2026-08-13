@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.2 | Updated: 2026-08-13 | Changes: §0 current mandate (NOW.md); §1 identity no longer claims live RAG; FILE_STRUCTURE stale-map rule; KER-408/A/B/D in flight -->
+<!-- Version: 2.3 | Updated: 2026-08-13 | Changes: §0 product is DORA system of record, not another AI GRC dashboard -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -15,11 +15,12 @@ constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 13 August 2026 the in-force product slice is: one UI (`frontend/`),
-one loop (upload → link → generate → named human approve/edit/reject →
-export). Retrieval, embeddings, country packs, CRA, incidents, MSP, and
-new prompt-doc series are out of scope until that loop works on a tenant's
-own files.
+As of 13 August 2026 Kerno is an EU **system of record** (live DORA
+register + named-human control decisions), not an AI GRC coverage
+dashboard. After hygiene tickets C1/A/B/D: a thin generate button, HTTPS,
+then **DORA register/submissions in Next.js** (filling the hole Ticket B
+opens), then one filing download. Do not add coverage features, RAG, CRA,
+incidents, country packs, or MSP. See `NOW.md`.
 
 `KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement
@@ -34,11 +35,11 @@ call retrieval; `context_records.embedding` is never populated.
 ## §1 — Project Identity
 
 **Product:** Kerno Compliance Copilot
-**What it does:** Maps a company's evidence to EU regulatory controls
-(NIS2 first; a DORA register API also exists) with a hybrid engine: a
-deterministic evidence scorer plus LLM rationale prose. Every recommendation
-is gated by a named human (approve / edit / reject) and recorded in a
-tamper-evident ledger.
+**What it does:** Holds an EU operational-resilience **system of record** —
+starting with a live DORA Register of Information and named-human decisions
+on NIS2 controls, each tied to evidence, a reproducible score, and a
+tamper-evident ledger. A hybrid engine (deterministic scorer + LLM prose)
+helps a human update that record; it is not the product.
 
 **Who uses it:** Compliance engineers, vCISOs, and fractional CTOs at
 mid-market European technology companies.
@@ -47,7 +48,8 @@ mid-market European technology companies.
 base LLM. It is also not, today, a retrieval-augmented or
 embedding-personalised system. The retrieval/bias machinery exists and is
 tested; it has no production caller. Do not describe it as live. Reserved
-for KER-404 after the human-gated scoring loop is reachable in the UI.
+for KER-404 only after the register lives in the product UI and humans are
+actually signing decisions.
 
 ---
 
