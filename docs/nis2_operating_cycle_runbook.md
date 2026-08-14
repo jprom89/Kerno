@@ -11,8 +11,10 @@ The customer owns the service. You chair.
 A NIS2 control is one legal requirement. Example: **Backup, Recovery and
 Crisis Management** means “can you restore this service, and have you
 tested that?” You do not need to memorise the articles. Open
-**Dashboard → Meeting** — each red/amber card says what the control is
-and the exact question to ask.
+**Dashboard → Meeting** — each red/amber card says what the control is,
+the exact question to ask, and the artefact list to tick. The same list
+is in `docs/nis2_control_inspection_checklist.md`. Approve only from
+those ticks, never because the dashboard went green.
 
 ---
 
@@ -82,7 +84,7 @@ list. You do not need ISO 27001 Annex A. You do not need to invent controls.
 | NIS2-Art23-1 | Significant incident notification to CSIRT | Written playbook: who notifies whom. |
 | NIS2-Art23-4 | Notification timeline / early warning | Same playbook, with 24h / 72h times, or a gap. |
 | NIS2-Art21-2-d | Supply-chain security | Vendors that this service depends on. |
-| NIS2-Art22-1 | Coordinated supply-chain assessments | How those vendors were reviewed, even a spreadsheet. |
+| NIS2-Art22-1 | Coordinated supply-chain assessments | ENISA/Cooperation Group status note — not the vendor list. |
 | NIS2-Art21-2-e | Vulnerability handling | How they patch; last pentest or “we don’t have one.” |
 | NIS2-Art21-2-j | Secure ICT solutions | Where it runs (cloud, MFA on admin, who has root). |
 | NIS2-Art21-2-b | Incident handling and continuity | On-call rota, incident channel, last drill or gap. |
@@ -162,6 +164,8 @@ Please send, for [SERVICE NAME], by [DATE]:
 8. Backup setup and the date of the last restore test
 9. Last management / GF discussion of cyber (minutes, email, or “never”)
 10. Training / briefing attendance for directors, or “none yet”
+11. One dated sentence: are you in an ENISA/Cooperation Group supply-chain
+    assessment (name it), or not, and you follow BSI/ENISA advisories?
 
 Keep the originals in your folder. We will store extracted text in Kerno
 and note where the original lives.
@@ -179,16 +183,22 @@ the 12 controls. Say no to “while you’re here, also ISO.”
 2. For each of the 12 controls, generate a recommendation (dashboard
    generate action, or `POST /api/v1/recommendations/generate` with
    `control_id`). Kerno sets status and confidence. You do not.
-3. Sit with their operator for 60–90 minutes. For each recommendation:
-   - If the evidence is obviously the right document, **Approve**.
+3. Sit with their operator for 60–90 minutes. For each of the 12, open
+   **Dashboard → Meeting** (or the printed checklist) and tick artefacts:
+   - Every **required** artefact matches **Pass if** → you may **Approve**
+     as met, unless a listed non-required artefact is missing (then it is
+     **partial**, never met).
+   - Any required artefact matches **Fail if** or is missing → **gap**.
+     Owner + date. Do not Approve.
    - If they say “that PDF is obsolete, use this one,” upload the new one
      and **Edit** with a justification.
-   - If they say “we don’t do this,” leave it gap and put an owner + date
-     on the register. Do not click Approve to be nice.
+   - If they say “we don’t do this,” leave it gap. Do not click Approve
+     to be nice.
 4. One review round. Not three.
 
 You are not judging whether their MFA is “enough.” You are judging whether
-the file they handed you is linked to the control Kerno scored.
+the linked file matches **Pass if**. Kerno does not read the PDF. The
+checklist is in `docs/nis2_control_inspection_checklist.md`.
 
 ### Days 9–10 — Pack and readout
 
@@ -231,8 +241,9 @@ overrun.
 Agenda (already on the Meeting page):
 
 1. Share **Dashboard → Meeting**. Read the preamble once.
-2. Walk **Decisions needed today** only. For each card, read “What this is”
-   then the **Ask**. Write their answer on the card (owner, date).
+2. Walk **Decisions needed today** only. For each card, read “What this is,”
+   then tick **Pass if / Fail if**. Then read the **Ask**. Write their
+   answer (owner, date). Approve only when every required artefact passes.
 3. After they speak, record the decision on **Recommendations** (Approve /
    Edit / leave as gap).
 4. If they are in an incident, end the meeting. That is their process.

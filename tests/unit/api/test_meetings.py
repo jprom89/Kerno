@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from config.constants import MEETING_REVIEW_MINUTES
 from src.api.app import create_app
 from src.api.dependencies import get_conn, get_tenant_id
+from src.services.control_inspection import InspectionItem
 from src.services.meeting_pack_service import MeetingControlItem, MeetingPack
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
@@ -37,6 +38,15 @@ def _fake_pack() -> MeetingPack:
         evidence_titles=[],
         open_recommendation_rationale=None,
         ask_in_the_meeting="Nothing is linked. Who will provide evidence?",
+        approve_only_when="Approve as met only if linked: Backup exists.",
+        inspection_items=(
+            InspectionItem(
+                label="Backup exists",
+                pass_if="A console screenshot showing backups.",
+                fail_if="No screenshot.",
+                required_for_met=True,
+            ),
+        ),
         skip_unless_asked=False,
     )
     return MeetingPack(
@@ -71,5 +81,7 @@ def test_pack_returns_agenda_and_markdown() -> None:
     body = response.json()
     assert body["gap"] == 1
     assert body["decisions_needed"][0]["control_ref"] == "NIS2-Art21-2-c"
+    assert body["decisions_needed"][0]["inspection_items"][0]["label"] == "Backup exists"
+    assert body["decisions_needed"][0]["approve_only_when"].startswith("Approve as met")
     assert "Nothing is linked" in body["notes_markdown"]
     assert body["review_minutes"] == MEETING_REVIEW_MINUTES

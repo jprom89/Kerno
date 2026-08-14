@@ -22,6 +22,7 @@ from config.constants import (
 )
 from src.models.compliance_control import FRAMEWORK_NIS2
 from src.models.recommendation import STATUS_GAP, STATUS_MET, STATUS_PARTIAL
+from src.services.control_inspection import InspectionItem, approve_rule_for, inspection_items_for
 from src.services.coverage_service import CoverageControl, get_coverage_controls
 from src.services.evidence_service import get_evidence_for_control
 from src.services.recommendation_service import OpenRecommendation, list_open_recommendations
@@ -46,7 +47,10 @@ _CONTROL_IN_PLAIN_ENGLISH: dict[str, str] = {
     "NIS2-Art23-1": "Is there a written playbook for notifying a CSIRT / BSI?",
     "NIS2-Art23-4": "Does that playbook include the 24h / 72h notification times?",
     "NIS2-Art21-2-d": "Which vendors does this service depend on?",
-    "NIS2-Art22-1": "How were those vendors reviewed? Even a spreadsheet counts.",
+    "NIS2-Art22-1": (
+        "Are they in an ENISA/Cooperation Group assessment, or do they follow "
+        "BSI/ENISA advisories? A vendor list is not this article."
+    ),
     "NIS2-Art21-2-e": "How do you patch, and is there a recent test or pentest?",
     "NIS2-Art21-2-j": "Where does production run, and is admin access using MFA?",
     "NIS2-Art21-2-b": "Who is on-call, and is there an incident channel?",
@@ -68,6 +72,8 @@ class MeetingControlItem:
     evidence_titles: list[str]
     open_recommendation_rationale: str | None
     ask_in_the_meeting: str
+    approve_only_when: str
+    inspection_items: tuple[InspectionItem, ...]
     skip_unless_asked: bool
 
 
@@ -185,6 +191,8 @@ def _item_for_control(
         evidence_titles=titles,
         open_recommendation_rationale=rationale,
         ask_in_the_meeting=_ask_in_the_meeting(control.status, control.evidence_count),
+        approve_only_when=approve_rule_for(control.control_ref),
+        inspection_items=inspection_items_for(control.control_ref),
         skip_unless_asked=control.status == STATUS_MET,
     )
 
@@ -222,7 +230,11 @@ def _render_decision_item(item: MeetingControlItem) -> list[str]:
         f"What this is: {item.what_this_means}",
         f"Status: {item.status} | Evidence: {evidence}",
         f"Ask: {item.ask_in_the_meeting}",
+        f"Approve only when: {item.approve_only_when}",
     ]
+    for artefact in item.inspection_items:
+        flag = "required" if artefact.required_for_met else "else partial"
+        lines.append(f"- [{flag}] {artefact.label} — pass if: {artefact.pass_if}")
     if item.open_recommendation_rationale:
         lines.append(f"Kerno said: {item.open_recommendation_rationale}")
     lines.append("")

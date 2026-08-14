@@ -45,6 +45,7 @@ src/
 │   │                                     context_records.embedding is never populated (verified 28 Jul 2026)
 │   ├── evidence_intake.py             ← Upload text extraction: txt/md/csv/pdf (KER-406)
 │   ├── meeting_pack_service.py        ← Monthly exception-review agenda + notes
+│   ├── control_inspection.py          ← Pass if / Fail if artefact list per seeded NIS2 control
 │   ├── evidence_service.py            ← Evidence link/read layer — link_evidence(), get_evidence_for_control()
 │   ├── retrieval_service.py           ← RAG query execution with tenant bias injection (KER-104)
 │   ├── recommendation_service.py      ← AI recommendation engine stub (KER-105)
@@ -138,7 +139,9 @@ tests/
 │   │   ├── test_recommendation_service.py
 │   │   ├── test_override_service.py
 │   │   ├── test_bias_recalculation_service.py
-│   │   └── test_tenant_context.py
+│   │   ├── test_tenant_context.py
+│   │   ├── test_meeting_pack_service.py
+│   │   └── test_control_inspection.py
 │   └── models/
 │       ├── test_tenant.py
 │       ├── test_override.py
@@ -157,7 +160,8 @@ tests/
 docs/
 ├── ai_decision_log_runbook.md         ← KER-203: retention, hashing, prune job
 ├── kerno_nis2_operating_cycle.md      ← Sales deck: founder-delivered NIS2 cycle
-└── nis2_operating_cycle_runbook.md    ← How to deliver the cycle if you are not GRC
+├── nis2_operating_cycle_runbook.md    ← How to deliver the cycle if you are not GRC
+└── nis2_control_inspection_checklist.md ← File-complete Pass if / Fail if for the 12 controls
 ```
 
 Pitch and runbook prose lives here. Product source remains under `src/`.

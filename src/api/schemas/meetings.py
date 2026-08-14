@@ -14,6 +14,17 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
+class InspectionItemOut(BaseModel):
+    """One artefact the chair ticks by whether a matching file is linked."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    label: str
+    pass_if: str
+    fail_if: str
+    required_for_met: bool
+
+
 class MeetingControlOut(BaseModel):
     """One NIS2 control on the agenda, in the language the chair will read."""
 
@@ -29,6 +40,8 @@ class MeetingControlOut(BaseModel):
     evidence_titles: list[str]
     open_recommendation_rationale: str | None
     ask_in_the_meeting: str
+    approve_only_when: str
+    inspection_items: list[InspectionItemOut]
     skip_unless_asked: bool
 
 

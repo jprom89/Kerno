@@ -90,6 +90,8 @@ def test_gap_with_no_evidence_is_a_decision() -> None:
     assert "restore" in item.what_this_means.lower()
     assert "Nothing is linked" in pack.notes_markdown
     assert MEETING_PACK_PREAMBLE in pack.notes_markdown
+    assert "Last restore-test date" in pack.notes_markdown
+    assert item.approve_only_when.startswith("Approve as met only if linked")
 
 
 def test_met_control_is_skipped_unless_asked() -> None:
@@ -165,6 +167,25 @@ def test_open_recommendation_rationale_is_excerpted() -> None:
     assert rationale is not None
     assert rationale.endswith("…")
     assert "Kerno said:" in pack.notes_markdown
+
+
+def test_art22_plain_english_rejects_the_vendor_list() -> None:
+    """Art22 is coordinated-assessment status, not the Art21-2-d spreadsheet."""
+    gap = _coverage("c-gap", "NIS2-Art22-1", "Coordinated assessments", "gap")
+    with patch(
+        "src.services.meeting_pack_service.get_coverage_controls", return_value=[gap]
+    ), patch(
+        "src.services.meeting_pack_service.list_open_recommendations",
+        return_value=([], 0),
+    ), patch(
+        "src.services.meeting_pack_service.get_evidence_for_control", return_value=[]
+    ):
+        pack = build_meeting_pack(MagicMock(), _TENANT_ID)
+
+    item = pack.decisions_needed[0]
+    assert "ENISA" in item.what_this_means
+    assert "not this article" in item.what_this_means
+    assert "vendor spreadsheet" in item.inspection_items[0].fail_if.lower()
 
 
 def test_empty_nis2_set_still_renders() -> None:

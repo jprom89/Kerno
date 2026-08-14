@@ -2,8 +2,8 @@
  * components/MeetingAgenda.tsx — the monthly exception-review script.
  *
  * What:  shows counts, then every gap/partial with a plain-English "what
- *        this is" and the exact ask, plus a copy-notes button. Greens sit
- *        in a skip list.
+ *        this is", the artefact tick-list, and the exact ask, plus a
+ *        copy-notes button. Greens sit in a skip list.
  * Why:   the founder delivering the cycle is not a GRC expert; the pack is
  *        the meeting.
  * How:   npm test — frontend/__tests__/meeting-agenda.test.tsx
@@ -13,7 +13,7 @@
 
 import { useState } from "react";
 
-import type { MeetingControl, MeetingPack } from "@/lib/api";
+import type { InspectionItem, MeetingControl, MeetingPack } from "@/lib/api";
 
 function statusClass(status: string): string {
   if (status === "met") {
@@ -23,6 +23,36 @@ function statusClass(status: string): string {
     return "bg-amber-100 text-amber-900";
   }
   return "bg-red-100 text-red-900";
+}
+
+function InspectionList({
+  items,
+  approveOnlyWhen,
+}: {
+  items: InspectionItem[];
+  approveOnlyWhen: string;
+}) {
+  return (
+    <div className="mt-3" data-testid="inspection-list">
+      <p className="text-sm font-medium text-slate-900">{approveOnlyWhen}</p>
+      {items.length === 0 ? null : (
+        <ul className="mt-2 space-y-2">
+          {items.map((artefact) => (
+            <li
+              key={artefact.label}
+              className="rounded border border-slate-200 bg-slate-50 p-2 text-sm"
+            >
+              <p className="font-medium text-slate-900">
+                {artefact.required_for_met ? "Required" : "Else partial"} — {artefact.label}
+              </p>
+              <p className="mt-1 text-slate-700">Pass if: {artefact.pass_if}</p>
+              <p className="text-slate-600">Fail if: {artefact.fail_if}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function DecisionCard({ item }: { item: MeetingControl }) {
@@ -50,6 +80,7 @@ function DecisionCard({ item }: { item: MeetingControl }) {
         <span className="font-medium">Ask: </span>
         {item.ask_in_the_meeting}
       </p>
+      <InspectionList items={item.inspection_items} approveOnlyWhen={item.approve_only_when} />
       {item.open_recommendation_rationale ? (
         <p className="mt-2 text-sm text-slate-600">Kerno said: {item.open_recommendation_rationale}</p>
       ) : null}

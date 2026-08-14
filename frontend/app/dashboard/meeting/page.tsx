@@ -18,7 +18,8 @@ export default async function MeetingPage() {
       <h1 className="mb-2 text-xl font-semibold text-slate-900">This month&apos;s meeting</h1>
       <p className="mb-6 text-sm text-slate-500">
         Built from live coverage, linked evidence, and open recommendations. Share this
-        screen. Record decisions in Recommendations after they speak.
+        screen. Tick Pass if / Fail if on each card before you Approve. Record the
+        decision in Recommendations after they speak.
       </p>
       <MeetingAgenda pack={pack} />
     </section>

@@ -179,6 +179,14 @@ export async function fetchEvidence(linked?: boolean): Promise<EvidencePage> {
   return (await response.json()) as EvidencePage;
 }
 
+/** One artefact the chair ticks by whether a matching file is linked. */
+export interface InspectionItem {
+  label: string;
+  pass_if: string;
+  fail_if: string;
+  required_for_met: boolean;
+}
+
 /** One NIS2 control on the monthly exception-review agenda. */
 export interface MeetingControl {
   control_id: string;
@@ -191,6 +199,8 @@ export interface MeetingControl {
   evidence_titles: string[];
   open_recommendation_rationale: string | null;
   ask_in_the_meeting: string;
+  approve_only_when: string;
+  inspection_items: InspectionItem[];
   skip_unless_asked: boolean;
 }
 
