@@ -27,20 +27,40 @@ Each row records:
 | `model_version` | The LLM that produced the decision (`KERNO_LLM_MODEL` at generation time) |
 | `created_at` | Database timestamp of the decision |
 
-This log is **separate from the KER-107 human-decision audit ledger**: it is
-append-only in practice but not hash-chained, because it has a different
-volume, retention, and query profile. Human decisions (overrides) stay in the
-tamper-evident ledger; machine decisions live here.
+This log is **separate from the KER-107 human-decision audit ledger**, because
+it has a different volume, retention, and query profile. Human decisions
+(overrides) stay in the tamper-evident hash-chained ledger; machine decisions
+live here.
 
 ## 2. Retention window
 
 - Rows are retained **at least 180 days** — the window is
   `AI_DECISION_LOG_RETENTION_DAYS` in `config/constants.py`.
 - A nightly prune job deletes rows **older** than the window. Rows inside the
-  window are never touched: the retention duty is a floor, and the prune
-  respects it by construction.
-- Changing the window is a config change reviewed like code — do not shorten
-  it below a customer's contractual or regulatory floor.
+  window are never touched, and since migration 023 that is enforced by the
+  database rather than by the prune job's good behaviour.
+- **What the triggers do.** Row and statement triggers reject `UPDATE`,
+  `TRUNCATE`, and `DELETE` of any row inside the retention window, so
+  accidental and application-path mutation fail closed. `created_at` is stamped
+  server-side on insert, so a row cannot be backdated past the floor and then
+  deleted as "expired". Pruning rows older than the window is the only
+  permitted delete.
+- **What the triggers are not.** This is not tamper-evidence. The application
+  connects as the table owner (§17 ticket C2 is held) and can disable or drop
+  these triggers in one statement, and unlike `audit_log` there is no hash
+  chain behind them — KER-203 decision 2 deliberately did not give this table
+  one, so nothing would detect it afterwards. Do not describe this log as
+  tamper-evident, tamper-proof, or unalterable, and do not extend the §15
+  approved demo claim to cover it. The approved sentence covers **human**
+  decisions, and stays as written.
+- **Changing the window now takes a migration, not just a config edit.**
+  *Raising* it stays a one-line change to `AI_DECISION_LOG_RETENTION_DAYS`.
+  *Lowering* it below the value hardcoded in migration 023 will make the prune
+  select rows the trigger still protects — and because a `BEFORE DELETE`
+  trigger aborts the whole statement, one such row fails that tenant's entire
+  prune. Change both together.
+  `test_sql_retention_window_matches_the_python_constant` fails on drift.
+- Do not shorten the window below a customer's contractual or regulatory floor.
 
 ## 3. Legal basis
 

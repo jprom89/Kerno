@@ -198,16 +198,17 @@ def test_query_invalid_tenant_raises_before_sql():
 
 def test_prune_deletes_with_retention_cutoff_and_counts():
     spy = _SpyConn(delete_rows=[("id1",), ("id2",), ("id3",)])
-    before = datetime.now(timezone.utc)
     deleted = prune_old_logs(spy, _TENANT_ID)
-    after = datetime.now(timezone.utc)
     assert deleted == 3
     sql, params = next((s, p) for s, p in spy.calls if "DELETE FROM ai_decision_log" in s)
     assert "RETURNING" in sql
     assert params["tenant_id"] == str(_TENANT_ID)
-    expected_low = before - timedelta(days=AI_DECISION_LOG_RETENTION_DAYS)
-    expected_high = after - timedelta(days=AI_DECISION_LOG_RETENTION_DAYS)
-    assert expected_low <= params["retention_cutoff"] <= expected_high
+    assert params["retention_days"] == AI_DECISION_LOG_RETENTION_DAYS
+    # The cutoff must be the database's, not the client's: migration 023's
+    # retention trigger evaluates the same calendar interval, and a Python
+    # timedelta would drift an hour away from it under a non-UTC timezone —
+    # far enough to make the prune select rows the trigger then refuses.
+    assert "now() - make_interval" in sql
 
 
 def test_prune_sets_tenant_context_first():

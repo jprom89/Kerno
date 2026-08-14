@@ -1550,7 +1550,7 @@ parked so it is not lost, not because it has been assessed and cleared.
 | C1 | Require the organisation at login — tenant collision (KER-408) | ✅ done, commit ed3f3f2 |
 | A | require_role() on six ungated mutating/sensitive routes | ✅ done, commit 7b6738b |
 | B | Lock down the legacy dashboard and OpenAPI docs outside dev | ✅ done |
-| D | Server-side justification_text enforcement + ai_decision_log append-only triggers | part (i) done; (ii) in progress |
+| D | Server-side justification_text enforcement + ai_decision_log append-only triggers | ✅ done |
 | C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | **held — its own PR, needs a real DB role** |
 
 ### Ticket A — authorisation matrix (approved)
@@ -1647,9 +1647,9 @@ conversation needs them outside dev.
 
 ### Ticket D — decisions ratified before implementation (13–14 August 2026)
 
-Ticket D required decisions the written spec did not supply. Recording them
-here rather than in a migration docstring, because a docstring is where a
-decision gets *described*, not where it gets *made*.
+Both halves of Ticket D required a decision that the written spec did not
+supply. Recording them here rather than in a migration docstring, because a
+docstring is where a decision gets *described*, not where it gets *made*.
 
 **D(i) — justification is required to overturn, not to agree.** Enforced in
 `_validate_override_input`, for `edit` and `reject` only, on
@@ -1675,6 +1675,56 @@ decision gets *described*, not where it gets *made*.
   AI's own rationale, so a reviewer can satisfy this rule with the machine's
   words unedited. Nothing server-side can detect that. The honest claim is "a
   non-empty justification is now a guarantee", not "the reasoning is".
+
+**D(ii) — "append-only" for `ai_decision_log` means append-only except the
+retention prune.** §15 KER-405 #2 asks for "the same trigger pair" as
+`audit_log`. That is a contradiction and was not implemented literally:
+`audit_log` blocks every DELETE because the human ledger is kept forever, while
+§13 KER-203 AC-4 requires a nightly job that deletes rows past 180 days. Copied
+verbatim, the prune would raise for every tenant on every run.
+
+The ratified shape:
+
+| Operation | Guard |
+|---|---|
+| INSERT | Allowed — and `created_at` is stamped server-side |
+| UPDATE | Blocked always, at any age |
+| TRUNCATE | Blocked always (statement trigger — row triggers do not fire) |
+| DELETE | Blocked unless `created_at` is strictly older than the window |
+
+The age check lives in the trigger rather than in a flag the deleting session
+sets, because a switch the deleter turns on itself enforces nothing — and a
+buggy prune with a wrong cutoff would then destroy recent records instead of
+failing. `INSERT` is guarded too because `created_at` was client-settable: the
+window could otherwise be walked around in two statements, by inserting a
+backdated row and deleting it as expired.
+
+The 180 is hardcoded in migration 023 and must match
+`AI_DECISION_LOG_RETENTION_DAYS`;
+`test_sql_retention_window_matches_the_python_constant` fails on drift.
+
+**The prune's cutoff moved from Python's clock to the database's** — a
+correctness requirement, not tidying, and the second letter-versus-spirit call
+in this ticket. `interval '180 days'` is a *calendar* interval and Python's
+`timedelta(days=180)` is an *absolute* one; under this deployment's
+Europe/Berlin session timezone the two boundaries sit an hour apart for roughly
+five months of the year, in the direction that makes the prune select rows the
+trigger protects. A `BEFORE DELETE` trigger aborts the entire statement, so one
+row in that band would fail a whole tenant's prune. Shipping the trigger
+against the old client-side cutoff would have worked on a dev box and started
+failing intermittently in November. Both sides now evaluate the same
+expression, which makes them exact complements rather than merely close.
+
+**How this may be described.** Row and statement triggers reject UPDATE,
+TRUNCATE, and DELETE of rows inside the retention window, so accidental and
+application-path mutation fail closed. This is **not** tamper-evidence: the
+application still connects as the table owner (ticket C2 held) and can disable
+the triggers, and unlike `audit_log` there is no hash chain — §13 KER-203
+decision 2 deliberately did not give this table one. "Database-enforced" and
+"tamper-resistant" are both overclaims until C2 lands, and even then a stronger
+word needs a second layer this table does not have. The §15 approved demo
+sentence covers **human** decisions and is unchanged; it must not be extended
+to the AI log.
 
 ### Backlog (HIGHER PRIORITY — resolve before the first non-dev deployment) — the docs switch and the dashboard switch should be separable
 

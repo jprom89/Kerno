@@ -74,19 +74,34 @@ def _run_mapping(conn, tenant_id):
 
 
 def _insert_decision_row(conn, tenant_id, control_id: str, created_at: datetime) -> str:
-    """Plant one ai_decision_log row with an explicit created_at (for prune tests)."""
+    """Plant one ai_decision_log row with an explicit created_at (for prune tests).
+
+    Migration 023 stamps created_at server-side on every insert, precisely so a
+    caller cannot backdate a row past the retention floor and delete it on the
+    next statement. A test that needs an aged row therefore has to switch that
+    trigger off deliberately — which is the intended cost, and the reason this
+    is the only place in the suite that does it.
+    """
     correlation_id = str(uuid.uuid4())
     conn.execute(
-        """
-        INSERT INTO ai_decision_log
-            (correlation_id, tenant_id, control_id, evidence_ids,
-             input_snapshot_hash, output_status, confidence_score,
-             rationale_extract, model_version, created_at)
-        VALUES (%s, %s, %s, %s, %s, 'met', 0.9, 'planted', %s, %s)
-        """,
-        [correlation_id, str(tenant_id), control_id, ["rec-x"],
-         "c" * 64, _MODEL_ID, created_at],
+        "ALTER TABLE ai_decision_log DISABLE TRIGGER ai_decision_log_server_timestamp"
     )
+    try:
+        conn.execute(
+            """
+            INSERT INTO ai_decision_log
+                (correlation_id, tenant_id, control_id, evidence_ids,
+                 input_snapshot_hash, output_status, confidence_score,
+                 rationale_extract, model_version, created_at)
+            VALUES (%s, %s, %s, %s, %s, 'met', 0.9, 'planted', %s, %s)
+            """,
+            [correlation_id, str(tenant_id), control_id, ["rec-x"],
+             "c" * 64, _MODEL_ID, created_at],
+        )
+    finally:
+        conn.execute(
+            "ALTER TABLE ai_decision_log ENABLE TRIGGER ai_decision_log_server_timestamp"
+        )
     return correlation_id
 
 
@@ -94,8 +109,13 @@ def _insert_decision_row(conn, tenant_id, control_id: str, created_at: datetime)
 def ker203_clean_log(db_connection, tenant_a_id):
     """Ensure Tenant A starts and ends with no ai_decision_log rows.
 
-    The shared conftest teardown predates migration 020 and does not know this
-    table, so this fixture owns the cleanup for both sides of the test.
+    The shared conftest teardown covers this table, but only between tests; a
+    test that plants rows and then asserts on a query needs a clean slate at
+    both ends of its own run.
+
+    Rows seeded by a test are inside the retention window, so migration 023's
+    guard refuses to delete them. Lifting it for the wipe is the same exception
+    the conftest teardown makes, for the same reason.
     """
     def _wipe():
         with db_connection.transaction():
@@ -103,8 +123,16 @@ def ker203_clean_log(db_connection, tenant_a_id):
                 "SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)]
             )
             db_connection.execute(
-                "DELETE FROM ai_decision_log WHERE tenant_id = %s", [str(tenant_a_id)]
+                "ALTER TABLE ai_decision_log DISABLE TRIGGER ai_decision_log_retain_window"
             )
+            try:
+                db_connection.execute(
+                    "DELETE FROM ai_decision_log WHERE tenant_id = %s", [str(tenant_a_id)]
+                )
+            finally:
+                db_connection.execute(
+                    "ALTER TABLE ai_decision_log ENABLE TRIGGER ai_decision_log_retain_window"
+                )
 
     _wipe()
     yield

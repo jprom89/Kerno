@@ -43,7 +43,7 @@ import dataclasses
 import hashlib
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from config.constants import AI_DECISION_LOG_RETENTION_DAYS
 from src.db.rls import set_tenant_context
@@ -83,10 +83,19 @@ _ORDER_NEWEST_FIRST = " ORDER BY created_at DESC"
 
 # RETURNING lets the caller count deletions through the codebase's cursor
 # wrappers, which expose fetchall() but not rowcount.
+# The cutoff is computed by the database, not by Python, and that is load-bearing
+# rather than tidy. Migration 023's retention trigger blocks any delete where
+# created_at >= now() - interval '180 days'. SQL intervals are calendar-based and
+# Python's timedelta is absolute, so under a non-UTC session timezone the two
+# boundaries drift apart by an hour for months at a time — in the direction that
+# makes this statement select rows the trigger protects. A BEFORE DELETE trigger
+# aborts the entire statement, so one row in that band fails the whole tenant's
+# prune. Using the same expression on both sides makes this WHERE clause the exact
+# complement of the trigger's WHEN clause, so they cannot disagree.
 _DELETE_EXPIRED_LOGS = """
 DELETE FROM ai_decision_log
 WHERE tenant_id = :tenant_id
-  AND created_at < :retention_cutoff
+  AND created_at < now() - make_interval(days => :retention_days)
 RETURNING correlation_id
 """
 
@@ -171,19 +180,19 @@ def query_decision_logs(
 def prune_old_logs(conn, tenant_id) -> int:
     """Delete the tenant's decision records older than the retention window; return the count.
 
-    The window is AI_DECISION_LOG_RETENTION_DAYS (config/constants.py). Rows
-    inside the window are untouched — the EU AI Act Article 19 duty is to
-    RETAIN at least the window, so pruning must never reach into it. Sets
-    tenant context first; raises ``TenantContextMissingError`` on a missing or
-    invalid tenant. Runs on the caller's transaction.
+    The window is AI_DECISION_LOG_RETENTION_DAYS (config/constants.py), and the
+    cutoff is evaluated by the database so it matches migration 023's retention
+    trigger exactly. Rows inside the window are untouched — the EU AI Act
+    Article 19 duty is to RETAIN at least the window, so pruning must never
+    reach into it, and since migration 023 the database refuses rather than
+    trusting this function to behave. Sets tenant context first; raises
+    ``TenantContextMissingError`` on a missing or invalid tenant. Runs on the
+    caller's transaction.
     """
     set_tenant_context(conn, tenant_id)
-    retention_cutoff = datetime.now(timezone.utc) - timedelta(
-        days=AI_DECISION_LOG_RETENTION_DAYS
-    )
     deleted_rows = conn.execute(
         _DELETE_EXPIRED_LOGS,
-        {"tenant_id": str(tenant_id), "retention_cutoff": retention_cutoff},
+        {"tenant_id": str(tenant_id), "retention_days": AI_DECISION_LOG_RETENTION_DAYS},
     ).fetchall()
     return len(deleted_rows)
 

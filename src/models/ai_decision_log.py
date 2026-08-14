@@ -10,10 +10,15 @@ version produced it. Regulators (EU AI Act Articles 12/19/26) and enterprise
 buyers can then reconstruct what the machine decided and why, for at least
 AI_DECISION_LOG_RETENTION_DAYS (180 days).
 
-This is NOT the KER-107 human-decision ledger: it is append-only in practice
-but not hash-chained, and it is pruned past the retention window. GDPR
-alignment: only input_snapshot_hash is stored — never the raw snapshot — so no
-personal data enters this table.
+This is NOT the KER-107 human-decision ledger. Since migration 023, row and
+statement triggers reject UPDATE, TRUNCATE, and DELETE of rows inside the
+retention window, so accidental and application-path mutation fail closed;
+pruning rows older than AI_DECISION_LOG_RETENTION_DAYS is the only permitted
+delete. That is not tamper-evidence — the application connects as the table
+owner (§17 ticket C2 is held) and can disable the triggers, and unlike
+audit_log there is no hash chain behind them. GDPR alignment: only
+input_snapshot_hash is stored — never the raw snapshot — so no personal data
+enters this table.
 
 control_id and evidence_ids are TEXT refs, matching the recommendations table
 this log describes (column-type correction recorded in migration 020's

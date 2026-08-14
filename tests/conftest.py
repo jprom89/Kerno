@@ -315,9 +315,12 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     the foreign key constraints. Each DELETE is scoped to both test tenant IDs
     so only rows owned by this fixture are removed.
 
-    audit_log is append-only (KER-107): its trigger must be disabled for the
-    cleanup DELETE and re-enabled immediately after. Both ALTERs run inside the
-    caller's transaction, so a failed teardown rolls back to trigger-enabled.
+    Two tables refuse deletes and need their guards lifted for the cleanup.
+    audit_log is append-only outright (KER-107). ai_decision_log refuses deletes
+    only for rows inside the retention window (migration 023) — and every row a
+    test seeds is by definition inside it, so the window guard has to come off
+    too. All four ALTERs run inside the caller's transaction, so a failed
+    teardown rolls back to triggers-enabled.
 
     FORCE RLS (migration 018) means even the owner role only sees one tenant's
     rows at a time, so the cleanup iterates the tenants and deletes each
@@ -329,6 +332,9 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
     identity is inherited from the record it points at.
     """
     conn.execute("ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only")
+    conn.execute(
+        "ALTER TABLE ai_decision_log DISABLE TRIGGER ai_decision_log_retain_window"
+    )
     for tenant_id in (TENANT_A_ID, TENANT_B_ID):
         conn.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_id)])
         conn.execute(
@@ -348,6 +354,9 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
                 f"DELETE FROM {table} WHERE tenant_id = %s",
                 [str(tenant_id)],
             )
+    conn.execute(
+        "ALTER TABLE ai_decision_log ENABLE TRIGGER ai_decision_log_retain_window"
+    )
     conn.execute("ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only")
     conn.execute(
         "DELETE FROM tenants WHERE tenant_id IN (%s, %s)",
