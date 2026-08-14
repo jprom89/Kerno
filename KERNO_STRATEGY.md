@@ -1,6 +1,12 @@
 # Kerno Master Strategy Document
 ## 7-Dive Research Summary · Gap Register · Sprint Roadmap · Next Steps
 
+**Status (13 August 2026): research memo — not a ship plan, not a sales
+script, not implementation authority.** Build order and product claims live
+in `CLAUDE.md` §0 and `NOW.md`. Part F sprint dates and Part G checkmarks
+below are aspirational; they do not describe the running system. Do not
+open coding work from this file.
+
 ***
 
 ## Part A: What All 7 Dives Confirmed — The Verified Foundation
@@ -38,7 +44,7 @@ The EU regulatory wave of 2024–2027 is the single largest forced compliance sp
 
 2. **Member-state-specific regulatory intelligence.** Germany's NIS2UmsuCG, France's ANSSI Cyber France Reference Framework, Netherlands DNB/AFM enforcement posture — 22 EU states have divergent implementation details[^25][^26][^27]. Vanta ships one generic NIS2 overlay. Kerno ships country-specific evidence formats, deadline calendars, and authority submission formats. Non-replicable within 2–3 years of competitor investment.
 
-3. **Accumulated compliance intelligence as data moat.** Override decisions, confidence scores, recommendation history, and evidence links accumulate as tenant-specific institutional memory[^28][^29]. EU Data Act (effective September 12, 2025) requires all SaaS vendors to enable data portability[^30][^31] — but a Kerno export showing 36 months of override history and DORA Register builds is functionally non-migratable without Kerno's models. The moat grows with tenure.
+3. **Accumulated compliance intelligence is a *future* moat, not a live one.** Override decisions, scores, recommendation history, and evidence links can accumulate as tenant-specific memory[^28][^29]. That is not a trained model, and it is not injected into generation today: the production engine is a deterministic evidence scorer plus LLM prose, and retrieval/bias has no production caller. EU Data Act portability still applies[^30][^31]. Switching cost *once the loop is used for months* would be the named human decisions and register contents — not "Kerno's models." Do not use that phrase in investor or customer material until retrieval is actually wired (KER-404) and trained on real overrides.
 
 ***
 
@@ -321,18 +327,25 @@ Deliverable: Full growth engine in place. Partner channel generating deals. This
 
 **Minimum Viable Product = End of Sprint 6 (Week 12)**
 
-A Kerno MVP that generates real customer value and revenue has exactly these features:
+A Kerno MVP that generates real customer value and revenue was *planned* as
+the list below. **Honest status as of 13 August 2026 — these are not done
+just because they have a checkmark in older drafts:**
 
-1. ✅ NIS2 control library with evidence linking and explainable recommendations (Docs 11–13)
-2. ✅ DORA Register of Information (live register, xBRL-CSV export, 116-check validator)
-3. ✅ DORA Incident Management (24h/72h/1-month workflow, multi-jurisdiction routing)
-4. ✅ CRA vulnerability reporting (Art. 14 format, SRP API integration)
-5. ✅ Germany/BSI member-state module (29,500 entity market)
-6. ✅ Netherlands/DNB module (first enforcement actions live)
-7. ✅ France/ANSSI module (law expected mid-2026)
-8. ✅ MSP operator tier (multi-tenant, per-managed-entity billing)
-9. ✅ EU data sovereignty architecture (EU KMS, EU AI inference, zero CLOUD Act exposure)
-10. ✅ Zero-retention Jira connector (bi-directional, NIS2 supply chain compliant)
+1. **Partial.** NIS2 control library, evidence linking, and a hybrid
+   recommendation engine exist. Generation has no UI (KER-402). Retrieval
+   is not in the production path.
+2. **Partial.** DORA live register + ~20 local validation rules exist.
+   Not xBRL-CSV. Not 116 ESA checks. No authority portal upload.
+3. **Not built.** DORA incident management (24h/72h/1-month).
+4. **Not built.** CRA vulnerability reporting / SRP.
+5. **Not built.** Germany/BSI member-state module.
+6. **Not built.** Netherlands/DNB module.
+7. **Not built.** France/ANSSI module.
+8. **Not built.** MSP operator tier / per-entity billing.
+9. **Intent, not productised.** EU-hosted inference (Mistral) is a code
+   choice; entity, KMS, and deploy posture are not proven in this repo.
+10. **Partial.** Jira issue *create* exists (global env token). Not
+    bi-directional, not zero-retention, not a close webhook.
 
 **What is NOT in the MVP (and should not be):**
 - AI Act full module (Sprint 7 — not needed until Dec 2027 for Annex III)

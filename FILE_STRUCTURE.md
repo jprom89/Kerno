@@ -1,7 +1,21 @@
 # FILE_STRUCTURE.md — Canonical Directory Tree
 
-**Status:** Baseline v1.1 (Gap-Fixed)
-**Rule:** Every file has exactly one correct home. Update this document before creating any new top-level directory.
+**Status:** Historical map — known-stale as of 13 August 2026 (KER-406 note;
+constitution §4). Do not treat this file as a gate. The live tree under
+`src/`, `frontend/`, `config/`, `migrations/`, and `tests/` wins. Full
+reconciliation is backlog, not current work.
+
+**Rule:** Update this document before creating any **new top-level**
+directory. Missing entries below (for example `api/routes/` vs the real
+`api/routers/`, `embedding_service.py` which has never been built,
+`health.py`, `docker-compose.yml`, root `README.md`) are not a reason to
+stop a ticket. `NOW.md` is the implementation mandate.
+
+**Known false entries (do not implement from them):**
+- `src/services/embedding_service.py` — NOT BUILT; `context_records.embedding` is never populated
+- `src/api/routers/health.py` / `api/routes/` — the real HTTP layer is `src/api/routers/`
+- `src/integrations/jira/` — Jira lives in `src/services/jira_client.py`
+- Root `README.md` and `docker-compose.yml` — listed here; not present in the tree
 
 ---
 
@@ -10,7 +24,8 @@
 ```
 kerno/
 ├── CLAUDE.md                          ← Constitution — read first, every session
-├── FILE_STRUCTURE.md                  ← This file — canonical directory map
+├── NOW.md                             ← Current mandate (§0) — what to build next
+├── FILE_STRUCTURE.md                  ← This file — historical map (stale)
 ├── LEARNING_PIPELINE_SPEC.md          ← Document #8: Core learning pipeline architecture
 ├── PROMPT_doc8_learning_pipeline.md   ← Build instructions for Document #8 implementation
 ├── CLAUDE_STARTER_PROMPT.md           ← Ready-to-paste Claude session opener

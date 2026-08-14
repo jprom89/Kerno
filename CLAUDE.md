@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.1 | Updated: 2026-07-28 | Changes: Added §16 Evidence Intake (KER-406/407); orphan fix shipped 7e6fc3c; KER-405 gap #5 logged -->
+<!-- Version: 2.4 | Updated: 2026-08-14 | Changes: hygiene C1/A/B/D landed; next is DORA UI + register KER-107 -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -8,19 +8,48 @@ a convenience argument. If a rule creates friction, the friction is intentional.
 
 ---
 
+## §0 — Current mandate (read before §1–§16)
+
+**Implementation priority lives in `NOW.md`.** That file is part of this
+constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
+`FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
+or §6.
+
+As of 14 August 2026 Kerno is an EU **system of record** (live DORA
+register + named-human control decisions), not an AI GRC coverage
+dashboard. Hygiene C1/A/B/D has landed. Next: **DORA register/submissions
+in Next.js**, including a KER-107 ledger write on register create/update
+in the same effort, then one filing download. Do not add coverage
+features, RAG, CRA, incidents, country packs, or MSP. See `NOW.md`.
+
+`KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
+Part G are aspirational — those features are not built. Do not implement
+from that document.
+
+Demo and outreach language: use only the approved sentence in §15. Do not
+describe a live RAG or learning loop. `generate_recommendation()` does not
+call retrieval; `context_records.embedding` is never populated.
+
+---
+
 ## §1 — Project Identity
 
 **Product:** Kerno Compliance Copilot
-**What it does:** Automates the mapping of a company's technical controls
-to EU regulatory frameworks (NIS2, DORA, AI Act, CRA) using a
-retrieval-augmented generation pipeline personalised per tenant via
-human-in-the-loop override feedback.
+**What it does:** Holds an EU operational-resilience **system of record** —
+starting with a live DORA Register of Information and named-human decisions
+on NIS2 controls, each tied to evidence, a reproducible score, and a
+tamper-evident ledger. A hybrid engine (deterministic scorer + LLM prose)
+helps a human update that record; it is not the product.
 
 **Who uses it:** Compliance engineers, vCISOs, and fractional CTOs at
 mid-market European technology companies.
 
-**What it is not:** A fine-tuning system. Kerno never trains or modifies
-a base LLM. All personalisation happens at the retrieval layer.
+**What it is not:** A fine-tuning system. Kerno never trains or modifies a
+base LLM. It is also not, today, a retrieval-augmented or
+embedding-personalised system. The retrieval/bias machinery exists and is
+tested; it has no production caller. Do not describe it as live. Reserved
+for KER-404 only after the register lives in the product UI and humans are
+actually signing decisions.
 
 ---
 
@@ -170,9 +199,15 @@ wherever database access occurs. It must never be caught silently.
 
 ## §4 — File Naming and Structure
 
-Every file has exactly one home. Consult FILE_STRUCTURE.md before
-creating any new file. If a file does not appear in FILE_STRUCTURE.md,
-stop and ask where it belongs before creating it.
+Every file has exactly one home.
+
+`FILE_STRUCTURE.md` is a historical map and is **known-stale** (recorded
+during KER-406; reconciliation is backlog, not a gate). Do not block work
+because a path is missing from it. The live tree under `src/`, `frontend/`,
+`config/`, `migrations/`, and `tests/` is authoritative for where code lives.
+
+When creating a **new top-level** directory, still update `FILE_STRUCTURE.md`
+first. `NOW.md` is an approved top-level file (the §0 mandate).
 
 Source files: `src/`
 Configuration and constants: `config/`

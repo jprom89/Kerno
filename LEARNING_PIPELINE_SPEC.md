@@ -1,17 +1,25 @@
 # LEARNING_PIPELINE_SPEC.md — Document #8: Core Learning Pipeline & Data Isolation Specification
 
-**Document Status:** Baseline v1.1 (Gap-Fixed)
+**Document Status:** Spec for a designed subsystem — **not the production
+recommendation path** as of 13 August 2026.
 **Target Framework:** Kerno Compliance Copilot Core Engine
-**Classification:** Internal Technical Spec / Investor Due Diligence Artifact
-**Last updated:** 2026-06-18
+**Classification:** Internal Technical Spec. Not a sales or investor claim
+that the pipeline is live.
+**Last updated:** 2026-08-13 (status correction; body otherwise v1.1)
+
+Production generation is `recommendation_service.generate_recommendation`
+(deterministic scorer + LLM rationale). This document remains the spec for
+the retrieval/bias subsystem if/when KER-404 wires it. Present-tense
+language below describes the *designed* behaviour of that subsystem, not
+what `POST /api/v1/recommendations/generate` does today.
 
 ---
 
 ## 1. Executive Summary
 
-Kerno's primary competitive advantage is a compounding data moat driven by Human-in-the-Loop (HITL) override data (KER-106). This platform does not perform traditional, resource-intensive, or legally problematic fine-tuning on base Large Language Models. Instead, it uses an Override-Weighted Retrieval-Augmented Generation (RAG) pipeline.
+Kerno does not fine-tune base Large Language Models. The *designed* personalisation path is an Override-Weighted Retrieval-Augmented Generation (RAG) pipeline: human overrides (KER-106) would adjust a per-tenant retrieval bias, and similarity search would use that bias at query time.
 
-By dynamically adjusting vector retrieval parameters based on human compliance engineer overrides, the system calibrates its recommendations to each tenant's specific risk appetite, infrastructure architecture, and corporate terminology. This calibration is tenant-specific and makes switching cost to a competitor functionally prohibitive after the calibration threshold is crossed.
+**As of 13 August 2026 that path is not live.** Overrides are stored and nightly bias recalculation can write `retrieval_bias`. Nothing in the production generate path calls `get_similar_controls()` or `retrieve_similar_records()`. Evidence upload does not write embeddings (`context_records.embedding` stays NULL). Switching cost and "calibrated recommendations" in this document are conditional on wiring retrieval into generation (KER-404) and on real override volume. Do not quote this section to investors as a description of the running product.
 
 ---
 
@@ -162,7 +170,7 @@ Constants are defined in `config/constants.py`. Spec notation must never appear 
 
 ### 5.3 Query Execution with Bias Injection
 
-When the RAG pipeline runs a similarity query, the tenant's `retrieval_bias_vector` is injected to produce calibrated rankings:
+When (and only when) the RAG pipeline runs a similarity query, the tenant's `retrieval_bias_vector` is injected to produce calibrated rankings. Implemented in `retrieval_service.py`. **No production caller as of 13 August 2026** — unit and KER-201 integration tests only.
 
 ```sql
 -- Calibrated similarity query with tenant bias injection
@@ -181,6 +189,8 @@ LIMIT 5;
 
 ## 6. The Commercial Switching-Cost Moat
 
+**Investor-facing and conditional.** The mechanism below is real *if* overrides flow into bias *and* generation consumes that ranking. KER-201 closed the write side of the loop. Generation still scores manually linked evidence and does not consume retrieval. Treat §6 as a thesis, not a current metric.
+
 ### 6.1 Calibration Timeline
 
 A mid-market technology vendor with a typical cloud surface topology maps 50–150 regulatory controls. Meaningful calibration requires 200–500 individual manual confirmation or override events across the developer stack. This baseline is typically established within 90–180 days of active onboarding.
@@ -193,7 +203,7 @@ Once 200+ overrides are captured, the retrieval layer targets a recommendation a
 
 If a tenant migrates to a generic competitor, they abandon their calibrated `retrieval_bias_vector`. Their compliance teams return to a generic baseline and face hundreds of manual alert classifications from scratch. This operational friction is the mechanism that minimises churn.
 
-For investor due diligence: this moat is real only if (a) the feedback loop closes — overrides must actually flow into the nightly recalculation — and (b) the bias vector improves measurably over the first 200 overrides. KER-114 is the sprint story that proves the loop closes.
+For investor due diligence: this moat is real only if (a) overrides flow into nightly recalculation (KER-201 does this), (b) generation *uses* the biased ranking (it does not; that is KER-404), and (c) the bias vector improves over the first 200 real overrides. Do not present §6 as closed.
 
 ---
 
