@@ -1550,7 +1550,7 @@ parked so it is not lost, not because it has been assessed and cleared.
 | C1 | Require the organisation at login — tenant collision (KER-408) | ✅ done, commit ed3f3f2 |
 | A | require_role() on six ungated mutating/sensitive routes | ✅ done, commit 7b6738b |
 | B | Lock down the legacy dashboard and OpenAPI docs outside dev | ✅ done |
-| D | Server-side justification_text enforcement + ai_decision_log append-only triggers | not started |
+| D | Server-side justification_text enforcement + ai_decision_log append-only triggers | part (i) done; (ii) in progress |
 | C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | **held — its own PR, needs a real DB role** |
 
 ### Ticket A — authorisation matrix (approved)
@@ -1644,6 +1644,37 @@ side-panel surface lives. Outside development those have no UI at all. The
 routers stay live and RBAC-gated; rebuilding the UI was explicitly out of
 scope. Confirmed with the product owner that no active or near-term
 conversation needs them outside dev.
+
+### Ticket D — decisions ratified before implementation (13–14 August 2026)
+
+Ticket D required decisions the written spec did not supply. Recording them
+here rather than in a migration docstring, because a docstring is where a
+decision gets *described*, not where it gets *made*.
+
+**D(i) — justification is required to overturn, not to agree.** Enforced in
+`_validate_override_input`, for `edit` and `reject` only, on
+`not (justification_text or "").strip()`. Three points that were not obvious:
+
+- The bar is whitespace, not null. The server previously accepted `None`, `""`
+  and `"   "` identically, and a blank string is exactly as useless to an
+  auditor as a missing one. The stored value is now the stripped value, so what
+  is kept is what validation judged.
+- The check sits *after* the `corrected_control_id` check, deliberately. An
+  existing test submits an edit with both fields missing and asserts on the
+  `corrected_control_id` message; putting justification first would silently
+  change which error a caller sees.
+- Enforced in the service, not the Pydantic schema. The rule is conditional on
+  `action_type`, so a schema version would be cross-field validation living in
+  the transport layer, split from its identical sibling rule. It would also
+  return `detail` as a list of dicts rather than a string, which every existing
+  422 test and the frontend's error toast both assume is a string.
+- `approve` stays exempt (§14 KER-303 AC-4). **Named honestly:** "a named human
+  approved this and gave no reason" is a real gap against the §15 claim's
+  spirit, and closing it is a frontend story, not a server one-liner.
+- Also worth naming: the dashboard pre-fills the justification box with the
+  AI's own rationale, so a reviewer can satisfy this rule with the machine's
+  words unedited. Nothing server-side can detect that. The honest claim is "a
+  non-empty justification is now a guarantee", not "the reasoning is".
 
 ### Backlog (HIGHER PRIORITY — resolve before the first non-dev deployment) — the docs switch and the dashboard switch should be separable
 

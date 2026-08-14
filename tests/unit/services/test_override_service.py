@@ -218,6 +218,49 @@ def test_edit_without_corrected_control_id_raises_value_error() -> None:
     assert len(spy.calls) == 0
 
 
+@pytest.mark.parametrize("action_type", ["edit", "reject"])
+@pytest.mark.parametrize("blank", [None, "", "   ", "\n\t "])
+def test_edit_and_reject_require_a_justification(action_type: str, blank) -> None:
+    spy = _SpyConn()
+    with pytest.raises(ValueError, match="justification_text"):
+        capture_override(
+            _FakeSession(),
+            spy,
+            _make_input(
+                action_type=action_type,
+                corrected_control_id="ctrl-002",
+                justification_text=blank,
+            ),
+        )
+    assert len(spy.calls) == 0
+
+
+def test_approve_still_needs_no_justification() -> None:
+    # §14 KER-303 AC-4. The Approve button sends justification_text: null, and
+    # agreeing with the recommendation adds nothing the reviewer id and
+    # timestamp do not already record.
+    spy = _SpyConn()
+    capture_override(
+        _FakeSession(), spy, _make_input(action_type="approve", justification_text=None)
+    )
+    assert len(spy.calls) > 0
+
+
+def test_justification_is_stored_stripped() -> None:
+    spy = _SpyConn()
+    capture_override(
+        _FakeSession(),
+        spy,
+        _make_input(
+            action_type="edit",
+            corrected_control_id="ctrl-002",
+            justification_text="  the evidence maps to 002  ",
+        ),
+    )
+    insert = next(params for _, params in spy.calls if "justification_text" in params)
+    assert insert["justification_text"] == "the evidence maps to 002"
+
+
 def test_none_session_raises_tenant_context_missing_error() -> None:
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):

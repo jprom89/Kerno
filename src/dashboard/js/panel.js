@@ -127,6 +127,13 @@ async function _submitOverride() {
         return;
     }
     const justification = document.getElementById('justification').value.trim();
+    // The server requires a reason to overturn a recommendation. Checked here
+    // too so the reviewer gets the actual problem rather than the generic 422
+    // message below, which blames the corrected control ID.
+    if (ACTIONS_NEEDING_CORRECTION.includes(_selectedAction) && !justification) {
+        _showError(`A justification is required to ${_selectedAction}.`);
+        return;
+    }
     const body = {
         reviewer_role: document.getElementById('reviewer-role').value,
         action_type: _selectedAction,

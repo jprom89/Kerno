@@ -137,3 +137,57 @@ def test_auditor_can_query_by_time_range(db_connection, tenant_a_id):
         )
     assert len(entries) == 1
     assert entries[0].control_id == "ker107-q-time-2"
+
+
+@pytest.mark.integration
+def test_blank_justification_on_edit_writes_nothing_at_all(db_connection, tenant_a_id):
+    # §17 Ticket D part (i). The rule rejects before any SQL runs, so the point
+    # of proving it live is the absence: no override row, and no ledger entry
+    # either. A half-written decision is worse than a refused one.
+    blank_justification_edit = OverrideInput(
+        reviewer_id=_ACTOR_ONE,
+        reviewer_role="vciso",
+        action_type="edit",
+        original_control_id="ker107-blank-justification",
+        corrected_control_id="ctrl-002",
+        justification_text="   ",
+    )
+    with db_connection.transaction():
+        with pytest.raises(ValueError, match="justification_text"):
+            capture_override(
+                _FakeAuthSession(tenant_a_id), db_connection, blank_justification_edit
+            )
+    with db_connection.transaction():
+        db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
+        overrides = db_connection.execute(
+            "SELECT override_id FROM overrides WHERE original_control_id = %s",
+            ["ker107-blank-justification"],
+        ).fetchall()
+        entries = get_entries_by_control(
+            db_connection, tenant_a_id, "ker107-blank-justification"
+        )
+    assert overrides == []
+    assert entries == []
+
+
+@pytest.mark.integration
+def test_edit_with_a_real_justification_is_stored_stripped(db_connection, tenant_a_id):
+    justified_edit = OverrideInput(
+        reviewer_id=_ACTOR_ONE,
+        reviewer_role="vciso",
+        action_type="edit",
+        original_control_id="ker107-justified-edit",
+        corrected_control_id="ctrl-002",
+        justification_text="  Evidence supports control 002, not 001.  ",
+    )
+    with db_connection.transaction():
+        override = capture_override(
+            _FakeAuthSession(tenant_a_id), db_connection, justified_edit
+        )
+    with db_connection.transaction():
+        db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
+        row = db_connection.execute(
+            "SELECT justification_text FROM overrides WHERE override_id = %s",
+            [str(override.override_id)],
+        ).fetchone()
+    assert row[0] == "Evidence supports control 002, not 001."

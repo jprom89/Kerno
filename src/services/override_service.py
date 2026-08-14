@@ -137,8 +137,8 @@ def _validate_override_input(override_input: OverrideInput) -> None:
     """Reject override inputs that are structurally invalid before touching the DB.
 
     Checks that required fields are present and that action-specific constraints
-    hold (e.g. an edit or reject must name a corrected control). Raises
-    ``ValueError`` with a plain-English message on any violation.
+    hold (e.g. an edit or reject must name a corrected control and say why).
+    Raises ``ValueError`` with a plain-English message on any violation.
     """
     valid_actions = {"approve", "edit", "reject"}
     if override_input.action_type not in valid_actions:
@@ -150,6 +150,20 @@ def _validate_override_input(override_input: OverrideInput) -> None:
         if not override_input.corrected_control_id:
             raise ValueError(
                 "corrected_control_id is required when action_type is "
+                f"'{override_input.action_type}'."
+            )
+        # Overturning the machine requires a reason. The dashboard has always
+        # made this field mandatory, but the server accepted None, "" and "   "
+        # identically, so "why" was a habit of one client rather than a
+        # property of the record. Tested on whitespace, not on None: the
+        # justification is stored as text, and a blank string is exactly as
+        # useless to an auditor as a missing one. Approve is deliberately
+        # exempt (§14 KER-303 AC-4) — agreeing with the recommendation adds no
+        # information beyond the reviewer's name and the timestamp, both of
+        # which are already recorded.
+        if not (override_input.justification_text or "").strip():
+            raise ValueError(
+                "justification_text is required when action_type is "
                 f"'{override_input.action_type}'."
             )
     if not override_input.original_control_id:
@@ -178,11 +192,12 @@ def _build_override_record(
     Generates the override_id in Python (not via server_default) so the audit log
     can reference it before the record is committed — avoiding a RETURNING clause
     round-trip. Anonymises justification_text before storing it, stripping any
-    internal identifiers that must not reach the database. Does not write to the
-    database — that is the caller's responsibility.
+    internal identifiers that must not reach the database, and trims surrounding
+    whitespace so the stored text is what validation actually judged. Does not
+    write to the database — that is the caller's responsibility.
     """
     anonymised_justification = (
-        anonymise(override_input.justification_text)
+        anonymise(override_input.justification_text.strip())
         if override_input.justification_text is not None
         else None
     )

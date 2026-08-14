@@ -93,6 +93,7 @@ def test_edit_action_with_corrected_control_id_returns_201():
                 "action_type": "edit",
                 "original_control_id": "ctrl-001",
                 "corrected_control_id": "ctrl-002",
+                "justification_text": "Control 002 is the accurate mapping for this evidence.",
             },
         )
     assert response.status_code == 201
@@ -123,6 +124,22 @@ def test_reject_without_corrected_control_id_returns_422():
         )
     assert response.status_code == 422
     assert "corrected_control_id" in response.json()["detail"]
+
+
+def test_edit_without_justification_returns_422():
+    error = ValueError("justification_text is required when action_type is 'edit'.")
+    with patch("src.api.routers.overrides.capture_override", side_effect=error):
+        client = TestClient(_app_with_overrides())
+        response = client.post(
+            "/api/v1/overrides",
+            json={
+                "action_type": "edit",
+                "original_control_id": "ctrl-001",
+                "corrected_control_id": "ctrl-002",
+            },
+        )
+    assert response.status_code == 422
+    assert "justification_text" in response.json()["detail"]
 
 
 def test_invalid_action_type_returns_422():
