@@ -1,4 +1,4 @@
-# NOW.md — Current mandate (13 August 2026)
+# NOW.md — Current mandate (14 August 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
 outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
@@ -27,29 +27,31 @@ hole in `frontend/`. Do not replace it with more NIS2 cards.
 
 One UI: Next.js `frontend/`.
 
-**Hygiene (in flight — do not duplicate):** C1, A, B, D. No new product
-epics until those have landed.
+**Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
+B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 
-**Then, in this order — stop if a story is really “nicer GRC”:**
+**Next session — fill the hole Ticket B opened. In scope together:**
 
-1. **Thin wire only:** generate button (KER-402) on the existing
-   recommendations page so a human can produce something to sign. No new
-   engine, no batch-analyse-all, no RAG. Cap the ticket.
-2. **HTTPS + `ALLOWED_ORIGINS`** so a design partner can log in.
-3. **The hole — DORA in the real UI:** register list/detail/create/edit and
-   submission windows/runs in `frontend/`, calling the existing
-   `/api/v1/register` and `/api/v1/submissions` APIs. This replaces the
-   legacy HTML B is removing from production. Do not rebuild `src/dashboard/`.
-4. **One filing increment:** make a register export that could be handed to
-   an authority (the xBRL-CSV-ready package that already exists, as a
-   download from the Next.js register). Do **not** take on 116 ESA checks,
-   portal upload, or BaFin/DNB integrations in the same ticket.
-5. **Partner loop:** a tenant’s own vendors and evidence, without a developer
-   in the database.
+1. **DORA register + submissions in `frontend/`** — list/detail/create/edit
+   and windows/runs, existing `/api/v1/register` and `/api/v1/submissions`
+   APIs only. Do not rebuild `src/dashboard/`.
+2. **KER-107 on register writes in the same effort** — `create_register_entry`
+   and `update_register_entry` append a ledger entry in the same transaction
+   (JWT `user_id`, `before_state` on PATCH). Do not ship a UI that multiplies
+   unledgered regulatory rows. Check `POST /submissions/runs` the same way.
+3. **Map unknown `submission_window_id` to 404** (`EntryNotFoundError`), not
+   500 — it sits on the same path; do not leave operators a correlation ID.
 
-Nav should lead with Register once (3) exists. Coverage stays a read-only
+**After that, not in the same session:**
+
+4. Thin generate button (KER-402) — wire only, no new engine.
+5. HTTPS + `ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder.
+6. One filing **download** from the Next.js register (existing export package).
+7. Partner’s own vendors and evidence.
+
+Nav should lead with Register once (1) exists. Coverage stays a read-only
 view. Do not add coverage features, Trust Center polish, or recommendation
-chrome until (3) and (4) exist.
+chrome until (1)–(3) exist.
 
 ## Honest claim (demo, deck, outreach)
 
@@ -82,20 +84,21 @@ Treat it as reserved machinery (KER-404 later), not as the product identity.
 - Next.js `frontend/` is the product UI.
 - `src/dashboard/` (localStorage JWT) is legacy. Do not extend it. Ticket B
   stops serving it outside development.
-- After B, DORA is API-only until step (3) above. That gap is intentional and
-  is the next product ticket — not a reason to keep the localStorage app.
+- After Ticket B, DORA is API-only until the Next.js register session
+  ships. That gap is the next product ticket — not a reason to keep the
+  localStorage app.
 
 ## In flight — do not duplicate
 
-A parallel session is landing security tickets. Do not re-implement them here.
+Hygiene is on `main`. Do not re-implement C1/A/B/D.
 
 | Ticket | Intent | Status |
 |---|---|---|
-| C1 (KER-408) | Login requires `tenant_slug`; lookup is `(slug, email)` | On `main` as `ed3f3f2` |
-| A | `require_role` on scheduler, export, register writes, submissions runs, remediation trigger + close-callback | In progress |
-| B | Legacy dashboard + OpenAPI off outside dev | Queued after A |
-| D | Server-side justification; `ai_decision_log` append-only triggers | Queued after B |
-| C2 | Non-owner DB role + FORCE RLS on `users` / webhook registrations | **Not this pass.** Own PR, real Postgres role |
+| C1 (KER-408) | Login requires `tenant_slug` | `ed3f3f2` on `main` |
+| A | `require_role` on six routes + structural sweep | `7b6738b` on `main` |
+| B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
+| D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
+| C2 | Non-owner DB role + FORCE | **Held.** Own PR, real Postgres role |
 
 Role matrix for A (authoritative):
 
@@ -120,8 +123,8 @@ KER-405 stays on hold except the two items in Ticket D.
 
 ## Backlog — log only, do not start
 
-Pulled from the August 2026 audit. None of these block partner outreach once
-C1 / A / B / D have landed.
+Pulled from the August 2026 audit. Register KER-107 and submissions 404 are
+**not** in this list — they are in the next session's scope above.
 
 - C2 — app DB role is not the table owner; FORCE on `users` and
   `webhook_registrations` with a login bootstrap that still works
@@ -135,8 +138,6 @@ C1 / A / B / D have landed.
 - PDF page cap; evidence list pagination
 - `FILE_STRUCTURE.md` full reconciliation against the live tree
 - `close-callback` HMAC (KER-205 pattern), not a human RBAC role
-- Register-create emits no KER-107 ledger entry (same class as KER-405 #1)
-- `POST /submissions/runs` returns 500 instead of 404 for an unknown window
 
 ## How to add work
 

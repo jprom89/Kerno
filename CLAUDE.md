@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.3 | Updated: 2026-08-13 | Changes: §0 product is DORA system of record, not another AI GRC dashboard -->
+<!-- Version: 2.4 | Updated: 2026-08-14 | Changes: hygiene C1/A/B/D landed; next is DORA UI + register KER-107 -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -15,12 +15,12 @@ constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 13 August 2026 Kerno is an EU **system of record** (live DORA
+As of 14 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
-dashboard. After hygiene tickets C1/A/B/D: a thin generate button, HTTPS,
-then **DORA register/submissions in Next.js** (filling the hole Ticket B
-opens), then one filing download. Do not add coverage features, RAG, CRA,
-incidents, country packs, or MSP. See `NOW.md`.
+dashboard. Hygiene C1/A/B/D has landed. Next: **DORA register/submissions
+in Next.js**, including a KER-107 ledger write on register create/update
+in the same effort, then one filing download. Do not add coverage
+features, RAG, CRA, incidents, country packs, or MSP. See `NOW.md`.
 
 `KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement
