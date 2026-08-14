@@ -21,7 +21,14 @@ By default, `.env` should contain:
 
 ```text
 DATABASE_URL=postgresql://kerno_dev:kerno_dev@localhost:5432/kerno_dev
+KERNO_ENV=development
 ```
+
+`KERNO_ENV=development` is required, not optional. The legacy static dashboard
+and the interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are only
+registered when it is set to exactly `development`; with it unset or set to
+anything else, every one of those URLs returns 404. That is deliberate — see
+§17 Ticket B in CLAUDE.md.
 
 No manual `export`/`set` is required; `load_dotenv()` is wired into the app.
 
@@ -40,8 +47,22 @@ Notes:
 
 ## Access the app
 
-- Dashboard login:
-  `http://localhost:8001/dashboard/login.html`
+The dashboard you actually want is the Next.js one, which runs as its own
+application:
+
+```powershell
+cd J:\Kerno\frontend
+npm run dev
+```
+
+- Dashboard login: `http://localhost:3000/login`
+- Organisation: `dev-tenant` (required since KER-408 — an email is unique only
+  within one organisation, so it alone does not identify an account)
+
+The legacy static dashboard at `http://localhost:8001/dashboard/login.html` is
+still served when `KERNO_ENV=development`, but it is frozen: it keeps its JWT in
+localStorage and is not the surface being developed. It remains the only UI for
+the DORA register and submission windows.
 
 ## Database & migrations
 

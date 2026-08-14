@@ -1548,8 +1548,8 @@ parked so it is not lost, not because it has been assessed and cleared.
 | Ticket | Scope | Status |
 |---|---|---|
 | C1 | Require the organisation at login — tenant collision (KER-408) | ✅ done, commit ed3f3f2 |
-| A | require_role() on six ungated mutating/sensitive routes | in progress |
-| B | Lock down the legacy dashboard and OpenAPI docs outside dev | not started |
+| A | require_role() on six ungated mutating/sensitive routes | ✅ done, commit 7b6738b |
+| B | Lock down the legacy dashboard and OpenAPI docs outside dev | ✅ done |
 | D | Server-side justification_text enforcement + ai_decision_log append-only triggers | not started |
 | C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | **held — its own PR, needs a real DB role** |
 
@@ -1587,6 +1587,119 @@ HMAC signature exactly like the KER-205 webhook ingest: the signature is the
 credential, no human token is involved, and no operator has to hold a role for
 an automated callback to work. Redesigning it is its own scoping pass, because
 it changes how the Jira side is configured, not just what the server checks.
+
+### Ticket B — development-only surfaces (delivered)
+
+Three surfaces now exist only when `KERNO_ENV` is exactly `development`:
+the legacy static dashboard at `/dashboard/`, the interactive docs at `/docs`
+and `/redoc`, and the raw schema at `/openapi.json`. `GET /` no longer
+redirects into the legacy dashboard; it redirects to `FRONTEND_URL`, falling
+back to the first `ALLOWED_ORIGINS` entry.
+
+**`openapi_url=None` is required, not optional.** Nulling `docs_url` and
+`redoc_url` alone removes the two HTML viewers and leaves the schema fully
+served — verified empirically against the installed FastAPI, where
+`FastAPI(docs_url=None, redoc_url=None)` still answers `/openapi.json` with
+200. Anyone can point their own Swagger UI at a raw schema, so that would have
+been a cosmetic fix. All three must be passed as constructor arguments;
+assigning the attributes after construction is a silent no-op because FastAPI
+registers the routes at the end of `__init__`.
+
+What the schema was actually publishing anonymously — 28 routes and 45 schemas
+on the live dev server, but the volume is not the point. It labelled precisely
+which five operations require no bearer token (the anonymous target list), and
+because FastAPI promotes endpoint docstrings into the `description` field it
+also published the webhook HMAC scheme, the fact that a signing secret appears
+exactly once in the 201 response, the trust-center role allow-list by name, and
+the 401-not-422 ordering guarantee. That is an architecture-and-controls
+document for a compliance product.
+
+**Root redirect, and why it is shaped this way.** The target is read from the
+environment only. It is never derived from a query parameter or the Host
+header, because that is exactly what would turn it into an open redirect — the
+prohibition is written into `root()`'s docstring, since the tempting future
+"improvement" (preserve the deep link the user wanted) is the thing that breaks
+it. Three failure modes are handled explicitly, each verified rather than
+assumed:
+- An empty target is an infinite loop, not a no-op: `RedirectResponse(url="")`
+  emits an empty `Location`, which resolves to the request URI itself. A bare
+  `FRONTEND_URL=` line yields `""` from dotenv, so a presence check is wrong
+  and only a truthiness check is safe.
+- A protocol-relative value (`//evil.example`) survives Starlette's quoting
+  verbatim and redirects off-origin while looking relative. The guard is an
+  explicit `http://`/`https://` prefix check; "is it non-empty" catches neither
+  this nor a scheme-less typo.
+- With nothing configured, `_allowed_origins()[0]` would raise `IndexError`,
+  and Starlette re-raises after sending the 500 — a traceback per anonymous hit
+  on the front door. The real `.env` sets no `ALLOWED_ORIGINS`, so that was the
+  live state. The root now returns a minimal JSON service descriptor instead.
+
+302 explicitly, never 301/308: operators will get `FRONTEND_URL` wrong at least
+once, and a permanent redirect to a wrong target is browser-cached and cannot
+be corrected server-side.
+
+**Accepted cost, stated plainly:** the legacy dashboard is the only UI for the
+DORA register and submission windows, and it is also where the KER-108 Jira
+side-panel surface lives. Outside development those have no UI at all. The
+routers stay live and RBAC-gated; rebuilding the UI was explicitly out of
+scope. Confirmed with the product owner that no active or near-term
+conversation needs them outside dev.
+
+### Backlog (HIGHER PRIORITY — resolve before the first non-dev deployment) — the docs switch and the dashboard switch should be separable
+
+Both gate on `KERNO_ENV == "development"`, as do the two seed scripts. The
+first time anyone wants API docs on a deployed host, the only lever available
+is setting `KERNO_ENV=development` there — which simultaneously remounts the
+legacy localStorage-JWT dashboard and unlocks `seed_dev_tenant.py` and
+`seed_demo_evidence.py` against that database. One convenience request
+disarms three unrelated controls.
+
+The fix is a separate opt-in (e.g. `KERNO_ENABLE_DOCS`) that turns the schema
+back on without touching the other two. Not built in Ticket B because the
+approved scope named `KERNO_ENV` specifically, and because no staging
+environment exists yet — there is no Dockerfile, compose file, CI workflow or
+deploy manifest anywhere in the repo, so the coupling costs nothing today. It
+should be resolved before the first non-development deployment, which is the
+same moment the §14 HTTPS work happens.
+
+This is the highest-priority item in this backlog and is deliberately marked so
+in its heading. It is not urgent today — there is nothing to deploy to — but it
+is the one that must not age quietly into the furniture the way the
+FILE_STRUCTURE.md reconciliation did. The §14 deployment work is its deadline,
+not its suggestion.
+
+### Backlog — shipped CORS placeholder is a credentialed allow-list entry
+
+Pre-existing, live, and independent of Ticket B — found while scoping it.
+`.env.example` instructs `cp .env.example .env` and ships
+`ALLOWED_ORIGINS=http://localhost:3000,https://your-vercel-app.vercel.app`,
+and `src/api/app.py` passes that list to `CORSMiddleware` with
+`allow_credentials=True`. Any deployment that shipped the example values has
+granted credentialed cross-origin access to a `vercel.app` subdomain that is
+project-name-scoped and first-come-first-served — i.e. potentially registrable
+by someone else. Confirm the registrability claim before acting on it, but the
+remedy is cheap either way: make the placeholder obviously invalid rather than
+plausibly real — `https://REPLACE-ME.invalid` (the `.invalid` TLD is reserved
+by RFC 2606 and can never be registered by anyone) — and fail startup on a
+non-development environment whose `ALLOWED_ORIGINS` still contains an example
+value. The placeholder swap costs nothing and should be bundled into whatever
+next touches `.env.example`; it does not warrant its own change.
+
+Ticket B widens the blast radius slightly, since the same first entry is now
+also the `GET /` redirect target. That is the argument for requiring
+`FRONTEND_URL` rather than leaning on the fallback: a CORS allow-list has
+unordered set semantics and is safe to add to, while a redirect target is
+single-valued and order-sensitive. The fallback logs a warning when it fires.
+
+### Backlog — uv.lock and the installed FastAPI disagree
+
+`uv.lock` pins fastapi 0.139.0; the interpreter this repo actually runs on has
+0.138.1 (no virtualenv exists — it resolves to the Python 3.14 user
+site-packages). The whole test suite therefore executes against a version the
+lock file does not describe, which is a SEC-06 reproducibility hole rather than
+a functional bug. Noted while verifying the docs-route gating against FastAPI's
+source; the gating behaviour is long-standing and does not differ between those
+versions, so nothing in Ticket B depends on the resolution.
 
 ### Backlog — DORA register writes leave no audit trail
 
