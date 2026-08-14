@@ -32,15 +32,30 @@ B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 
 **Next session — fill the hole Ticket B opened. In scope together:**
 
-1. **DORA register + submissions in `frontend/`** — list/detail/create/edit
-   and windows/runs, existing `/api/v1/register` and `/api/v1/submissions`
-   APIs only. Do not rebuild `src/dashboard/`.
-2. **KER-107 on register writes in the same effort** — `create_register_entry`
-   and `update_register_entry` append a ledger entry in the same transaction
-   (JWT `user_id`, `before_state` on PATCH). Do not ship a UI that multiplies
-   unledgered regulatory rows. Check `POST /submissions/runs` the same way.
-3. **Map unknown `submission_window_id` to 404** (`EntryNotFoundError`), not
-   500 — it sits on the same path; do not leave operators a correlation ID.
+| Ticket | What |
+|---|---|
+| **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). |
+| **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. |
+| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. |
+
+Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is worse than no UI.
+
+### Confirmed before start (14 August 2026)
+
+**409 tests are two behaviours, two tests.** Live-DB coverage must assert the ledger row and the 404 as **separate tests**, not one incidental pass. Minimum:
+
+- create → ledger row, same transaction (commit and rollback)
+- PATCH → ledger row with `before_state`
+- known window → run + ledger row
+- unknown `submission_window_id` → 404 **and** no ledger row, no run row
+
+Do not fold the 404 case into the happy-path ledger test.
+
+**410/411 auditor: UI hide is not the control.** Ticket A already 403s auditor JWTs on `POST`/`PATCH /api/v1/register/entries` and `POST /api/v1/submissions/runs` (`tests/unit/api/test_rbac_gates.py`). Do not re-do that matrix. Frontend hides create/edit/start-run for `auditor` (same pattern as recommendations/evidence). Hiding buttons is UX; the 403 is the guarantee. If those three routes ever stop 403ing an auditor, stop — that is a regression of audit finding #3, not a UI bug.
+
+**409 first is non-negotiable. 410 before 411 is not a data dependency.** `POST /submissions/runs` looks up a global `dora_submission_windows` row, then builds an export from whatever active register entries exist. Zero entries is a valid run: `entry_count=0`, ROI_000 FAIL, status `draft`. 411 can be tested with no 410 rows. A passing (`ready`) filing in a demo needs entries from 410; that is demo quality, not a test blocker. Windows are not in `seed_dev_tenant.py` — 411 tests insert their own window; do not invent a country-pack seeder.
+
+Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independently testable.
 
 **After that, not in the same session:**
 
@@ -49,9 +64,9 @@ B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 6. One filing **download** from the Next.js register (existing export package).
 7. Partner’s own vendors and evidence.
 
-Nav should lead with Register once (1) exists. Coverage stays a read-only
-view. Do not add coverage features, Trust Center polish, or recommendation
-chrome until (1)–(3) exist.
+Nav should lead with Register once KER-410 exists. Coverage stays a
+read-only view. Do not add coverage features, Trust Center polish, or
+recommendation chrome until KER-409–411 exist.
 
 ## Honest claim (demo, deck, outreach)
 
