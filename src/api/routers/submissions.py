@@ -10,6 +10,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from src.api.dependencies import get_conn, get_tenant_id, require_role
+
+# get_reviewer_id is the existing verified-JWT user identity (KER-202); reused
+# here so filing a register attributes to the same actor an override does.
+from src.api.routers.overrides import get_reviewer_id
 from src.api.schemas.submissions import (
     SubmissionRunRequest,
     SubmissionRunResponse,
@@ -31,11 +35,18 @@ router = APIRouter()
 def create_run(
     body: SubmissionRunRequest,
     tenant_id: str = Depends(get_tenant_id),
+    user_id: str = Depends(get_reviewer_id),
     rbac_role: str = Depends(require_role(*SUBMISSION_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> SubmissionRunResponse:
-    """Trigger a submission run for the authenticated tenant and return its record."""
-    run, _ = build_and_record_submission(conn, tenant_id, body.submission_window_id)
+    """Trigger a submission run for the authenticated tenant, attributed to the caller.
+
+    Raises EntryNotFoundError — 404, not the generic 500 — when the named
+    submission window does not exist.
+    """
+    run, _ = build_and_record_submission(
+        conn, tenant_id, body.submission_window_id, actor_id=user_id, actor_role=rbac_role
+    )
     return SubmissionRunResponse.model_validate(run)
 
 

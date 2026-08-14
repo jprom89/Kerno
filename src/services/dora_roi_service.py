@@ -24,6 +24,7 @@ from datetime import date, datetime, timezone
 from config.constants import MAX_EXIT_SUMMARY_LENGTH, RbacRole
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError  # noqa: F401  re-exported
+from src.services.audit_log import append_audit_entry
 from src.models.dora_register_entry import (
     CRITICALITY_CRITICAL,
     CRITICALITY_HIGH,
@@ -42,6 +43,13 @@ REGISTER_CAPABLE_ROLES: tuple[RbacRole, ...] = (
     RbacRole.COMPLIANCE_LEAD,
     RbacRole.VCISO,
 )
+
+# KER-107 ledger vocabulary for register writes (KER-409). Named rather than
+# inlined so the two write paths cannot drift into near-miss spellings that a
+# ledger query would silently miss.
+ACTION_REGISTER_ENTRY_CREATED = "register_entry_created"
+ACTION_REGISTER_ENTRY_UPDATED = "register_entry_updated"
+OBJECT_TYPE_REGISTER_ENTRY = "register_entry"
 
 _ALLOWED_CRITICALITY_LEVELS = {CRITICALITY_CRITICAL, CRITICALITY_HIGH, CRITICALITY_STANDARD}
 _ALLOWED_PROVIDER_TYPES = {
@@ -179,13 +187,15 @@ _WINDOWS_ORDER = (
 
 
 def create_register_entry(
-    conn, tenant_id, entry_input: RegisterEntryInput
+    conn, tenant_id, entry_input: RegisterEntryInput, *, actor_id, actor_role: str
 ) -> RegisterEntryOutput:
     """Validate, persist, and return a new DORARegisterEntry for the tenant.
 
     Guards tenant_id first, then normalizes and validates entry_input, then sets
-    tenant context before the INSERT. Returns a RegisterEntryOutput built directly
-    from the persisted values so no follow-up SELECT is needed.
+    tenant context before the INSERT. Appends a KER-107 ledger entry naming the
+    actor on the same connection, so the register line and the record of who
+    added it commit or roll back together. Returns a RegisterEntryOutput built
+    directly from the persisted values so no follow-up SELECT is needed.
     Raises TenantContextMissingError on bad tenant; ValueError on invalid input.
     """
     _guard_tenant(tenant_id)
@@ -194,18 +204,32 @@ def create_register_entry(
     now = datetime.now(timezone.utc)
     entry_id = str(uuid.uuid4())
     conn.execute(_INSERT_ENTRY, _build_insert_params(entry_id, str(tenant_id), normalized, now))
-    return _output_from_input(entry_id, str(tenant_id), normalized, now, now)
+    created = _output_from_input(entry_id, str(tenant_id), normalized, now, now)
+    _record_register_ledger_entry(
+        conn, tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action_type=ACTION_REGISTER_ENTRY_CREATED,
+        register_entry_id=entry_id,
+        before_state=None,
+        after_state=_entry_to_ledger_state(created),
+    )
+    return created
 
 
 def update_register_entry(
-    conn, tenant_id, register_entry_id: str, entry_input: RegisterEntryInput
+    conn, tenant_id, register_entry_id: str, entry_input: RegisterEntryInput,
+    *, actor_id, actor_role: str,
 ) -> RegisterEntryOutput | None:
     """Update an existing DORARegisterEntry and return the refreshed output.
 
     Guards tenant_id first, then normalizes and validates entry_input. Sets tenant
     context, then checks the entry exists. If not found, returns None. Otherwise
-    issues the UPDATE and returns a RegisterEntryOutput built from the new values
-    and the original created_at timestamp.
+    issues the UPDATE, records the row as it stood beforehand in the KER-107
+    ledger alongside the new values, and returns a RegisterEntryOutput built from
+    the new values and the original created_at timestamp. An amendment to a filed
+    regulatory record is worth as much as the original, so before_state is what
+    makes the change reconstructable rather than merely dated.
     Raises TenantContextMissingError on bad tenant; ValueError on invalid input.
     """
     _guard_tenant(tenant_id)
@@ -216,9 +240,57 @@ def update_register_entry(
     ).fetchone()
     if row is None:
         return None
+    previous = _entry_row_to_output(row)
     now = datetime.now(timezone.utc)
     conn.execute(_UPDATE_ENTRY, _build_update_params(register_entry_id, normalized, now))
-    return _output_from_input(register_entry_id, str(tenant_id), normalized, row[14], now)
+    updated = _output_from_input(register_entry_id, str(tenant_id), normalized, row[14], now)
+    _record_register_ledger_entry(
+        conn, tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action_type=ACTION_REGISTER_ENTRY_UPDATED,
+        register_entry_id=register_entry_id,
+        before_state=_entry_to_ledger_state(previous),
+        after_state=_entry_to_ledger_state(updated),
+    )
+    return updated
+
+
+def _record_register_ledger_entry(
+    conn, tenant_id, *, actor_id, actor_role: str, action_type: str,
+    register_entry_id: str, before_state: dict | None, after_state: dict,
+) -> None:
+    """Append the KER-107 ledger entry for one register write.
+
+    Runs on the caller's connection and transaction so the ledger entry shares
+    the fate of the row it describes. control_id is None because a register
+    entry is a third-party provider record, not a control assessment.
+    """
+    append_audit_entry(
+        conn,
+        tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action_type=action_type,
+        object_type=OBJECT_TYPE_REGISTER_ENTRY,
+        object_id=register_entry_id,
+        control_id=None,
+        before_state=before_state,
+        after_state=after_state,
+    )
+
+
+def _entry_to_ledger_state(entry: RegisterEntryOutput) -> dict:
+    """Return a register entry as a dict the audit ledger can serialise.
+
+    append_audit_entry json.dumps() its state fields, and json cannot encode a
+    date or a datetime, so both are rendered as ISO 8601 strings.
+    """
+    state = dataclasses.asdict(entry)
+    for field_name, value in state.items():
+        if isinstance(value, (datetime, date)):
+            state[field_name] = value.isoformat()
+    return state
 
 
 def get_register_entry(

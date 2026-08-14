@@ -10,6 +10,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from src.api.dependencies import get_conn, get_tenant_id, require_role
+
+# get_reviewer_id is the existing verified-JWT user identity (KER-202); reused
+# here so a register write attributes to the same actor an override does.
+from src.api.routers.overrides import get_reviewer_id
 from src.api.schemas.register import (
     RegisterEntryRequest,
     RegisterEntryResponse,
@@ -33,12 +37,15 @@ router = APIRouter()
 def create_entry(
     body: RegisterEntryRequest,
     tenant_id: str = Depends(get_tenant_id),
+    user_id: str = Depends(get_reviewer_id),
     rbac_role: str = Depends(require_role(*REGISTER_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> RegisterEntryResponse:
-    """Create a new register entry for the authenticated tenant."""
+    """Create a new register entry for the authenticated tenant, attributed to the caller."""
     entry_input = RegisterEntryInput(**body.model_dump())
-    result = create_register_entry(conn, tenant_id, entry_input)
+    result = create_register_entry(
+        conn, tenant_id, entry_input, actor_id=user_id, actor_role=rbac_role
+    )
     return RegisterEntryResponse.model_validate(result)
 
 
@@ -70,12 +77,15 @@ def update_entry(
     entry_id: str,
     body: RegisterEntryRequest,
     tenant_id: str = Depends(get_tenant_id),
+    user_id: str = Depends(get_reviewer_id),
     rbac_role: str = Depends(require_role(*REGISTER_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> RegisterEntryResponse:
-    """Update an existing register entry by ID, or 404 if not found."""
+    """Update an existing register entry by ID, attributed to the caller, or 404 if not found."""
     entry_input = RegisterEntryInput(**body.model_dump())
-    result = update_register_entry(conn, tenant_id, entry_id, entry_input)
+    result = update_register_entry(
+        conn, tenant_id, entry_id, entry_input, actor_id=user_id, actor_role=rbac_role
+    )
     if result is None:
         raise EntryNotFoundError(entry_id)
     return RegisterEntryResponse.model_validate(result)

@@ -24,12 +24,17 @@ from sqlalchemy.exc import IntegrityError
 
 from config.constants import RbacRole, VALIDATION_SEVERITY_FAIL, VALIDATION_SEVERITY_PASS
 from src.db.rls import set_tenant_context
-from src.exceptions import TenantContextMissingError
+from src.exceptions import EntryNotFoundError, TenantContextMissingError
 from src.models.dora_submission_run import (
     SUBMISSION_STATUS_DRAFT,
     SUBMISSION_STATUS_READY,
 )
+from src.services.audit_log import append_audit_entry
 from src.services.dora_roi_export_service import DORAExportPackage, build_export_package
+
+# KER-107 ledger vocabulary for filing a submission run (KER-409).
+ACTION_SUBMISSION_RUN_RECORDED = "submission_run_recorded"
+OBJECT_TYPE_SUBMISSION_RUN = "submission_run"
 
 # Roles allowed to start a submission run. Deliberately a separate constant from
 # REGISTER_CAPABLE_ROLES even though the two lists match today: editing the
@@ -171,38 +176,65 @@ def create_submission_run(
     from the window, then inserts a new dora_submission_runs row with pessimistic
     defaults (status=draft, validation_overall_status=fail, counts=0).
     Raises TenantContextMissingError if tenant_id is falsey.
-    Raises ValueError if the submission window does not exist.
+    Raises EntryNotFoundError if the submission window does not exist.
     """
     _guard_tenant(tenant_id)
     window = _fetch_window_by_id(conn, submission_window_id)
     if window is None:
-        raise ValueError(f"Submission window {submission_window_id!r} not found")
+        raise EntryNotFoundError(f"submission window {submission_window_id!r} not found")
     set_tenant_context(conn, tenant_id)
     now = datetime.now(timezone.utc)
     return _insert_draft_run(conn, tenant_id, submission_window_id, window.reporting_year, now)
 
 
 def build_and_record_submission(
-    conn, tenant_id: str, submission_window_id: str
+    conn, tenant_id: str, submission_window_id: str, *, actor_id, actor_role: str
 ) -> tuple[SubmissionRunOutput, DORAExportPackage]:
     """Build an export package, validate it, and record the outcome as a submission run.
 
     Validates tenant_id, fetches the window for reporting_year, calls Doc 15's
     build_export_package (which sets tenant context and runs validation), then
     creates or updates the submission run for the (tenant, window, year) slot.
-    Status is 'ready' if validation passes, 'draft' if warn or fail.
+    Status is 'ready' if validation passes, 'draft' if warn or fail. Appends a
+    KER-107 ledger entry naming the actor on the same connection, so filing a
+    register and the record of who filed it commit or roll back together.
     Does not set submitted_at (that is reserved for authority-portal integration).
     Raises TenantContextMissingError if tenant_id is falsey.
-    Raises ValueError if the submission window does not exist.
+    Raises EntryNotFoundError if the submission window does not exist.
     """
     _guard_tenant(tenant_id)
     window = _fetch_window_by_id(conn, submission_window_id)
     if window is None:
-        raise ValueError(f"Submission window {submission_window_id!r} not found")
+        raise EntryNotFoundError(f"submission window {submission_window_id!r} not found")
     package = build_export_package(conn, tenant_id, window.reporting_year)
     set_tenant_context(conn, tenant_id)
     run = _upsert_submission_run(conn, tenant_id, submission_window_id, window.reporting_year, package)
+    append_audit_entry(
+        conn,
+        tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action_type=ACTION_SUBMISSION_RUN_RECORDED,
+        object_type=OBJECT_TYPE_SUBMISSION_RUN,
+        object_id=run.id,
+        control_id=None,
+        before_state=None,
+        after_state=_run_to_ledger_state(run),
+    )
     return run, package
+
+
+def _run_to_ledger_state(run: SubmissionRunOutput) -> dict:
+    """Return a submission run as a dict the audit ledger can serialise.
+
+    append_audit_entry json.dumps() its state fields, and json cannot encode a
+    date or a datetime, so both are rendered as ISO 8601 strings.
+    """
+    state = dataclasses.asdict(run)
+    for field_name, value in state.items():
+        if isinstance(value, (datetime, date)):
+            state[field_name] = value.isoformat()
+    return state
 
 
 def get_submission_run(conn, tenant_id: str, run_id: str) -> SubmissionRunOutput | None:

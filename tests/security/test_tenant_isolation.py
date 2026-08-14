@@ -67,6 +67,10 @@ from src.services.dora_roi_submission_service import list_tenant_submission_runs
 from src.services.retrieval_service import get_similar_controls
 from src.services.tenant_context import resolve_and_set_tenant_context
 
+# KER-409: register and submission writes now attribute to a verified JWT
+# identity, so every service call has to supply one.
+_LEDGER_ACTOR_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")
+
 # ---------------------------------------------------------------------------
 # Fixtures — two deterministic UUIDv4 tenant identifiers
 #
@@ -301,7 +305,7 @@ def test_dora_roi_create_with_none_tenant_raises_before_sql() -> None:
     """
     conn = _RecordingConnection()
     with pytest.raises(TenantContextMissingError):
-        create_register_entry(conn, None, _make_dora_entry_input())
+        create_register_entry(conn, None, _make_dora_entry_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert conn.statements == [], (
         "No SQL must be issued when tenant_id is None"
     )
@@ -314,7 +318,7 @@ def test_dora_roi_create_tenant_id_in_sql_params() -> None:
     that activates RLS, not assumed by connection state or inferred later.
     """
     conn = _DoraSpyConn()
-    create_register_entry(conn, TENANT_A_ID, _make_dora_entry_input())
+    create_register_entry(conn, TENANT_A_ID, _make_dora_entry_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     set_local_calls = [
         (sql, params) for sql, params in conn.calls if "SET LOCAL" in str(sql)
     ]

@@ -17,6 +17,7 @@ How to run
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +33,10 @@ from src.services.dora_roi_submission_service import (
     list_open_windows,
     list_tenant_submission_runs,
 )
+
+# KER-409: register and submission writes now attribute to a verified JWT
+# identity, so every service call has to supply one.
+_LEDGER_ACTOR_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000066"
 _WINDOW_ID = "w0000000-0000-4000-w000-000000000001"
@@ -165,7 +170,7 @@ def test_build_and_record_submission_creates_run_when_missing() -> None:
         ("FROM dora_submission_runs", _SelectResult([])),
     ])
     with patch(_PATCH_TARGET, return_value=_make_package("pass", 0, 4)):
-        run, package = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID)
+        run, package = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     insert_calls = [sql for sql, _ in spy.calls if "INSERT INTO dora_submission_runs" in str(sql)]
     assert len(insert_calls) == 1
     assert run.entry_count == 4
@@ -180,7 +185,7 @@ def test_build_and_record_submission_updates_existing_run() -> None:
         ("FROM dora_submission_runs", _SelectResult([existing_row])),
     ])
     with patch(_PATCH_TARGET, return_value=_make_package("pass", 0, 7)):
-        run, package = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID)
+        run, package = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     update_calls = [sql for sql, _ in spy.calls if "UPDATE dora_submission_runs" in str(sql)]
     insert_calls = [sql for sql, _ in spy.calls if "INSERT INTO dora_submission_runs" in str(sql)]
     assert len(update_calls) == 1
@@ -196,7 +201,7 @@ def test_build_and_record_submission_copies_validation_summary() -> None:
         ("FROM dora_submission_runs", _SelectResult([])),
     ])
     with patch(_PATCH_TARGET, return_value=_make_package("warn", 3, 2)):
-        run, _ = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID)
+        run, _ = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert run.status == "draft"
     assert run.validation_overall_status == "warn"
     assert run.validation_issue_count == 3
@@ -210,7 +215,7 @@ def test_build_and_record_submission_does_not_set_submitted_at() -> None:
         ("FROM dora_submission_runs", _SelectResult([])),
     ])
     with patch(_PATCH_TARGET, return_value=_make_package("pass", 0, 1)):
-        run, _ = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID)
+        run, _ = build_and_record_submission(spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert run.submitted_at is None
 
 

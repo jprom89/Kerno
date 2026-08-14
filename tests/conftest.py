@@ -346,6 +346,13 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
             "audit_log", "ai_decision_log", "overrides", "retrieval_bias",
             "tenant_embeddings", "context_records", "remediation_tasks",
             "remediation_routing_rules",
+            # KER-409 — both were missing, so DORA rows written by a test
+            # survived it. That made any later test that reads the register
+            # order-dependent (an "empty register" was only empty if it ran
+            # first), and it leaked regulatory-looking rows into the dev tenant.
+            # Runs go before entries: neither references the other, but both
+            # must precede the tenants DELETE below.
+            "dora_submission_runs", "dora_register_entries",
             # KER-205 (migration 022) — both hold FKs to tenants, so the final
             # DELETE FROM tenants fails if they are left behind.
             "webhook_ingest_dedup", "webhook_registrations",

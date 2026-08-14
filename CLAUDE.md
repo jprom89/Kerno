@@ -1870,7 +1870,10 @@ Raised by the audit, parked without estimates:
 - Webhook signing secrets at rest (pgcrypto) — §13 KER-205 decision 1 deferred
   this to "Sprint 3" and it did not happen.
 - Cursor-level error swallowing that can mask a failed statement.
-- Connection-pool RESET between checkouts.
+- Connection-pool RESET between checkouts. **Raised in priority (KER-409):** a
+  pooled connection returns with `app.current_tenant_id` set to `''` rather than
+  unset, so the next RLS policy that casts it to uuid fails outright. This has
+  now cost time in three separate tickets' live tests and will keep doing so.
 - Jira client authentication format.
 - Page caps on PDF evidence-pack export.
 - Pagination on the evidence list endpoint.

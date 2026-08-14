@@ -16,6 +16,7 @@ How to run
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timezone
 
 import pytest
@@ -33,6 +34,10 @@ from src.services.dora_roi_service import (
     list_reporting_windows,
     update_register_entry,
 )
+
+# KER-409: register and submission writes now attribute to a verified JWT
+# identity, so every service call has to supply one.
+_LEDGER_ACTOR_ID = uuid.UUID("d0000000-0000-4000-d000-000000000004")
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000066"
 _ENTRY_ID = "e0000000-0000-4000-e000-000000000001"
@@ -149,7 +154,7 @@ def _valid_input(**overrides) -> RegisterEntryInput:
 def test_create_register_entry_success() -> None:
     """Valid input persists an INSERT and returns a RegisterEntryOutput."""
     spy = _SpyConn()
-    result = create_register_entry(spy, _TENANT_ID, _valid_input())
+    result = create_register_entry(spy, _TENANT_ID, _valid_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert isinstance(result, RegisterEntryOutput)
     assert result.provider_name == "AWS"
     insert_calls = [sql for sql, _ in spy.calls if "INSERT INTO dora_register_entries" in str(sql)]
@@ -161,7 +166,7 @@ def test_update_register_entry_success() -> None:
     row = _make_entry_row()
     spy = _SpyConn(responses=[("FROM dora_register_entries", _SelectResult([row]))])
     new_input = _valid_input(provider_name="Azure")
-    result = update_register_entry(spy, _TENANT_ID, _ENTRY_ID, new_input)
+    result = update_register_entry(spy, _TENANT_ID, _ENTRY_ID, new_input, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert result is not None
     assert result.provider_name == "Azure"
     update_calls = [sql for sql, _ in spy.calls if "UPDATE dora_register_entries" in str(sql)]
@@ -215,7 +220,7 @@ def test_invalid_provider_type_raises() -> None:
     """provider_type not in allowed values raises ValueError before any SQL."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="provider_type"):
-        create_register_entry(spy, _TENANT_ID, _valid_input(provider_type="blockchain"))
+        create_register_entry(spy, _TENANT_ID, _valid_input(provider_type="blockchain"), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     insert_calls = [sql for sql, _ in spy.calls if "INSERT" in str(sql)]
     assert len(insert_calls) == 0, "No INSERT must be issued on validation failure"
 
@@ -224,7 +229,7 @@ def test_invalid_criticality_level_raises() -> None:
     """criticality_level not in allowed values raises ValueError before any SQL."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="criticality_level"):
-        create_register_entry(spy, _TENANT_ID, _valid_input(criticality_level="very_high"))
+        create_register_entry(spy, _TENANT_ID, _valid_input(criticality_level="very_high"), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     insert_calls = [sql for sql, _ in spy.calls if "INSERT" in str(sql)]
     assert len(insert_calls) == 0
 
@@ -233,14 +238,14 @@ def test_empty_data_types_raises() -> None:
     """Empty data_types list raises ValueError before any SQL is issued."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="data_types"):
-        create_register_entry(spy, _TENANT_ID, _valid_input(data_types=[]))
+        create_register_entry(spy, _TENANT_ID, _valid_input(data_types=[]), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
 
 
 def test_empty_countries_supported_raises() -> None:
     """Empty countries_supported list raises ValueError before any SQL is issued."""
     spy = _SpyConn()
     with pytest.raises(ValueError, match="countries_supported"):
-        create_register_entry(spy, _TENANT_ID, _valid_input(countries_supported=[]))
+        create_register_entry(spy, _TENANT_ID, _valid_input(countries_supported=[]), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
 
 
 def test_contract_end_before_start_raises() -> None:
@@ -254,6 +259,8 @@ def test_contract_end_before_start_raises() -> None:
                 contract_start_date=date(2025, 6, 1),
                 contract_end_date=date(2024, 1, 1),
             ),
+            actor_id=_LEDGER_ACTOR_ID,
+            actor_role="vciso",
         )
 
 
@@ -261,14 +268,14 @@ def test_none_tenant_raises() -> None:
     """Falsey tenant_id raises TenantContextMissingError before any SQL or input validation."""
     spy = _SpyConn()
     with pytest.raises(TenantContextMissingError):
-        create_register_entry(spy, None, _valid_input())
+        create_register_entry(spy, None, _valid_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert spy.calls == [], "No SQL must be issued when tenant_id is None"
 
 
 def test_tenant_context_set_before_query() -> None:
     """SET LOCAL must be the first SQL call — tenant context before any INSERT."""
     spy = _SpyConn()
-    create_register_entry(spy, _TENANT_ID, _valid_input())
+    create_register_entry(spy, _TENANT_ID, _valid_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert len(spy.calls) > 0, "At least one SQL call expected"
     assert "SET LOCAL" in str(spy.calls[0][0]), "First SQL call must be SET LOCAL"
 
@@ -285,7 +292,9 @@ def test_exit_strategy_trimmed_and_capped() -> None:
     """exit_strategy_summary is trimmed of whitespace and capped to MAX_EXIT_SUMMARY_LENGTH."""
     spy = _SpyConn()
     long_summary = "  " + "x" * 2000 + "  "
-    result = create_register_entry(spy, _TENANT_ID, _valid_input(exit_strategy_summary=long_summary))
+    result = create_register_entry(
+        spy, _TENANT_ID, _valid_input(exit_strategy_summary=long_summary), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso"
+    )
     assert result.exit_strategy_summary is not None
     assert not result.exit_strategy_summary.startswith(" ")
     assert not result.exit_strategy_summary.endswith(" ")
