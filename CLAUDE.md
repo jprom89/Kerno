@@ -1860,6 +1860,30 @@ instead of "no such window". Worth checking whether the underlying
 `build_and_record_submission` raises something unmapped or fails on a NULL
 lookup result before the not-found check.
 
+### Backlog — one test should police the teardown list, not each ticket
+
+KER-409 found `dora_register_entries` and `dora_submission_runs` missing from
+`_teardown_seed_data`, which made any test reading the register order-dependent
+and leaked rows into the dev tenant. Both are fixed. Two tenant-scoped tables
+are still absent, and each is a different failure mode:
+
+- **`recommendations`** — no FK to `tenants`, so leftovers never fail teardown
+  loudly. KER-401's tests self-clean because conftest does not. This is the
+  same silent shape the DORA gap had.
+- **`users`** — has an FK to `tenants`, so a leak fails teardown loudly.
+  KER-408's tests clean their own rows.
+
+The fix is not to keep adding table names as each ticket trips over one. It is
+a single test that reads `information_schema` for every table carrying a
+`tenant_id` column and asserts that set is a subset of the teardown list. That
+generalised check would have caught the DORA gap before KER-409 hit it, and it
+catches the next one for free.
+
+Deliberately not done in KER-410: that is a UI ticket, and this is testing
+infrastructure. It belongs in a testing-infra pass with the two missing tables
+fixed at the same time — adding the check without adding them would land a
+red test.
+
 ### Recorded, not scoped
 
 Raised by the audit, parked without estimates:

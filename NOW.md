@@ -30,15 +30,30 @@ One UI: Next.js `frontend/`.
 **Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
 B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 
-**Next session — fill the hole Ticket B opened. In scope together:**
+**KER-409 — ✅ LANDED on `origin/main` at `0b3e63e`. Do not re-implement it.**
+The ledger writes and the submissions 404 are done and covered by six live-DB
+tests in `tests/integration/test_ker409_register_ledger.py`. If you are reading
+this to pick up work, start at KER-410.
 
-| Ticket | What |
-|---|---|
-| **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). |
-| **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. |
-| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. |
+| Ticket | What | Status |
+|---|---|---|
+| **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). | ✅ done `0b3e63e` |
+| **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. | next |
+| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | after 410 |
 
-Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is worse than no UI.
+Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is
+worse than no UI — that prerequisite is now met.
+
+### KER-410 constraints (confirmed 14 August 2026)
+
+- No work in `src/dashboard/`. It is development-only since Ticket B and is
+  not being rebuilt.
+- No KER-405 work beyond what Ticket D already shipped.
+- No coverage chrome, no RAG, no generate-all.
+- No CRA, incidents, country packs, or MSP.
+- **Auditor writes stay gated by Ticket A's 403s.** The UI hides
+  create/edit/start-run for `auditor`; it does not re-do RBAC. Hiding a
+  button is UX, the 403 is the guarantee.
 
 ### Confirmed before start (14 August 2026)
 
@@ -153,6 +168,8 @@ Pulled from the August 2026 audit. Register KER-107 and submissions 404 are
 - PDF page cap; evidence list pagination
 - `FILE_STRUCTURE.md` full reconciliation against the live tree
 - `close-callback` HMAC (KER-205 pattern), not a human RBAC role
+- Teardown-coverage test: assert every table with a `tenant_id` column is in
+  `_teardown_seed_data`'s list (see CLAUDE.md §17)
 
 ## How to add work
 
