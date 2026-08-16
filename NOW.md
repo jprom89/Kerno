@@ -30,19 +30,30 @@ One UI: Next.js `frontend/`.
 **Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
 B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 
-**KER-409 — ✅ LANDED on `origin/main` at `0b3e63e`. Do not re-implement it.**
-The ledger writes and the submissions 404 are done and covered by six live-DB
-tests in `tests/integration/test_ker409_register_ledger.py`. If you are reading
-this to pick up work, start at KER-410.
+**KER-409 and KER-410 are LANDED on `origin/main`. Do not re-implement either.**
+The ledger writes and the submissions 404 are done (six live-DB tests in
+`tests/integration/test_ker409_register_ledger.py`). The Next.js register —
+list, detail, create, amend — is done. If you are reading this to pick up work,
+start at KER-411.
 
 | Ticket | What | Status |
 |---|---|---|
 | **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). | ✅ done `0b3e63e` |
-| **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. | next |
-| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | after 410 |
+| **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. | ✅ done `729cc34` |
+| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | **this session** |
 
 Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is
-worse than no UI — that prerequisite is now met.
+worse than no UI — that prerequisite is met.
+
+### Standing pre-flight — restart the API from HEAD before any live E2E
+
+Do not assume a running `uvicorn` is on the current commit. It usually is not:
+the process was started earlier in the session and does not reload. This has
+produced a confident wrong answer twice — Ticket A read as six ungated routes,
+and KER-410 read as zero ledger entries — and both times the code was correct
+and the server was old. Restart it, then click through:
+
+    python -m uvicorn src.api.app:app --port 8000 --log-level warning
 
 ### KER-410 constraints (confirmed 14 August 2026)
 

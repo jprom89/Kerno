@@ -13,3 +13,14 @@
 
 /** Roles permitted to add or amend a DORA register entry (mirrors REGISTER_CAPABLE_ROLES). */
 export const REGISTER_WRITE_ROLES = ["compliance_lead", "vciso"];
+
+/**
+ * Roles permitted to start a submission run (mirrors SUBMISSION_CAPABLE_ROLES).
+ *
+ * Deliberately a separate constant from REGISTER_WRITE_ROLES even though the
+ * two lists are identical today — the server keeps them separate for the same
+ * reason: editing the register and filing it are different authorities and may
+ * not stay the same. Reusing one for both would make a future role change to
+ * one silently move the other.
+ */
+export const SUBMISSION_WRITE_ROLES = ["compliance_lead", "vciso"];

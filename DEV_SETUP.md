@@ -58,11 +58,26 @@ npm run dev
 - Dashboard login: `http://localhost:3000/login`
 - Organisation: `dev-tenant` (required since KER-408 — an email is unique only
   within one organisation, so it alone does not identify an account)
+- To add or amend register entries, log in as `compliance_lead@kerno.local`
+  with `$DEV_SEED_PASSWORD` from your `.env`. Any role can read the register;
+  only `compliance_lead` and `vciso` can write, and the server returns 403 to
+  everyone else regardless of what the UI shows.
 
-The legacy static dashboard at `http://localhost:8001/dashboard/login.html` is
-still served when `KERNO_ENV=development`, but it is frozen: it keeps its JWT in
-localStorage and is not the surface being developed. It remains the only UI for
-the DORA register and submission windows.
+**The DORA register lives at `/dashboard/register`** (KER-410) — list, detail,
+create and amend. Every addition and amendment writes a KER-107 ledger entry
+attributed to the logged-in user (KER-409).
+
+**Submission windows and runs are still only on the legacy dashboard** until
+KER-411 lands. The legacy static dashboard at
+`http://localhost:8001/dashboard/login.html` is served only when
+`KERNO_ENV=development`, and it is otherwise frozen: it keeps its JWT in
+localStorage and is not the surface being developed.
+
+### Before any manual click-through, restart the API
+
+A running `uvicorn` does not reload, so it is probably serving whatever commit
+you started it on. Restart it before verifying anything by hand — a stale
+process has twice reported a feature missing that was in fact present.
 
 ## Database & migrations
 

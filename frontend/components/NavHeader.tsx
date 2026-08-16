@@ -11,15 +11,26 @@
 
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 interface NavHeaderProps {
   email: string;
   role: string;
 }
 
+// Register leads: it is the record the product maintains. Submissions is the
+// other half — filing that record. Coverage and the rest are views onto it.
+const NAV_LINKS = [
+  { href: "/dashboard/register", label: "Register" },
+  { href: "/dashboard/submissions", label: "Submissions" },
+  { href: "/dashboard", label: "Coverage" },
+  { href: "/dashboard/recommendations", label: "Recommendations" },
+  { href: "/dashboard/evidence", label: "Evidence" },
+];
+
 export default function NavHeader({ email, role }: NavHeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -31,23 +42,26 @@ export default function NavHeader({ email, role }: NavHeaderProps) {
     <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
       <nav className="flex items-center gap-6">
         <span className="text-lg font-semibold tracking-tight text-slate-900">Kerno</span>
-        {/* Register leads: it is the record the product maintains. Coverage is
-            a read-only view of how well it is evidenced, not the product. */}
-        <a
-          href="/dashboard/register"
-          className="text-sm font-medium text-slate-900 hover:text-slate-900"
-        >
-          Register
-        </a>
-        <a href="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">
-          Coverage
-        </a>
-        <a href="/dashboard/recommendations" className="text-sm text-slate-600 hover:text-slate-900">
-          Recommendations
-        </a>
-        <a href="/dashboard/evidence" className="text-sm text-slate-600 hover:text-slate-900">
-          Evidence
-        </a>
+        {NAV_LINKS.map((link) => {
+          // /dashboard is the Coverage home, so it must match exactly —
+          // startsWith would mark it current on every dashboard page.
+          const current =
+            link.href === "/dashboard" ? pathname === link.href : pathname.startsWith(link.href);
+          return (
+            <a
+              key={link.href}
+              href={link.href}
+              aria-current={current ? "page" : undefined}
+              className={
+                current
+                  ? "text-sm font-medium text-slate-900"
+                  : "text-sm text-slate-600 hover:text-slate-900"
+              }
+            >
+              {link.label}
+            </a>
+          );
+        })}
       </nav>
       <div className="flex items-center gap-4">
         <span className="text-sm text-slate-600">{email}</span>

@@ -179,6 +179,88 @@ export async function fetchEvidence(linked?: boolean): Promise<EvidencePage> {
   return (await response.json()) as EvidencePage;
 }
 
+/**
+ * One filing window from GET /api/v1/submissions/windows (KER-411).
+ *
+ * Note the bare `id` — submission windows and runs use it, while register
+ * entries use `register_entry_id` and reporting windows use
+ * `reporting_window_id`. Copying a register key pattern here yields undefined.
+ *
+ * This is global reference data: no tenant_id, and the backend route carries no
+ * authentication at all. It is still fetched through the same cookie-bearing
+ * proxy as everything else so the page stays behind the dashboard layout.
+ */
+export interface SubmissionWindow {
+  id: string;
+  authority_code: string;
+  reporting_year: number;
+  register_reference_date: string;
+  window_open_date: string;
+  window_close_date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One submission run from the /api/v1/submissions/runs endpoints (KER-411). */
+export interface SubmissionRun {
+  id: string;
+  tenant_id: string;
+  submission_window_id: string;
+  reporting_year: number;
+  status: string;
+  validation_overall_status: string;
+  validation_issue_count: number;
+  entry_count: number;
+  created_at: string;
+  updated_at: string;
+  submitted_at: string | null;
+  submission_reference: string | null;
+}
+
+/**
+ * Fetch the filing windows that are open today.
+ *
+ * "Open" is a date range on the server — window_open_date <= today <=
+ * window_close_date, inclusive — with no status column behind it. A closed
+ * window is simply absent rather than listed as closed, so an empty array means
+ * "none open today", which is not the same as "none configured".
+ */
+export async function fetchOpenWindows(): Promise<SubmissionWindow[]> {
+  const response = await apiFetch("/api/v1/submissions/windows");
+  if (!response.ok) {
+    throw new Error(`submission windows failed: ${response.status}`);
+  }
+  return (await response.json()) as SubmissionWindow[];
+}
+
+/** Fetch the tenant's submission runs, newest reporting year and run first. */
+export async function fetchSubmissionRuns(): Promise<SubmissionRun[]> {
+  const response = await apiFetch("/api/v1/submissions/runs");
+  if (!response.ok) {
+    throw new Error(`submission runs failed: ${response.status}`);
+  }
+  return (await response.json()) as SubmissionRun[];
+}
+
+/**
+ * Fetch one submission run, or null when it does not exist for this tenant.
+ *
+ * Treats a 500 as not-found too, deliberately: run_id reaches SQL as a plain
+ * string, so a malformed id fails the uuid cast and surfaces as a 500 rather
+ * than a 404. Both mean "no such run" to someone following a bad link, and
+ * rendering the 404 page beats an error page with a correlation ID.
+ */
+export async function fetchSubmissionRun(runId: string): Promise<SubmissionRun | null> {
+  const response = await apiFetch(`/api/v1/submissions/runs/${encodeURIComponent(runId)}`);
+  if (response.status === 404 || response.status === 500) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`submission run failed: ${response.status}`);
+  }
+  return (await response.json()) as SubmissionRun;
+}
+
 /** One ICT third-party provider line in the DORA Register of Information (KER-410). */
 export interface RegisterEntry {
   register_entry_id: string;
