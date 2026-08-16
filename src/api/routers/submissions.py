@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from src.api.dependencies import get_conn, get_tenant_id, require_role
+from src.api.dependencies import get_conn, get_tenant_id, require_lookup_id, require_role
 
 # get_reviewer_id is the existing verified-JWT user identity (KER-202); reused
 # here so filing a register attributes to the same actor an override does.
@@ -41,9 +41,11 @@ def create_run(
 ) -> SubmissionRunResponse:
     """Trigger a submission run for the authenticated tenant, attributed to the caller.
 
-    Raises EntryNotFoundError — 404, not the generic 500 — when the named
-    submission window does not exist.
+    A submission_window_id that does not exist is a 404, and so is one that is
+    not a well-formed id — both mean the same thing to the caller, and neither
+    should reach the generic 500 handler.
     """
+    require_lookup_id(body.submission_window_id, resource="submission window")
     run, _ = build_and_record_submission(
         conn, tenant_id, body.submission_window_id, actor_id=user_id, actor_role=rbac_role
     )
@@ -56,7 +58,8 @@ def get_run(
     tenant_id: str = Depends(get_tenant_id),
     conn=Depends(get_conn),
 ) -> SubmissionRunResponse:
-    """Return a single submission run by ID for the authenticated tenant. Raises 404 if not found."""
+    """Return one submission run for the authenticated tenant, or 404 if not found or not a valid ID."""
+    require_lookup_id(run_id, resource="submission run")
     run = get_submission_run(conn, tenant_id, run_id)
     if run is None:
         raise EntryNotFoundError(f"submission run {run_id!r} not found")

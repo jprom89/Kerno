@@ -61,6 +61,19 @@ def _make_entry_output() -> RegisterEntryOutput:
     )
 
 
+def _valid_body() -> dict:
+    """Return a request body that passes schema validation, for tests about what happens next."""
+    return {
+        "provider_name": "AWS",
+        "service_name": "EC2",
+        "provider_type": "cloud",
+        "criticality_level": "critical",
+        "business_function": "compute",
+        "data_types": ["pii"],
+        "countries_supported": ["DE"],
+    }
+
+
 def _override_get_conn():
     yield MagicMock()
 
@@ -173,7 +186,7 @@ def test_create_entry_returns_201():
 def test_list_reporting_windows_requires_no_auth():
     now = datetime(2025, 1, 1, tzinfo=timezone.utc)
     window = ReportingWindowOutput(
-        reporting_window_id="w0000000-0000-4000-w000-000000000001",
+        reporting_window_id="b0000000-0000-4000-b000-000000000001",
         authority_code="MFSA",
         authority_name="Malta Financial Services Authority",
         member_state="MT",
@@ -191,3 +204,60 @@ def test_list_reporting_windows_requires_no_auth():
         response = client.get("/api/v1/register/windows")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+# ── KER-412: validation reports why; a bad id is a 404, never a 500 ──────────
+
+
+def test_invalid_field_value_returns_422_with_the_reason():
+    # Before KER-412 this reached the generic handler and returned 500 with a
+    # correlation ID — for a mistake the person filling in the form can fix.
+    error = ValueError("provider_type 'blockchain' is not allowed")
+    with patch("src.api.routers.register.create_register_entry", side_effect=error):
+        client = TestClient(_app_both_overrides())
+        response = client.post("/api/v1/register/entries", json=_valid_body())
+    assert response.status_code == 422
+    assert "blockchain" in response.json()["detail"]
+
+
+def test_invalid_field_value_on_patch_returns_422_with_the_reason():
+    error = ValueError("contract_end_date must not be before contract_start_date")
+    with patch("src.api.routers.register.update_register_entry", side_effect=error):
+        client = TestClient(_app_both_overrides())
+        response = client.patch(f"/api/v1/register/entries/{_ENTRY_ID}", json=_valid_body())
+    assert response.status_code == 422
+    assert "contract_end_date" in response.json()["detail"]
+
+
+def test_malformed_entry_id_is_a_404_not_a_500():
+    # entry_id is compared against a uuid column, so a malformed value used to
+    # fail the cast inside PostgreSQL and surface as a 500.
+    client = TestClient(_app_both_overrides())
+    response = client.get("/api/v1/register/entries/not-a-uuid")
+    assert response.status_code == 404
+
+
+def test_malformed_entry_id_on_patch_is_a_404_not_a_500():
+    client = TestClient(_app_both_overrides())
+    response = client.patch("/api/v1/register/entries/not-a-uuid", json=_valid_body())
+    assert response.status_code == 404
+
+
+def test_malformed_and_missing_entry_ids_are_indistinguishable():
+    # No existence oracle: "that is not an id" and "no such entry" must look the
+    # same to a caller probing for which register entries exist.
+    client = TestClient(_app_both_overrides())
+    with patch("src.api.routers.register.get_register_entry", return_value=None):
+        missing = client.get(f"/api/v1/register/entries/{_ENTRY_ID}")
+    malformed = client.get("/api/v1/register/entries/not-a-uuid")
+    assert missing.status_code == malformed.status_code == 404
+    assert missing.json() == malformed.json()
+
+
+def test_malformed_entry_id_never_reaches_the_database():
+    # The guard answers before any query, so a junk id costs no round trip.
+    with patch("src.api.routers.register.get_register_entry") as service:
+        client = TestClient(_app_both_overrides())
+        response = client.get("/api/v1/register/entries/not-a-uuid")
+    assert response.status_code == 404
+    service.assert_not_called()

@@ -40,16 +40,26 @@ describe("fetchSubmissionRun", () => {
     await expect(fetchSubmissionRun("11111111-1111-4111-8111-111111111111")).resolves.toBeNull();
   });
 
-  it("returns null for a malformed id rather than throwing", async () => {
-    // The backend cannot 404 this: run_id is typed str, so a non-uuid reaches
-    // the uuid comparison and surfaces as a 500.
+  it("returns null for a malformed id, which the backend 404s", async () => {
+    // KER-412: an id that cannot be a UUID is rejected before it reaches the
+    // database, so it arrives here as an ordinary 404 like any missing run.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: "entry not found" }),
+    } as Response);
+
+    await expect(fetchSubmissionRun("not-a-uuid")).resolves.toBeNull();
+  });
+
+  it("still throws on a genuine server error rather than hiding it as not-found", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 500,
       json: async () => ({ detail: "internal server error" }),
     } as Response);
 
-    await expect(fetchSubmissionRun("not-a-uuid")).resolves.toBeNull();
+    await expect(fetchSubmissionRun("run-1")).rejects.toThrow("submission run failed: 500");
   });
 
   it("returns the run and sends the session token when it exists", async () => {

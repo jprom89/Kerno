@@ -245,14 +245,14 @@ export async function fetchSubmissionRuns(): Promise<SubmissionRun[]> {
 /**
  * Fetch one submission run, or null when it does not exist for this tenant.
  *
- * Treats a 500 as not-found too, deliberately: run_id reaches SQL as a plain
- * string, so a malformed id fails the uuid cast and surfaces as a 500 rather
- * than a 404. Both mean "no such run" to someone following a bad link, and
- * rendering the 404 page beats an error page with a correlation ID.
+ * A malformed id is a 404 too — the backend rejects an id that cannot be a UUID
+ * before it reaches the database (KER-412), so this does not need to treat a
+ * 500 as not-found. It deliberately does not: a 500 means something is actually
+ * wrong, and quietly rendering it as "no such run" would hide that.
  */
 export async function fetchSubmissionRun(runId: string): Promise<SubmissionRun | null> {
   const response = await apiFetch(`/api/v1/submissions/runs/${encodeURIComponent(runId)}`);
-  if (response.status === 404 || response.status === 500) {
+  if (response.status === 404) {
     return null;
   }
   if (!response.ok) {

@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 
 from config.constants import EMBEDDING_DIMENSION
+from src.exceptions import EntryNotFoundError
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
@@ -165,6 +166,24 @@ def require_role(*allowed_roles: str):
         return role
 
     return _require_role_dependency
+
+
+def require_lookup_id(candidate: str, *, resource: str) -> str:
+    """Return the id unchanged, or raise EntryNotFoundError if it cannot be one.
+
+    Path and body identifiers arrive as plain strings and are compared against
+    uuid columns, so a malformed value reaches PostgreSQL and fails the cast —
+    surfacing as a 500 with a correlation ID for what is only a wrong id. An id
+    that is not a UUID cannot name a row that exists, so the honest answer is
+    the same 404 an absent-but-well-formed id gets, and it is given without
+    touching the database. Deliberately does NOT tell the caller which of the
+    two it was: that would be an existence oracle. (KER-412.)
+    """
+    try:
+        uuid.UUID(candidate)
+    except (ValueError, AttributeError, TypeError):
+        raise EntryNotFoundError(f"{resource} {candidate!r} not found") from None
+    return candidate
 
 
 def get_conn() -> Generator:

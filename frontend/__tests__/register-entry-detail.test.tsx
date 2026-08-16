@@ -93,10 +93,14 @@ describe("RegisterEntryDetail", () => {
   });
 
   it("keeps the form open and reports the failure when the backend rejects it", async () => {
+    // The 422-with-a-string-reason this asserts is what the server actually
+    // returns as of KER-412; before that, register field validation reached the
+    // generic handler and came back as a 500, so this stub described a shape
+    // the backend never produced. Message copied verbatim from the service.
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       status: 422,
-      json: async () => ({ detail: "contract_end_date must be after contract_start_date." }),
+      json: async () => ({ detail: "contract_end_date must not be before contract_start_date" }),
     } as Response);
 
     render(<RegisterEntryDetail entry={ENTRY} readOnly={false} />);

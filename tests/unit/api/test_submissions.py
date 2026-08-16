@@ -18,7 +18,7 @@ from src.services.dora_roi_submission_service import SubmissionRunOutput, Submis
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _ACTOR_ID = "d0000000-0000-4000-d000-000000000004"
 _WINDOW_ID = "b0000000-0000-4000-b000-000000000001"
-_RUN_ID = "r0000000-0000-4000-r000-000000000001"
+_RUN_ID = "f0000000-0000-4000-f000-000000000001"
 
 os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
@@ -127,3 +127,43 @@ def test_list_windows_requires_no_auth():
     assert response.status_code == 200
     assert isinstance(response.json(), list)
     assert response.json()[0]["authority_code"] == "MFSA"
+
+
+# ── KER-412: a bad id is a 404, never a 500 ─────────────────────────────────
+
+
+def test_malformed_run_id_is_a_404_not_a_500():
+    # run_id is compared against a uuid column, so a malformed value used to
+    # fail the cast inside PostgreSQL and reach the generic 500 handler.
+    client = TestClient(_app_both_overrides())
+    response = client.get("/api/v1/submissions/runs/not-a-uuid")
+    assert response.status_code == 404
+
+
+def test_malformed_and_missing_run_ids_are_indistinguishable():
+    client = TestClient(_app_both_overrides())
+    with patch("src.api.routers.submissions.get_submission_run", return_value=None):
+        missing = client.get(f"/api/v1/submissions/runs/{_RUN_ID}")
+    malformed = client.get("/api/v1/submissions/runs/not-a-uuid")
+    assert missing.status_code == malformed.status_code == 404
+    assert missing.json() == malformed.json()
+
+
+def test_malformed_window_id_on_create_is_a_404_not_a_500():
+    client = TestClient(_app_both_overrides())
+    response = client.post(
+        "/api/v1/submissions/runs", json={"submission_window_id": "not-a-uuid"}
+    )
+    assert response.status_code == 404
+
+
+def test_malformed_window_id_never_starts_a_run():
+    # The guard runs before build_and_record_submission, so a junk window id
+    # cannot build an export, write a run row, or append a ledger entry.
+    with patch("src.api.routers.submissions.build_and_record_submission") as service:
+        client = TestClient(_app_both_overrides())
+        response = client.post(
+            "/api/v1/submissions/runs", json={"submission_window_id": "not-a-uuid"}
+        )
+    assert response.status_code == 404
+    service.assert_not_called()
