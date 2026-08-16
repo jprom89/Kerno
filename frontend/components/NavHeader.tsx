@@ -31,6 +31,14 @@ export default function NavHeader({ email, role }: NavHeaderProps) {
     <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
       <nav className="flex items-center gap-6">
         <span className="text-lg font-semibold tracking-tight text-slate-900">Kerno</span>
+        {/* Register leads: it is the record the product maintains. Coverage is
+            a read-only view of how well it is evidenced, not the product. */}
+        <a
+          href="/dashboard/register"
+          className="text-sm font-medium text-slate-900 hover:text-slate-900"
+        >
+          Register
+        </a>
         <a href="/dashboard" className="text-sm text-slate-600 hover:text-slate-900">
           Coverage
         </a>

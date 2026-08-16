@@ -178,3 +178,48 @@ export async function fetchEvidence(linked?: boolean): Promise<EvidencePage> {
   }
   return (await response.json()) as EvidencePage;
 }
+
+/** One ICT third-party provider line in the DORA Register of Information (KER-410). */
+export interface RegisterEntry {
+  register_entry_id: string;
+  tenant_id: string;
+  provider_name: string;
+  service_name: string;
+  provider_type: string;
+  criticality_level: string;
+  business_function: string;
+  data_types: string[];
+  countries_supported: string[];
+  contract_start_date: string | null;
+  contract_end_date: string | null;
+  exit_strategy_summary: string | null;
+  is_active: boolean;
+  source_record_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Fetch every active register entry for the tenant. */
+export async function fetchRegisterEntries(): Promise<RegisterEntry[]> {
+  const response = await apiFetch("/api/v1/register/entries");
+  if (!response.ok) {
+    throw new Error(`register entries failed: ${response.status}`);
+  }
+  return (await response.json()) as RegisterEntry[];
+}
+
+/**
+ * Fetch one register entry, or null when the backend reports it does not exist.
+ * A missing entry is a 404 page, not a crash — the id comes from a URL a user
+ * can edit or a stale bookmark.
+ */
+export async function fetchRegisterEntry(entryId: string): Promise<RegisterEntry | null> {
+  const response = await apiFetch(`/api/v1/register/entries/${encodeURIComponent(entryId)}`);
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`register entry failed: ${response.status}`);
+  }
+  return (await response.json()) as RegisterEntry;
+}
