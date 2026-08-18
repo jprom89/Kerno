@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.5 | Updated: 2026-08-14 | Changes: KER-409/410/411 session constraints locked in NOW.md -->
+<!-- Version: 2.6 | Updated: 2026-08-18 | Changes: KER-409–412 landed; next is KER-402 not another DORA UI rebuild -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -15,15 +15,17 @@ constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 14 August 2026 Kerno is an EU **system of record** (live DORA
+As of 18 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
 dashboard. Landed and not to be re-built: hygiene C1/A/B/D, **KER-409**
-(ledger on every register write + submissions 404) at `0b3e63e`, and
-**KER-410** (Next.js register list/detail/create/amend) at `729cc34`.
-In flight: **KER-411** — Next.js submission windows and runs. Session
-constraints are in `NOW.md`, which is authoritative for status; if this
-paragraph and `NOW.md` ever disagree, `NOW.md` wins. Do not add coverage
-features, RAG, CRA, incidents, country packs, or MSP.
+(ledger on every register write + submissions 404) at `0b3e63e`,
+**KER-410** (Next.js register) at `729cc34`, **KER-411** (Next.js
+windows and runs) at `521b387`, and **KER-412** (register 422 / bad ids
+404) at `36df799`. Next is **KER-402** (thin generate button), then
+HTTPS and one filing download — not another register UI. Status lives
+in `NOW.md`; if this paragraph and `NOW.md` ever disagree, `NOW.md`
+wins. Do not add coverage features, RAG, CRA, incidents, country packs,
+or MSP.
 
 `KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement

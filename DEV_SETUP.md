@@ -67,8 +67,9 @@ npm run dev
 create and amend. Every addition and amendment writes a KER-107 ledger entry
 attributed to the logged-in user (KER-409).
 
-**Submission windows and runs are still only on the legacy dashboard** until
-KER-411 lands. The legacy static dashboard at
+**Submission windows and runs live at `/dashboard/submissions`** (KER-411) —
+open windows, start a run, run history. A malformed register or run id is a
+404, not a 500 (KER-412). The legacy static dashboard at
 `http://localhost:8001/dashboard/login.html` is served only when
 `KERNO_ENV=development`, and it is otherwise frozen: it keeps its JWT in
 localStorage and is not the surface being developed.

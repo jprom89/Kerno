@@ -1,4 +1,4 @@
-# NOW.md — Current mandate (14 August 2026)
+# NOW.md — Current mandate (18 August 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
 outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
@@ -19,9 +19,10 @@ Coverage grids, recommendation queues, and LLM rationale are **how a human
 updates that record**. They are not the product. A US GRC buyer already
 sells a coverage dashboard. Do not finish another one.
 
-The hole, after Ticket B turns off `src/dashboard/` outside dev: the DORA
-register and submissions APIs exist; the **product UI does not**. Fill that
-hole in `frontend/`. Do not replace it with more NIS2 cards.
+Ticket B turned off `src/dashboard/` outside development. The DORA register
+and submissions now live in Next.js (`/dashboard/register`,
+`/dashboard/submissions`). Do not rebuild that UI. Do not replace the next
+slice with more NIS2 cards.
 
 ## Product slice in force
 
@@ -30,20 +31,18 @@ One UI: Next.js `frontend/`.
 **Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
 B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 
-**KER-409 and KER-410 are LANDED on `origin/main`. Do not re-implement either.**
-The ledger writes and the submissions 404 are done (six live-DB tests in
-`tests/integration/test_ker409_register_ledger.py`). The Next.js register —
-list, detail, create, amend — is done. If you are reading this to pick up work,
-start at KER-411.
+**KER-409 through KER-412 are LANDED on `origin/main`. Do not re-implement
+any of them.** The DORA hole Ticket B opened is filled: ledgered register
+writes, Next.js register, Next.js windows/runs, and contract-shaped errors
+on the form those pages use. If you are reading this to pick up work, do
+**not** start another register or submissions UI ticket.
 
 | Ticket | What | Status |
 |---|---|---|
 | **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). | ✅ done `0b3e63e` |
 | **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. | ✅ done `729cc34` |
-| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | **this session** |
-
-Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is
-worse than no UI — that prerequisite is met.
+| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | ✅ done `521b387` |
+| **KER-412** | Register field validation is HTTP 422 with the service reason; an id that cannot be a UUID is 404, byte-identical to missing. `fetchSubmissionRun` no longer maps 500 to not-found. | ✅ done `36df799` |
 
 ### Standing pre-flight — restart the API from HEAD before any live E2E
 
@@ -66,7 +65,7 @@ and the server was old. Restart it, then click through:
   create/edit/start-run for `auditor`; it does not re-do RBAC. Hiding a
   button is UX, the 403 is the guarantee.
 
-### Confirmed before start (14 August 2026)
+### Standing decisions from the 409–411 sitting (still bind)
 
 **409 tests are two behaviours, two tests.** Live-DB coverage must assert the ledger row and the 404 as **separate tests**, not one incidental pass. Minimum:
 
@@ -81,18 +80,18 @@ Do not fold the 404 case into the happy-path ledger test.
 
 **409 first is non-negotiable. 410 before 411 is not a data dependency.** `POST /submissions/runs` looks up a global `dora_submission_windows` row, then builds an export from whatever active register entries exist. Zero entries is a valid run: `entry_count=0`, ROI_000 FAIL, status `draft`. 411 can be tested with no 410 rows. A passing (`ready`) filing in a demo needs entries from 410; that is demo quality, not a test blocker. Windows are not in `seed_dev_tenant.py` — 411 tests insert their own window; do not invent a country-pack seeder.
 
-Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independently testable.
+Order in that sitting was 409 → 410 → 411, then 412 for the 500s the new
+UI actually hits. All four are done. Do not reopen them.
 
-**After that, not in the same session:**
+**Next session (do not rebuild the register):**
 
-4. Thin generate button (KER-402) — wire only, no new engine.
-5. HTTPS + `ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder.
-6. One filing **download** from the Next.js register (existing export package).
-7. Partner’s own vendors and evidence.
+1. Thin generate button (KER-402) — wire only, no new engine.
+2. HTTPS + `ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder.
+3. One filing **download** from the Next.js register (existing export package).
+4. Partner’s own vendors and evidence.
 
-Nav should lead with Register once KER-410 exists. Coverage stays a
-read-only view. Do not add coverage features, Trust Center polish, or
-recommendation chrome until KER-409–411 exist.
+Nav already leads with Register. Coverage stays a read-only view. Do not
+add coverage features, Trust Center polish, or recommendation chrome.
 
 ## Honest claim (demo, deck, outreach)
 
@@ -125,9 +124,8 @@ Treat it as reserved machinery (KER-404 later), not as the product identity.
 - Next.js `frontend/` is the product UI.
 - `src/dashboard/` (localStorage JWT) is legacy. Do not extend it. Ticket B
   stops serving it outside development.
-- After Ticket B, DORA is API-only until the Next.js register session
-  ships. That gap is the next product ticket — not a reason to keep the
-  localStorage app.
+- Register and submissions are in Next.js. `src/dashboard/` is not a
+  fallback for missing DORA UI. Do not extend it.
 
 ## In flight — do not duplicate
 
@@ -164,8 +162,8 @@ KER-405 stays on hold except the two items in Ticket D.
 
 ## Backlog — log only, do not start
 
-Pulled from the August 2026 audit. Register KER-107 and submissions 404 are
-**not** in this list — they are in the next session's scope above.
+Pulled from the August 2026 audit. Register KER-107 (KER-409) and
+submissions 404 are **done** — they are not in this list.
 
 - C2 — app DB role is not the table owner; FORCE on `users` and
   `webhook_registrations` with a login bootstrap that still works
