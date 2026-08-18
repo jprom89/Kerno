@@ -12,6 +12,8 @@ import Link from "next/link";
 import ControlList from "@/components/ControlList";
 import ExportButton from "@/components/ExportButton";
 import { fetchCoverageControls, fetchMe } from "@/lib/api";
+// UI gating only — the backend 403s for real (Ticket A / KER-401).
+import { GENERATE_ROLES } from "@/lib/roles";
 
 // UI gating only (KER-304 AC-6): hidden for auditor and end_customer_admin.
 const EXPORT_ROLES = ["compliance_lead", "vciso", "security_engineer", "platform_engineer"];
@@ -24,6 +26,7 @@ export default async function ControlsPage({
   const { category } = await searchParams;
   const [controls, me] = await Promise.all([fetchCoverageControls(category), fetchMe()]);
   const canExport = me !== null && EXPORT_ROLES.includes(me.role);
+  const canGenerate = me !== null && GENERATE_ROLES.includes(me.role);
 
   return (
     <section>
@@ -38,7 +41,7 @@ export default async function ControlsPage({
           </Link>
         </div>
       </div>
-      <ControlList controls={controls} />
+      <ControlList controls={controls} canGenerate={canGenerate} />
     </section>
   );
 }

@@ -24,3 +24,12 @@ export const REGISTER_WRITE_ROLES = ["compliance_lead", "vciso"];
  * one silently move the other.
  */
 export const SUBMISSION_WRITE_ROLES = ["compliance_lead", "vciso"];
+
+/**
+ * Roles permitted to trigger an on-demand analysis of a control (mirrors
+ * GENERATE_CAPABLE_ROLES).
+ *
+ * Not REGISTER_WRITE_ROLES reused: generate includes security_engineer, which
+ * register writes do not — the lists differ TODAY, not just potentially.
+ */
+export const GENERATE_ROLES = ["compliance_lead", "vciso", "security_engineer"];

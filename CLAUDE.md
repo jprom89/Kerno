@@ -15,15 +15,17 @@ constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 14 August 2026 Kerno is an EU **system of record** (live DORA
+As of 18 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
 dashboard. Landed and not to be re-built: hygiene C1/A/B/D, **KER-409**
-(ledger on every register write + submissions 404) at `0b3e63e`, and
-**KER-410** (Next.js register list/detail/create/amend) at `729cc34`.
-In flight: **KER-411** — Next.js submission windows and runs. Session
-constraints are in `NOW.md`, which is authoritative for status; if this
-paragraph and `NOW.md` ever disagree, `NOW.md` wins. Do not add coverage
-features, RAG, CRA, incidents, country packs, or MSP.
+(register ledger + submissions 404) at `0b3e63e`, **KER-410** (Next.js
+register) at `729cc34`, **KER-411** (windows + runs) at `521b387`,
+**KER-412** (422s + malformed-id 404s) at `36df799`, and **KER-402**
+(thin per-control Analyse button — wire only, the engine already
+existed). Next: HTTPS + the `.env.example` origin placeholder, then one
+filing download. `NOW.md` is authoritative for status; if this paragraph
+and `NOW.md` ever disagree, `NOW.md` wins. Do not add coverage features,
+RAG, CRA, incidents, country packs, or MSP.
 
 `KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement

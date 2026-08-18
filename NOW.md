@@ -34,13 +34,16 @@ B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 The ledger writes and the submissions 404 are done (six live-DB tests in
 `tests/integration/test_ker409_register_ledger.py`). The Next.js register —
 list, detail, create, amend — is done. If you are reading this to pick up work,
-start at KER-411.
+start at item 5 below (HTTPS + the `.env.example` origin placeholder), then
+item 6 (one filing download). Not another recommendations page.
 
 | Ticket | What | Status |
 |---|---|---|
 | **KER-409** | Ledger + 404. `create_register_entry` / `update_register_entry` append KER-107 in the same transaction (JWT `user_id`, `before_state` on PATCH). Same ledger write on `POST /submissions/runs`. Unknown `submission_window_id` → `EntryNotFoundError` (404), not `ValueError` (500). | ✅ done `0b3e63e` |
 | **KER-410** | Next.js register: list/detail/create/edit on existing `/api/v1/register` routes. Nav leads with Register. Do not rebuild `src/dashboard/`. | ✅ done `729cc34` |
-| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | **this session** |
+| **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | ✅ done `521b387` |
+| **KER-412** | Register validation → 422 with the reason; malformed ids → 404. | ✅ done `36df799` |
+| **KER-402** | Thin Analyse button on `/dashboard/controls` — wire to the existing `POST /api/v1/recommendations/generate` only. No new engine, no analyse-all. | ✅ done (this commit) |
 
 Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is
 worse than no UI — that prerequisite is met.
@@ -85,7 +88,8 @@ Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independen
 
 **After that, not in the same session:**
 
-4. Thin generate button (KER-402) — wire only, no new engine.
+4. ~~Thin generate button (KER-402)~~ — ✅ done. One Analyse button per
+   control row; the engine, RBAC, and rate limit were already live.
 5. HTTPS + `ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder.
 6. One filing **download** from the Next.js register (existing export package).
 7. Partner’s own vendors and evidence.
