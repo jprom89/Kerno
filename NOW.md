@@ -34,8 +34,8 @@ B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
 The ledger writes and the submissions 404 are done (six live-DB tests in
 `tests/integration/test_ker409_register_ledger.py`). The Next.js register —
 list, detail, create, amend — is done. If you are reading this to pick up work,
-start at item 5 below (HTTPS + the `.env.example` origin placeholder), then
-item 6 (one filing download). Not another recommendations page.
+start at item 6 below: one filing download from the Next.js register, using
+the existing export package. Not another recommendations page.
 
 | Ticket | What | Status |
 |---|---|---|
@@ -90,8 +90,15 @@ Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independen
 
 4. ~~Thin generate button (KER-402)~~ — ✅ done. One Analyse button per
    control row; the engine, RBAC, and rate limit were already live.
-5. HTTPS + `ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder.
-6. One filing **download** from the Next.js register (existing export package).
+5. ~~`ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder~~ —
+   ✅ done. Placeholder is `https://REPLACE-ME.invalid` (RFC 2606, cannot
+   be registered), the API refuses to start outside development while a
+   placeholder is still in the allow-list, and `KERNO_ENABLE_DOCS=1`
+   serves the docs without remounting `/dashboard/` or unlocking the seed
+   scripts. Putting the API on an HTTPS host is a founder task, not a
+   ticket — nothing in the repo deploys anything.
+6. **NEXT:** one filing **download** from the Next.js register (existing
+   export package).
 7. Partner’s own vendors and evidence.
 
 Nav should lead with Register once KER-410 exists. Coverage stays a

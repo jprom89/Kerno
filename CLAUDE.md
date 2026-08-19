@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.5 | Updated: 2026-08-14 | Changes: KER-409/410/411 session constraints locked in NOW.md -->
+<!-- Version: 2.6 | Updated: 2026-08-19 | Changes: KER-409/410/411/412/402 landed; CORS placeholder fails closed; KERNO_ENABLE_DOCS separated from KERNO_ENV -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -22,8 +22,14 @@ dashboard. Landed and not to be re-built: hygiene C1/A/B/D, **KER-409**
 register) at `729cc34`, **KER-411** (windows + runs) at `521b387`,
 **KER-412** (422s + malformed-id 404s) at `36df799`, and **KER-402**
 (thin per-control Analyse button — wire only, the engine already
-existed). Next: HTTPS + the `.env.example` origin placeholder, then one
-filing download. `NOW.md` is authoritative for status; if this paragraph
+existed), and the **CORS/docs hygiene pass** (the shipped `.env.example`
+origin placeholder is now `https://REPLACE-ME.invalid` and the API refuses
+to start outside development while a placeholder is still in
+`ALLOWED_ORIGINS`; `KERNO_ENABLE_DOCS=1` serves the schema without
+remounting the legacy dashboard or unlocking the seed scripts). Next: **one
+filing download** from the Next.js register, using the existing export
+package. Putting the API on an HTTPS host is the founder's job, not a
+ticket. `NOW.md` is authoritative for status; if this paragraph
 and `NOW.md` ever disagree, `NOW.md` wins. Do not add coverage features,
 RAG, CRA, incidents, country packs, or MSP.
 
@@ -1766,7 +1772,7 @@ word needs a second layer this table does not have. The §15 approved demo
 sentence covers **human** decisions and is unchanged; it must not be extended
 to the AI log.
 
-### Backlog (HIGHER PRIORITY — resolve before the first non-dev deployment) — the docs switch and the dashboard switch should be separable
+### ✅ RESOLVED (19 August 2026) — the docs switch and the dashboard switch are now separable
 
 Both gate on `KERNO_ENV == "development"`, as do the two seed scripts. The
 first time anyone wants API docs on a deployed host, the only lever available
@@ -1775,7 +1781,16 @@ legacy localStorage-JWT dashboard and unlocks `seed_dev_tenant.py` and
 `seed_demo_evidence.py` against that database. One convenience request
 disarms three unrelated controls.
 
-The fix is a separate opt-in (e.g. `KERNO_ENABLE_DOCS`) that turns the schema
+**Resolved:** `KERNO_ENABLE_DOCS=1` (exactly `"1"`; `true`/`yes`/`TRUE` are all
+off, failing closed) serves `/docs`, `/redoc` and `/openapi.json` without
+touching the other two controls. The dashboard mount and both seed scripts
+still gate on `KERNO_ENV == "development"` alone.
+`test_enable_docs_does_not_remount_the_legacy_dashboard` pins the separation by
+name, and a mutation that re-merges the two switches fails it.
+
+The original description follows, for why it mattered.
+
+The fix is a separate opt-in (`KERNO_ENABLE_DOCS`) that turns the schema
 back on without touching the other two. Not built in Ticket B because the
 approved scope named `KERNO_ENV` specifically, and because no staging
 environment exists yet — there is no Dockerfile, compose file, CI workflow or
@@ -1789,7 +1804,7 @@ is the one that must not age quietly into the furniture the way the
 FILE_STRUCTURE.md reconciliation did. The §14 deployment work is its deadline,
 not its suggestion.
 
-### Backlog — shipped CORS placeholder is a credentialed allow-list entry
+### ✅ RESOLVED (19 August 2026) — shipped CORS placeholder is a credentialed allow-list entry
 
 Pre-existing, live, and independent of Ticket B — found while scoping it.
 `.env.example` instructs `cp .env.example .env` and ships
@@ -1803,8 +1818,17 @@ remedy is cheap either way: make the placeholder obviously invalid rather than
 plausibly real — `https://REPLACE-ME.invalid` (the `.invalid` TLD is reserved
 by RFC 2606 and can never be registered by anyone) — and fail startup on a
 non-development environment whose `ALLOWED_ORIGINS` still contains an example
-value. The placeholder swap costs nothing and should be bundled into whatever
-next touches `.env.example`; it does not warrant its own change.
+value.
+
+**Resolved:** the shipped value is now `https://REPLACE-ME.invalid`, kept
+SECOND so the `GET /` fallback to the first entry still points at
+`http://localhost:3000` rather than redirecting a browser to `.invalid`. Both
+example origins are named constants in `config/constants.py`, and the lifespan
+refuses to start outside development while either is in `ALLOWED_ORIGINS` — the
+superseded `vercel.app` one included, so a `.env` copied before the swap still
+fails closed. Development is exempt, because `cp .env.example .env` is the
+documented local path. Unset `ALLOWED_ORIGINS` remains fail-closed CORS and is
+not an error.
 
 Ticket B widens the blast radius slightly, since the same first entry is now
 also the `GET /` redirect target. That is the argument for requiring

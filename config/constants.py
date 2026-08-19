@@ -408,3 +408,19 @@ SUPPORTED_EVIDENCE_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".csv"
 # source_system value stamped on manually uploaded evidence, distinguishing it
 # from webhook-ingested records (which carry their sender's system).
 UPLOAD_SOURCE_SYSTEM: str = "upload"
+
+# Placeholder origins shipped in .env.example. A deployment that copied the
+# example verbatim must not quietly grant credentialed cross-origin access to
+# a name someone else could register, so the app refuses to start outside
+# development if either of these is still in ALLOWED_ORIGINS.
+#
+# .invalid is reserved by RFC 2606 and can never be registered by anyone, which
+# is the whole point of the current placeholder. The superseded one is a real,
+# registrable vercel.app subdomain — it stays in this tuple so a .env copied
+# before the placeholder changed still fails closed rather than silently
+# trusting whoever claimed that name.
+EXAMPLE_ALLOWED_ORIGIN: str = "https://REPLACE-ME.invalid"
+SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN: str = "https://your-vercel-app.vercel.app"
+EXAMPLE_ALLOWED_ORIGINS: frozenset[str] = frozenset(
+    {EXAMPLE_ALLOWED_ORIGIN, SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN}
+)
