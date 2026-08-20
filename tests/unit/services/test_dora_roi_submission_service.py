@@ -19,17 +19,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from config.constants import VALIDATION_SEVERITY_FAIL
 from src.exceptions import TenantContextMissingError
+from src.services.dora_roi_export_service import DORAExportPackage
+from src.services.dora_roi_validation_service import ValidationSummary
 from src.services.dora_roi_submission_service import (
+    FrozenFilingPackage,
     SubmissionRunOutput,
     SubmissionWindowOutput,
     build_and_record_submission,
     create_submission_run,
+    get_frozen_filing_package,
     list_open_windows,
     list_tenant_submission_runs,
 )
@@ -132,14 +136,24 @@ def _make_run_row(
 
 
 def _make_package(overall_status: str = "pass", issue_count: int = 0, entry_count: int = 5):
-    """Return a mock DORAExportPackage-like object with a validation summary."""
-    summary = MagicMock()
-    summary.overall_status = overall_status
-    summary.issue_count = issue_count
-    package = MagicMock()
-    package.validation_summary = summary
-    package.entry_count = entry_count
-    return package
+    """Return a real DORAExportPackage so the freeze path can serialise it."""
+    warn_count = issue_count if overall_status == "warn" else 0
+    fail_count = issue_count if overall_status == "fail" else 0
+    return DORAExportPackage(
+        tenant_id=_TENANT_ID,
+        generated_at=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+        reporting_year=2025,
+        entry_count=entry_count,
+        rows=[],
+        validation_summary=ValidationSummary(
+            overall_status=overall_status,
+            issue_count=issue_count,
+            pass_count=0,
+            warn_count=warn_count,
+            fail_count=fail_count,
+            issues=[],
+        ),
+    )
 
 
 _PATCH_TARGET = "src.services.dora_roi_submission_service.build_export_package"
@@ -306,3 +320,100 @@ def test_insert_draft_run_uses_validation_severity_fail_constant() -> None:
     assert params.get("validation_overall_status") == VALIDATION_SEVERITY_FAIL, (
         "validation_overall_status must equal VALIDATION_SEVERITY_FAIL, not a hardcoded literal"
     )
+
+
+def test_draft_insert_stores_null_frozen_package() -> None:
+    """create_submission_run writes NULL for frozen_package_json — there is no package yet."""
+    window_row = _make_window_row()
+    spy = _SpyConn(responses=[("FROM dora_submission_windows", _SelectResult([window_row]))])
+    create_submission_run(spy, _TENANT_ID, _WINDOW_ID)
+    insert_calls = [
+        (sql, params) for sql, params in spy.calls
+        if "INSERT INTO dora_submission_runs" in str(sql)
+    ]
+    _, params = insert_calls[0]
+    assert params["frozen_package_json"] is None
+
+
+def test_build_and_record_stores_serialised_package() -> None:
+    """INSERT params include canonical JSON of the package, not a live rebuild token."""
+    window_row = _make_window_row()
+    spy = _SpyConn(responses=[
+        ("FROM dora_submission_windows", _SelectResult([window_row])),
+        ("FROM dora_submission_runs", _SelectResult([])),
+    ])
+    with patch(_PATCH_TARGET, return_value=_make_package("pass", 0, 4)):
+        build_and_record_submission(
+            spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso"
+        )
+    insert_calls = [
+        (sql, params) for sql, params in spy.calls
+        if "INSERT INTO dora_submission_runs" in str(sql)
+    ]
+    _, params = insert_calls[0]
+    frozen = params["frozen_package_json"]
+    assert frozen is not None
+    assert '"entry_count":4' in frozen
+    assert '"reporting_year":2025' in frozen
+
+
+def test_update_replaces_frozen_package() -> None:
+    """A second Start-run overwrites frozen_package_json, matching the counts on the page."""
+    window_row = _make_window_row()
+    existing_row = _make_run_row(status="draft")
+    spy = _SpyConn(responses=[
+        ("FROM dora_submission_windows", _SelectResult([window_row])),
+        ("FROM dora_submission_runs", _SelectResult([existing_row])),
+    ])
+    with patch(_PATCH_TARGET, return_value=_make_package("pass", 0, 7)):
+        build_and_record_submission(
+            spy, _TENANT_ID, _WINDOW_ID, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso"
+        )
+    update_calls = [
+        (sql, params) for sql, params in spy.calls
+        if "UPDATE dora_submission_runs" in str(sql)
+    ]
+    _, params = update_calls[0]
+    assert '"entry_count":7' in params["frozen_package_json"]
+
+
+def test_list_and_get_run_sql_does_not_select_frozen_package() -> None:
+    """Metadata list/GET queries must not pull the filing blob."""
+    spy = _SpyConn()
+    list_tenant_submission_runs(spy, _TENANT_ID)
+    sqls = [str(sql) for sql, _ in spy.calls if "FROM dora_submission_runs" in str(sql)]
+    assert sqls
+    for sql in sqls:
+        assert "frozen_package_json" not in sql
+
+
+def test_get_frozen_filing_package_returns_stored_text() -> None:
+    """The download path returns the TEXT column unchanged."""
+    spy = _SpyConn(responses=[
+        ("frozen_package_json", _SelectResult([(_RUN_ID, 2025, 3, '{"x":1}')])),
+    ])
+    filing = get_frozen_filing_package(spy, _TENANT_ID, _RUN_ID)
+    assert filing == FrozenFilingPackage(
+        run_id=_RUN_ID, reporting_year=2025, entry_count=3, package_json='{"x":1}'
+    )
+
+
+def test_get_frozen_filing_package_none_when_column_null() -> None:
+    """A draft with NULL frozen_package_json is indistinguishable from a missing run."""
+    spy = _SpyConn(responses=[
+        ("frozen_package_json", _SelectResult([(_RUN_ID, 2025, 0, None)])),
+    ])
+    assert get_frozen_filing_package(spy, _TENANT_ID, _RUN_ID) is None
+
+
+def test_get_frozen_filing_package_none_when_run_missing() -> None:
+    """A well-formed id that names no row returns None."""
+    spy = _SpyConn(responses=[("frozen_package_json", _SelectResult([]))])
+    assert get_frozen_filing_package(spy, _TENANT_ID, _RUN_ID) is None
+
+
+def test_falsey_tenant_on_frozen_package_raises() -> None:
+    """The download lookup refuses to query without a tenant context."""
+    spy = _SpyConn()
+    with pytest.raises(TenantContextMissingError):
+        get_frozen_filing_package(spy, "", _RUN_ID)

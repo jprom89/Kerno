@@ -409,6 +409,15 @@ SUPPORTED_EVIDENCE_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".csv"
 # from webhook-ingested records (which carry their sender's system).
 UPLOAD_SOURCE_SYSTEM: str = "upload"
 
+# ---------------------------------------------------------------------------
+# Frozen DORA filing download
+# ---------------------------------------------------------------------------
+
+# Rate limit for GET /api/v1/submissions/runs/{run_id}/package. Matches the
+# evidence-pack export limit: the payload is a stored JSON attachment, not an
+# LLM call, but it is still a tenant's regulatory artefact leaving the system.
+FILING_DOWNLOAD_RATE_LIMIT: str = "30/minute"
+
 # Placeholder origins shipped in .env.example. A deployment that copied the
 # example verbatim must not quietly grant credentialed cross-origin access to
 # a name someone else could register, so the app refuses to start outside

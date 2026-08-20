@@ -13,7 +13,11 @@ from src.api.app import create_app
 from src.api.dependencies import get_conn, get_role, get_tenant_id
 # KER-409: register and submission writes attribute to the verified JWT user.
 from src.api.routers.overrides import get_reviewer_id
-from src.services.dora_roi_submission_service import SubmissionRunOutput, SubmissionWindowOutput
+from src.services.dora_roi_submission_service import (
+    FrozenFilingPackage,
+    SubmissionRunOutput,
+    SubmissionWindowOutput,
+)
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _ACTOR_ID = "d0000000-0000-4000-d000-000000000004"
@@ -167,3 +171,70 @@ def test_malformed_window_id_never_starts_a_run():
         )
     assert response.status_code == 404
     service.assert_not_called()
+
+
+def test_download_package_returns_stored_bytes_unchanged():
+    filing = FrozenFilingPackage(
+        run_id=_RUN_ID,
+        reporting_year=2025,
+        entry_count=3,
+        package_json='{"entry_count":3,"reporting_year":2025}',
+    )
+    with patch(
+        "src.api.routers.submissions.get_frozen_filing_package", return_value=filing
+    ), patch(
+        "src.api.routers.submissions.record_filing_package_download"
+    ) as record:
+        client = TestClient(_app_both_overrides())
+        response = client.get(f"/api/v1/submissions/runs/{_RUN_ID}/package")
+    assert response.status_code == 200
+    assert response.content == b'{"entry_count":3,"reporting_year":2025}'
+    assert response.headers["content-type"].startswith("application/json")
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert f"kerno-dora-filing-2025-{_RUN_ID}.json" in disposition
+    record.assert_called_once()
+
+
+def test_download_missing_package_is_404_and_does_not_ledger():
+    with patch(
+        "src.api.routers.submissions.get_frozen_filing_package", return_value=None
+    ), patch(
+        "src.api.routers.submissions.record_filing_package_download"
+    ) as record:
+        client = TestClient(_app_both_overrides())
+        response = client.get(f"/api/v1/submissions/runs/{_RUN_ID}/package")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "entry not found"}
+    record.assert_not_called()
+
+
+def test_download_malformed_run_id_is_a_404_not_a_500():
+    client = TestClient(_app_both_overrides())
+    response = client.get("/api/v1/submissions/runs/not-a-uuid/package")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "entry not found"}
+
+
+def test_download_malformed_and_missing_are_indistinguishable():
+    client = TestClient(_app_both_overrides())
+    with patch(
+        "src.api.routers.submissions.get_frozen_filing_package", return_value=None
+    ):
+        missing = client.get(f"/api/v1/submissions/runs/{_RUN_ID}/package")
+    malformed = client.get("/api/v1/submissions/runs/not-a-uuid/package")
+    assert missing.status_code == malformed.status_code == 404
+    assert missing.json() == malformed.json()
+
+
+def test_download_malformed_id_never_looks_up_the_package():
+    with patch(
+        "src.api.routers.submissions.get_frozen_filing_package"
+    ) as lookup, patch(
+        "src.api.routers.submissions.record_filing_package_download"
+    ) as record:
+        client = TestClient(_app_both_overrides())
+        response = client.get("/api/v1/submissions/runs/not-a-uuid/package")
+    assert response.status_code == 404
+    lookup.assert_not_called()
+    record.assert_not_called()

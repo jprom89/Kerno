@@ -3,10 +3,18 @@ normalization, validation, tenant guard enforcement, and the explicit tenant_id 
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from src.exceptions import TenantContextMissingError
-from src.services.dora_roi_export_service import build_export_package, build_export_rows
+from src.services.dora_roi_export_service import (
+    DORAExportPackage,
+    build_export_package,
+    build_export_rows,
+    serialise_export_package,
+)
+from src.services.dora_roi_validation_service import ValidationSummary
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000066"
 
@@ -218,3 +226,42 @@ def test_build_export_rows_passes_tenant_id_to_select() -> None:
     _, params = select_calls[0]
     assert params is not None
     assert params.get("tenant_id") == _TENANT_ID
+
+
+def _sample_package() -> DORAExportPackage:
+    """Return a small package used to prove serialisation is deterministic."""
+    return DORAExportPackage(
+        tenant_id=_TENANT_ID,
+        generated_at=datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc),
+        reporting_year=2025,
+        entry_count=0,
+        rows=[],
+        validation_summary=ValidationSummary(
+            overall_status="fail",
+            issue_count=1,
+            pass_count=0,
+            warn_count=0,
+            fail_count=1,
+            issues=[],
+        ),
+    )
+
+
+def test_serialise_export_package_is_deterministic() -> None:
+    """The same package serialises to identical bytes twice — an auditor can hash it."""
+    package = _sample_package()
+    first = serialise_export_package(package)
+    second = serialise_export_package(package)
+    assert first == second
+    assert first.startswith(b"{")
+    assert b'"reporting_year":2025' in first
+    assert b'"generated_at":"2025-06-01T12:00:00+00:00"' in first
+
+
+def test_serialise_export_package_sorts_keys() -> None:
+    """Keys are sorted so JSONB-like reordering cannot happen in the stored TEXT."""
+    payload = serialise_export_package(_sample_package()).decode("utf-8")
+    entry_at = payload.index('"entry_count"')
+    year_at = payload.index('"reporting_year"')
+    tenant_at = payload.index('"tenant_id"')
+    assert entry_at < year_at < tenant_at
