@@ -47,7 +47,7 @@ evidence. That is the proof, not a bet on a platform.
 | **KER-411** | Next.js windows + runs on existing `/api/v1/submissions` routes. Start a run from an open window; show history. No xBRL, no ESA 116. | ✅ done `521b387` |
 | **KER-412** | Register validation → 422 with the reason; malformed ids → 404. | ✅ done `36df799` |
 | **KER-402** | Thin Analyse button on `/dashboard/controls` — wire to the existing `POST /api/v1/recommendations/generate` only. No new engine, no analyse-all. | ✅ done `907bef3` |
-| **Frozen filing download** | `dora_submission_runs.frozen_package_json` TEXT stores the canonical export JSON at Start-run. `GET /api/v1/submissions/runs/{run_id}/package` returns those bytes unchanged. A later register edit does not change the file; Start-run again replaces the freeze. Same 404 as a missing run when the column is NULL. Ledger `filing_package_downloaded` on success only. Roles: `compliance_lead`, `vciso` — filing authority, not the NIS2 evidence-pack list. | ✅ done (this commit) |
+| **Frozen filing download** | `dora_submission_runs.frozen_package_json` TEXT stores the canonical export JSON at Start-run. `GET /api/v1/submissions/runs/{run_id}/package` returns those bytes unchanged. A later register edit does not change the file; Start-run again replaces the freeze. Same 404 as a missing run when the column is NULL. Ledger `filing_package_downloaded` on success only. Roles: `compliance_lead`, `vciso` — filing authority, not the NIS2 evidence-pack list. | ✅ done `7e64caf` |
 
 Do not ship 410/411 without 409. A UI that multiplies unledgered RoI rows is
 worse than no UI — that prerequisite is met.
