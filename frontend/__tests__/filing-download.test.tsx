@@ -117,3 +117,36 @@ describe("FilingDownloadButton", () => {
     expect(click).not.toHaveBeenCalled();
   });
 });
+
+describe("FilingDownloadButton network failure", () => {
+  it("recovers the button and says so when the request never completes", async () => {
+    // fetch() REJECTS on a dropped connection or a restarted backend — it does
+    // not resolve with a status. Without a catch the button stayed disabled on
+    // "Downloading…" with no message, which reads as "still working".
+    global.fetch = jest.fn().mockRejectedValue(new TypeError("network down"));
+    render(<FilingDownloadButton runId="run-1" />);
+    const button = screen.getByRole("button");
+    fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/could not reach/i));
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveTextContent(/download/i);
+  });
+
+  it("recovers the button when reading the body fails mid-transfer", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      blob: async () => {
+        throw new TypeError("connection reset");
+      },
+    } as unknown as Response);
+    render(<FilingDownloadButton runId="run-1" />);
+    const button = screen.getByRole("button");
+    fireEvent.click(button);
+
+    await waitFor(() => expect(button).not.toBeDisabled());
+    expect(screen.getByRole("alert")).toHaveTextContent(/could not reach/i);
+  });
+});

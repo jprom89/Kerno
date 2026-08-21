@@ -32,24 +32,36 @@ export default function FilingDownloadButton({ runId }: FilingDownloadButtonProp
   async function handleDownload() {
     setRunning(true);
     setError(null);
-    const response = await fetch(`/api/submissions/runs/${encodeURIComponent(runId)}/package`);
-    if (response.status === 404) {
-      setError("Filing unavailable — start a new run.");
-    } else if (response.ok) {
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filenameFromDisposition(
-        response.headers.get("content-disposition"),
-        `kerno-dora-filing-${runId}.json`,
-      );
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } else {
-      setError(`Download failed (${response.status}).`);
+    try {
+      const response = await fetch(`/api/submissions/runs/${encodeURIComponent(runId)}/package`);
+      if (response.status === 404) {
+        setError("Filing unavailable — start a new run.");
+      } else if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filenameFromDisposition(
+          response.headers.get("content-disposition"),
+          `kerno-dora-filing-${runId}.json`,
+        );
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } else {
+        setError(`Download failed (${response.status}).`);
+      }
+    } catch {
+      // fetch() rejects rather than resolving on a dropped connection, a
+      // restarted backend, or an offline client. Without this the button stays
+      // disabled on "Downloading…" for ever, with no message — the user reads
+      // that as "still working" when nothing is happening, on the one action
+      // this page exists for.
+      setError("Download failed — could not reach the server. Try again.");
+    } finally {
+      // In finally, not at the end of the body: an early return or a throw from
+      // any branch above must still release the button.
+      setRunning(false);
     }
-    setRunning(false);
   }
 
   return (
@@ -68,7 +80,14 @@ export default function FilingDownloadButton({ runId }: FilingDownloadButtonProp
         )}
         {running ? "Downloading…" : "Download filing"}
       </button>
-      {error && <span className="text-xs text-red-700">{error}</span>}
+      {/* role="alert" so the failure is announced: it appears after a click,
+          not on render, and a screen-reader user gets no other signal that
+          the download did not happen. Matches login/EvidenceUpload. */}
+      {error && (
+        <span role="alert" className="text-xs text-red-700">
+          {error}
+        </span>
+      )}
     </span>
   );
 }
