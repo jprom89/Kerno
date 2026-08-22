@@ -24,7 +24,7 @@ from src.models.dora_submission_run import (
 
 
 def test_run_model_has_expected_columns() -> None:
-    """DORASubmissionRun contains all twelve columns specified in §3.2."""
+    """DORASubmissionRun contains every column specified in §3.2 plus the freeze column."""
     columns = {col.name for col in DORASubmissionRun.__table__.columns}
     expected = {
         "id",
@@ -39,6 +39,7 @@ def test_run_model_has_expected_columns() -> None:
         "updated_at",
         "submitted_at",
         "submission_reference",
+        "frozen_package_json",
     }
     assert expected.issubset(columns), f"Missing columns: {expected - columns}"
 
@@ -55,6 +56,9 @@ def test_run_defaults_are_set_safely() -> None:
 
     submission_ref_col = DORASubmissionRun.__table__.columns["submission_reference"]
     assert submission_ref_col.nullable is True, "submission_reference must be nullable"
+
+    frozen_col = DORASubmissionRun.__table__.columns["frozen_package_json"]
+    assert frozen_col.nullable is True, "frozen_package_json must be nullable"
 
 
 def test_run_is_tenant_scoped() -> None:

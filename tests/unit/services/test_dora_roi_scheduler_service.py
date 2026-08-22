@@ -17,11 +17,12 @@ How to run
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from src.services.dora_roi_export_service import DORAExportPackage
+from src.services.dora_roi_validation_service import ValidationSummary
 from src.services.dora_roi_submission_service import _upsert_submission_run
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000066"
@@ -71,14 +72,22 @@ def _make_run_row() -> tuple:
 
 
 def _make_package(overall_status: str = "pass", issue_count: int = 0, entry_count: int = 2):
-    """Return a mock DORAExportPackage with a validation summary."""
-    summary = MagicMock()
-    summary.overall_status = overall_status
-    summary.issue_count = issue_count
-    package = MagicMock()
-    package.validation_summary = summary
-    package.entry_count = entry_count
-    return package
+    """Return a real DORAExportPackage so the freeze path can serialise it."""
+    return DORAExportPackage(
+        tenant_id=_TENANT_ID,
+        generated_at=_NOW,
+        reporting_year=2025,
+        entry_count=entry_count,
+        rows=[],
+        validation_summary=ValidationSummary(
+            overall_status=overall_status,
+            issue_count=issue_count,
+            pass_count=0,
+            warn_count=0,
+            fail_count=0,
+            issues=[],
+        ),
+    )
 
 
 class _RaceConn:

@@ -134,6 +134,12 @@ GATED_ROUTES = [
         LEAD_AND_VCISO,
         json={"submission_window_id": _SOME_ID},
     ),
+    GatedRoute(
+        "GET",
+        f"/api/v1/submissions/runs/{_SOME_ID}/package",
+        LEAD_AND_VCISO,
+        template="/api/v1/submissions/runs/{run_id}/package",
+    ),
     # ── Gated before Ticket A ───────────────────────────────────────────────
     GatedRoute(
         "POST",

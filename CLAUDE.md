@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.6 | Updated: 2026-08-19 | Changes: KER-409/410/411/412/402 landed; CORS placeholder fails closed; KERNO_ENABLE_DOCS separated from KERNO_ENV -->
+<!-- Version: 2.7 | Updated: 2026-08-20 | Changes: frozen DORA filing download; next is founder HTTPS then partner rows -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -15,23 +15,21 @@ constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 18 August 2026 Kerno is an EU **system of record** (live DORA
+As of 20 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
 dashboard. Landed and not to be re-built: hygiene C1/A/B/D, **KER-409**
 (register ledger + submissions 404) at `0b3e63e`, **KER-410** (Next.js
 register) at `729cc34`, **KER-411** (windows + runs) at `521b387`,
-**KER-412** (422s + malformed-id 404s) at `36df799`, and **KER-402**
+**KER-412** (422s + malformed-id 404s) at `36df799`, **KER-402**
 (thin per-control Analyse button — wire only, the engine already
-existed), and the **CORS/docs hygiene pass** (the shipped `.env.example`
-origin placeholder is now `https://REPLACE-ME.invalid` and the API refuses
-to start outside development while a placeholder is still in
-`ALLOWED_ORIGINS`; `KERNO_ENABLE_DOCS=1` serves the schema without
-remounting the legacy dashboard or unlocking the seed scripts). Next: **one
-filing download** from the Next.js register, using the existing export
-package. Putting the API on an HTTPS host is the founder's job, not a
-ticket. `NOW.md` is authoritative for status; if this paragraph
-and `NOW.md` ever disagree, `NOW.md` wins. Do not add coverage features,
-RAG, CRA, incidents, country packs, or MSP.
+existed), the **CORS/docs hygiene pass**, and the **frozen filing
+download** (`dora_submission_runs.frozen_package_json` at Start-run;
+`GET /api/v1/submissions/runs/{run_id}/package` returns those bytes
+unchanged). Next is **founder HTTPS**, then the partner's own vendors
+and evidence — that is the proof, not a bet on a platform. `NOW.md` is
+authoritative for status; if this paragraph and `NOW.md` ever disagree,
+`NOW.md` wins. Do not add coverage features, RAG, CRA, incidents,
+country packs, or MSP.
 
 `KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement

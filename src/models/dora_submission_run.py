@@ -34,6 +34,8 @@ class DORASubmissionRun(Base):
     Migration 013 adds UNIQUE (submission_window_id, tenant_id) — one run per
     (tenant, window) slot. submitted_at remains NULL until an authority portal
     marks the run as submitted; build_and_record_submission deliberately leaves it as NULL.
+    frozen_package_json is the canonical filing JSON stored at record time
+    (migration 024); NULL means the run has never frozen a package.
     """
 
     __tablename__ = "dora_submission_runs"
@@ -65,3 +67,4 @@ class DORASubmissionRun(Base):
         DateTime(timezone=True), nullable=True
     )
     submission_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    frozen_package_json: Mapped[str | None] = mapped_column(Text, nullable=True)

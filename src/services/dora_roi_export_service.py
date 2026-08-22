@@ -9,8 +9,9 @@ How:   pytest tests/unit/services/test_dora_roi_export_service.py -v
 from __future__ import annotations
 
 import dataclasses
+import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from src.db.rls import set_tenant_context
 from src.exceptions import TenantContextMissingError
@@ -118,6 +119,31 @@ def build_export_package(conn, tenant_id: str, reporting_year: int) -> DORAExpor
         rows=rows,
         validation_summary=validation,
     )
+
+
+def serialise_export_package(package: DORAExportPackage) -> bytes:
+    """Render the package as deterministic UTF-8 JSON bytes.
+
+    Sorted keys and compact separators make the same package byte-identical
+    every time, so an auditor can hash the downloaded file. Datetimes become
+    ISO-8601 strings. These bytes are stored as TEXT on the run row at record
+    time; a later download returns them unchanged rather than rebuilding.
+    """
+    return json.dumps(
+        dataclasses.asdict(package),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+
+
+def _json_default(value: object) -> str:
+    """Convert date and datetime values the JSON encoder cannot handle to ISO-8601."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"{type(value).__name__} is not JSON serialisable")
 
 
 # ---------------------------------------------------------------------------

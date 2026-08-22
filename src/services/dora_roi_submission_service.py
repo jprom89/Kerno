@@ -30,10 +30,16 @@ from src.models.dora_submission_run import (
     SUBMISSION_STATUS_READY,
 )
 from src.services.audit_log import append_audit_entry
-from src.services.dora_roi_export_service import DORAExportPackage, build_export_package
+from src.services.dora_roi_export_service import (
+    DORAExportPackage,
+    build_export_package,
+    serialise_export_package,
+)
 
-# KER-107 ledger vocabulary for filing a submission run (KER-409).
+# KER-107 ledger vocabulary for filing a submission run (KER-409) and for
+# downloading the frozen package that run recorded.
 ACTION_SUBMISSION_RUN_RECORDED = "submission_run_recorded"
+ACTION_FILING_PACKAGE_DOWNLOADED = "filing_package_downloaded"
 OBJECT_TYPE_SUBMISSION_RUN = "submission_run"
 
 # Roles allowed to start a submission run. Deliberately a separate constant from
@@ -87,6 +93,20 @@ class SubmissionRunOutput:
     updated_at: datetime
     submitted_at: datetime | None
     submission_reference: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class FrozenFilingPackage:
+    """Stored filing JSON for one submission run, plus the metadata a download needs.
+
+    package_json is the TEXT column as stored — not re-serialised. reporting_year
+    and entry_count are copied onto the ledger after_state; the package body is not.
+    """
+
+    run_id: str
+    reporting_year: int
+    entry_count: int
+    package_json: str
 
 
 # ---------------------------------------------------------------------------
@@ -143,11 +163,11 @@ _INSERT_RUN = """
 INSERT INTO dora_submission_runs (
     id, tenant_id, submission_window_id, reporting_year, status,
     validation_overall_status, validation_issue_count, entry_count,
-    created_at, updated_at, submitted_at, submission_reference
+    frozen_package_json, created_at, updated_at, submitted_at, submission_reference
 ) VALUES (
     :id, :tenant_id, :submission_window_id, :reporting_year, :status,
     :validation_overall_status, :validation_issue_count, :entry_count,
-    :created_at, :updated_at, NULL, NULL
+    :frozen_package_json, :created_at, :updated_at, NULL, NULL
 )
 """
 
@@ -157,8 +177,16 @@ SET status = :status,
     validation_overall_status = :validation_overall_status,
     validation_issue_count = :validation_issue_count,
     entry_count = :entry_count,
+    frozen_package_json = :frozen_package_json,
     updated_at = :updated_at
 WHERE id = :id
+"""
+
+_SELECT_FROZEN_PACKAGE = """
+SELECT id, reporting_year, entry_count, frozen_package_json
+FROM dora_submission_runs
+WHERE id = :run_id
+  AND tenant_id = :tenant_id
 """
 
 
@@ -251,6 +279,59 @@ def get_submission_run(conn, tenant_id: str, run_id: str) -> SubmissionRunOutput
         {"run_id": str(run_id), "tenant_id": str(tenant_id)},
     ).fetchone()
     return _run_row_to_output(row) if row is not None else None
+
+
+def get_frozen_filing_package(
+    conn, tenant_id: str, run_id: str
+) -> FrozenFilingPackage | None:
+    """Return the stored filing JSON for this run, or None if the run or freeze is missing.
+
+    A NULL frozen_package_json is treated the same as a missing run so a
+    download cannot distinguish a draft from a nonexistent id. List and GET-run
+    queries never select this column. Raises TenantContextMissingError if
+    tenant_id is falsey.
+    """
+    _guard_tenant(tenant_id)
+    set_tenant_context(conn, tenant_id)
+    row = conn.execute(
+        _SELECT_FROZEN_PACKAGE,
+        {"run_id": str(run_id), "tenant_id": str(tenant_id)},
+    ).fetchone()
+    if row is None or row[3] is None:
+        return None
+    return FrozenFilingPackage(
+        run_id=str(row[0]),
+        reporting_year=row[1],
+        entry_count=row[2],
+        package_json=row[3],
+    )
+
+
+def record_filing_package_download(
+    conn, tenant_id: str, *, actor_id, actor_role: str, filing: FrozenFilingPackage
+) -> None:
+    """Append a KER-107 ledger entry for a successful filing download.
+
+    after_state names the run and its recorded counts, not the package body.
+    Call only after get_frozen_filing_package returned a filing; a missing
+    package must not reach this function.
+    """
+    append_audit_entry(
+        conn,
+        tenant_id,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        action_type=ACTION_FILING_PACKAGE_DOWNLOADED,
+        object_type=OBJECT_TYPE_SUBMISSION_RUN,
+        object_id=filing.run_id,
+        control_id=None,
+        before_state=None,
+        after_state={
+            "run_id": filing.run_id,
+            "reporting_year": filing.reporting_year,
+            "entry_count": filing.entry_count,
+        },
+    )
 
 
 def list_open_windows(conn) -> list[SubmissionWindowOutput]:
@@ -353,8 +434,9 @@ def _insert_draft_run(
     """Insert a new dora_submission_runs row and return the created SubmissionRunOutput.
 
     When called from create_submission_run, package is None and pessimistic defaults
-    are used. When called from _upsert_submission_run, package is provided and its
-    validation fields are stored.
+    are used (including frozen_package_json NULL). When called from
+    _upsert_submission_run, package is provided and its validation fields and
+    frozen JSON are stored.
     """
     run_id = str(uuid.uuid4())
     val_status = package.validation_summary.overall_status if package else VALIDATION_SEVERITY_FAIL
@@ -369,6 +451,7 @@ def _insert_draft_run(
         "validation_overall_status": val_status,
         "validation_issue_count": val_count,
         "entry_count": entries,
+        "frozen_package_json": _frozen_package_text(package),
         "created_at": now,
         "updated_at": now,
     })
@@ -385,10 +468,11 @@ def _update_existing_run(
     conn, existing: SubmissionRunOutput, run_status: str,
     package: DORAExportPackage, now: datetime,
 ) -> SubmissionRunOutput:
-    """Update the status, validation fields, and entry_count on an existing run.
+    """Update the status, validation fields, entry_count, and frozen package on an existing run.
 
     Preserves created_at, submitted_at, and submission_reference from the existing
     row. Does not set submitted_at — that is reserved for authority-portal integration.
+    A second Start-run replaces the freeze, matching the counts shown on the page.
     """
     conn.execute(_UPDATE_RUN, {
         "id": existing.id,
@@ -396,6 +480,7 @@ def _update_existing_run(
         "validation_overall_status": package.validation_summary.overall_status,
         "validation_issue_count": package.validation_summary.issue_count,
         "entry_count": package.entry_count,
+        "frozen_package_json": _frozen_package_text(package),
         "updated_at": now,
     })
     return SubmissionRunOutput(
@@ -408,6 +493,13 @@ def _update_existing_run(
         updated_at=now, submitted_at=existing.submitted_at,
         submission_reference=existing.submission_reference,
     )
+
+
+def _frozen_package_text(package: DORAExportPackage | None) -> str | None:
+    """Return canonical JSON text for storage, or None when there is no package to freeze."""
+    if package is None:
+        return None
+    return serialise_export_package(package).decode("utf-8")
 
 
 def _status_from_validation(validation_overall_status: str) -> str:
