@@ -1,4 +1,4 @@
-# NOW.md — Current mandate (20 August 2026)
+# NOW.md — Current mandate (17 September 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
 outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
@@ -6,6 +6,57 @@ Read this before starting a coding session.
 
 It does **not** override `CLAUDE.md` §2 (readability), §3 (tenant isolation),
 or §6 (GDPR data classification). Those still bind.
+
+---
+
+## Register-first (in force until told otherwise)
+
+Recorded 17 September 2026. Refer to this section in product, naming, and
+sequencing decisions until the founder explicitly replaces it.
+
+**Company vs product.** The company is **Kerno**. The first product is
+**Kerno Register** — the system of record for DORA ICT third-party
+arrangements. Do not rename the company. Do not tie the corporate identity
+to a single product word (Grunnbok is rejected). “RoI”, “ICT Register”,
+and “Third-Party Register” belong in the tagline, not as a new company
+name. “System of Record” is too abstract to be the product name.
+
+**Wedge, not destination.** Register-first is a credible implementation of
+the original niche thesis — a painful, regulation-driven job rather than
+another GRC dashboard — *if* the register is the entry wedge and not the
+entire company. The broader story (NIS2 + DORA → defensible evidence,
+assigned remediation, management-ready reporting, later a Kerno-backed
+vCISO motion) stays in `KERNO_STRATEGY.md`. That memo is not a ship plan.
+Year 1 remains founder-led; vCISO referral is after logos.
+
+**Honest object.** DORA’s Register of Information is not a generic
+spreadsheet: the ITS spans interconnected entities, providers, contracts,
+services, functions, and supply chains. **Kerno Register today is not that
+graph.** It is a live, tenant-scoped ICT line (provider, service, type,
+criticality, function, data types, countries, contract dates, exit note)
+with named-human writes, a KER-107 ledger, ~20 structural validation
+rules, and a filing JSON frozen at Start-run. Excel-plus-converter is the
+real competitor for the last-mile zip. Do not describe the current app as
+the 15-template ITS. Do not build xBRL / ESA ~116 before a design partner
+keeps their vendors in this register.
+
+**Company map, not a backlog.** The architecture is:
+
+Register first → evidence and ownership → validation and regulatory
+export → continuous third-party oversight → broader compliance system of
+record.
+
+Permission to grow later. Not tickets. Evidence, ownership, and the
+ledger already exist. Validation and export are the honest gap (20 rules,
+frozen JSON, not ESA/xBRL). Continuous oversight is how this becomes
+Orbiq. Broader SoR is how this becomes Kertos. Next sitting is still
+founder HTTPS, then the partner’s own vendors and evidence.
+
+**It fails if either.** Kerno becomes a generic customizable database, *or*
+the company is permanently defined as a DORA spreadsheet replacement. Do
+not add coverage chrome, Trust Center polish, NIS2 workflow suites, or a
+vCISO OS to avoid “looking like Excel.” Stay a register until a partner
+keeps the record here. Expansion is earned by that.
 
 ---
 
