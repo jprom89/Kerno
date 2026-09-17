@@ -11,9 +11,14 @@ or §6 (GDPR data classification). Those still bind.
 
 ## What Kerno is (the object we are filling)
 
-Kerno is an EU **system of record** for operational-resilience obligations:
-the live DORA Register of Information (maintain → validate → submit) and
-named-human decisions on controls, with evidence attached.
+The company is **Kerno**. The product in the UI is **Kerno Register** —
+the system of record for DORA ICT third-party arrangements. That register
+is the entry wedge, not the entire destination. Do not rename the company.
+Do not permanently define Kerno as a DORA spreadsheet replacement.
+
+Kerno holds an EU **system of record** for operational-resilience
+obligations: the live DORA Register of Information (maintain → validate →
+submit) and named-human decisions on controls, with evidence attached.
 
 Coverage grids, recommendation queues, and LLM rationale are **how a human
 updates that record**. They are not the product. A US GRC buyer already

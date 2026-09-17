@@ -1,7 +1,7 @@
 /**
  * components/NavHeader.tsx — who is logged in, on every dashboard page (KER-301 AC-6).
  *
- * What:  Kerno logo, the logged-in user's email, a role badge, and logout.
+ * What:  Kerno Register wordmark, the logged-in user's email, a role badge, and logout.
  * Why:   EU AI Act Article 14 — human oversight requires identified human
  *        actors; the identity strings come from the server-validated /me call,
  *        never from anything client-readable.
@@ -41,7 +41,9 @@ export default function NavHeader({ email, role }: NavHeaderProps) {
   return (
     <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
       <nav className="flex items-center gap-6">
-        <span className="text-lg font-semibold tracking-tight text-slate-900">Kerno</span>
+        <span className="text-lg font-semibold tracking-tight text-slate-900">
+          Kerno Register
+        </span>
         {NAV_LINKS.map((link) => {
           // /dashboard is the Coverage home, so it must match exactly —
           // startsWith would mark it current on every dashboard page.

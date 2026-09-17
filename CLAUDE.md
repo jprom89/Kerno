@@ -1,4 +1,4 @@
-# CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
+# CLAUDE.md — Kerno: Codebase Constitution v1.2
 <!-- Version: 2.7 | Updated: 2026-08-20 | Changes: frozen DORA filing download; next is founder HTTPS then partner rows -->
 
 This file is the first thing Claude reads at the start of every session.
@@ -43,12 +43,18 @@ call retrieval; `context_records.embedding` is never populated.
 
 ## §1 — Project Identity
 
-**Product:** Kerno Compliance Copilot
-**What it does:** Holds an EU operational-resilience **system of record** —
-starting with a live DORA Register of Information and named-human decisions
-on NIS2 controls, each tied to evidence, a reproducible score, and a
-tamper-evident ledger. A hybrid engine (deterministic scorer + LLM prose)
-helps a human update that record; it is not the product.
+**Company:** Kerno.
+**First product:** Kerno Register — the system of record for DORA ICT
+third-party arrangements. Register-first is the entry wedge, not the
+entire destination. Do not rename the company. Do not define Kerno as
+only a DORA spreadsheet replacement. Do not turn the register into a
+generic customizable database.
+
+**What it does (this wedge):** Holds a live DORA Register of Information
+and named-human decisions on NIS2 controls, each tied to evidence, a
+reproducible score, and a tamper-evident ledger. A hybrid engine
+(deterministic scorer + LLM prose) helps a human update that record; it
+is not the product.
 
 **Who uses it:** Compliance engineers, vCISOs, and fractional CTOs at
 mid-market European technology companies.
