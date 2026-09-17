@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // Inlined rather than imported from lib/api.ts: middleware runs in the edge
 // runtime, where next/headers (pulled in by that module) is unavailable.
-const SESSION_COOKIE = "grunnbok_session";
+const SESSION_COOKIE = "kerno_session";
 
 export function middleware(request: NextRequest): NextResponse {
   if (!request.cookies.get(SESSION_COOKIE)?.value) {

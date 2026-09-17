@@ -130,7 +130,7 @@ describe("SubmissionsView", () => {
     render(<SubmissionsView windows={[]} runs={[]} readOnly={false} />);
 
     expect(screen.getByText(/No filing window is open today/)).toBeInTheDocument();
-    expect(screen.getByText(/Grunnbok does not create them/)).toBeInTheDocument();
+    expect(screen.getByText(/Kerno does not create them/)).toBeInTheDocument();
     expect(screen.getByText(/No submission runs yet/)).toBeInTheDocument();
   });
 

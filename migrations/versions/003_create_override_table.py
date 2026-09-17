@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-Every time a compliance engineer corrects an AI recommendation, Grunnbok records
+Every time a compliance engineer corrects an AI recommendation, Kerno records
 the decision as an override row. This migration creates the table that stores
 those decisions, along with two database-level ENUM types that constrain the
 allowed values for reviewer role and action type. Invalid values are rejected

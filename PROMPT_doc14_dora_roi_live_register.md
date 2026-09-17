@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 14 of the Grunnbok compliance copilot codebase.
+This document specifies Document 14 of the Kerno compliance copilot codebase.
 
 Document 14 begins Sprint 2 by implementing the live data foundation for the
 DORA Register of Information (RoI). The design principle is critical:
@@ -85,7 +85,7 @@ Define module-level constants in `src/models/dora_register_entry.py`:
 - `CRITICALITY_HIGH = "high"`
 - `CRITICALITY_STANDARD = "standard"`
 
-These are Grunnbok internal values for Sprint 2. They intentionally simplify the
+These are Kerno internal values for Sprint 2. They intentionally simplify the
 broader DORA terminology into practical operating classes.
 
 ### 3.3 provider_type allowed values
@@ -355,6 +355,6 @@ Required tests:
 |---|---|
 | CLAUDE.md | Highest |
 | This file | Authoritative for Document 14 scope |
-| GRUNNBOK_STRATEGY.md | Context only |
+| KERNO_STRATEGY.md | Context only |
 | Document 13 recommendation architecture | Prior sprint pattern |
 | DORA Regulation 2022/2554 | Business context only, not implementation schema authority |

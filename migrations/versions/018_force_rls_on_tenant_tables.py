@@ -3,7 +3,7 @@
 Plain-English summary
 ---------------------
 PostgreSQL table owners silently bypass RLS policies unless FORCE ROW LEVEL
-SECURITY is set. The dev and default deployment role (grunnbok_dev) owns every
+SECURITY is set. The dev and default deployment role (kerno_dev) owns every
 table, so until this migration the tenant-isolation policies protected nothing
 against the role the application actually connects as — the application-layer
 tenant filters were the only working lock. This migration turns the database

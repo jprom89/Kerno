@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-Grunnbok keeps every customer's ("tenant's") data in one shared PostgreSQL
+Kerno keeps every customer's ("tenant's") data in one shared PostgreSQL
 database. The thing that stops Tenant A from ever seeing Tenant B's rows is a
 two-part lock:
 

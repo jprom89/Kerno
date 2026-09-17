@@ -164,7 +164,7 @@ async function _exportEvidencePack() {
     const url = URL.createObjectURL(await response.blob());
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `grunnbok-evidence-pack-${_categoryFilter}.json`;
+    anchor.download = `kerno-evidence-pack-${_categoryFilter}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
 }

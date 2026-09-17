@@ -57,8 +57,8 @@ def _delivery(control_ref: str | None, external_ref: str) -> bytes:
 def _headers(body: bytes) -> dict:
     digest = hmac.new(_SECRET.encode(), body, hashlib.sha256).hexdigest()
     return {
-        "X-Grunnbok-Webhook-Id": _REGISTRATION_ID,
-        "X-Grunnbok-Signature": f"sha256={digest}",
+        "X-Kerno-Webhook-Id": _REGISTRATION_ID,
+        "X-Kerno-Signature": f"sha256={digest}",
         "Content-Type": "application/json",
     }
 

@@ -22,7 +22,7 @@ stop a ticket. `NOW.md` is the implementation mandate.
 ## Root
 
 ```
-grunnbok/
+kerno/
 ├── CLAUDE.md                          ← Constitution — read first, every session
 ├── NOW.md                             ← Current mandate (§0) — what to build next
 ├── FILE_STRUCTURE.md                  ← This file — historical map (stale)
@@ -129,7 +129,7 @@ migrations/
 ```
 scripts/
 ├── seed_nis2_controls.py              ← One-time seed: NIS2 control catalogue
-└── seed_dev_tenant.py                 ← Dev-only seed: admin@grunnbok.local credentials
+└── seed_dev_tenant.py                 ← Dev-only seed: admin@kerno.local credentials
 ```
 
 ---

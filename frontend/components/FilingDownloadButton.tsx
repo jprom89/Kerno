@@ -43,7 +43,7 @@ export default function FilingDownloadButton({ runId }: FilingDownloadButtonProp
         anchor.href = url;
         anchor.download = filenameFromDisposition(
           response.headers.get("content-disposition"),
-          `grunnbok-dora-filing-${runId}.json`,
+          `kerno-dora-filing-${runId}.json`,
         );
         anchor.click();
         URL.revokeObjectURL(url);

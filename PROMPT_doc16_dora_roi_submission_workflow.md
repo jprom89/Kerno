@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 16 of the Grunnbok compliance copilot codebase.
+This document specifies Document 16 of the Kerno compliance copilot codebase.
 
 Document 16 is the third part of the DORA Register of Information sequence. It builds on:
 
@@ -27,7 +27,7 @@ The design principle is:
 
 **Document 14 keeps the live data. Document 15 prepares a validated package. Document 16 captures when and how that package is actually filed.**
 
-This document **does not** implement real regulator APIs or portal uploads. It models and tracks the submission workflow inside Grunnbok, so that a later integration can plug into that workflow.
+This document **does not** implement real regulator APIs or portal uploads. It models and tracks the submission workflow inside Kerno, so that a later integration can plug into that workflow.
 
 ---
 
@@ -132,7 +132,7 @@ Status values have the following meaning:
 
 - `"draft"`: A submission run has been created, but validation may fail or have warnings.
 - `"ready"`: Validation `overall_status` is `"pass"`; the package is ready for filing.
-- `"submitted"`: A submission run has been exported and (from Grunnbok's perspective) sent to an authority integration. This document does not implement the actual send.
+- `"submitted"`: A submission run has been exported and (from Kerno's perspective) sent to an authority integration. This document does not implement the actual send.
 - `"failed"`: An internal error occurred while building the package (e.g., unexpected exception). Validation failures alone do **not** set `"failed"`; they keep `"draft"`.
 
 The `validation_overall_status` is copied from Doc 15's `ValidationSummary.overall_status` for the export package.
@@ -394,5 +394,5 @@ Required tests:
 | This file | Authoritative for Document 16 scope |
 | PROMPT_doc15_dora_roi_export_validation.md | Upstream export + validation contract |
 | PROMPT_doc14_dora_roi_live_register.md | Upstream live register contract |
-| GRUNNBOK_STRATEGY.md | Context only |
+| KERNO_STRATEGY.md | Context only |
 | DORA RoI supervisory guidance (e.g. MFSA, CBI, etc.) | External regulatory context only |

@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-A "tenant" is a single customer company using Grunnbok. Every other piece of data
+A "tenant" is a single customer company using Kerno. Every other piece of data
 in the system — embeddings, overrides, audit entries, bias vectors — is owned by
 exactly one tenant and is walled off from all the others. The ``tenant_id`` on
 this record is the identity that wall is built around.

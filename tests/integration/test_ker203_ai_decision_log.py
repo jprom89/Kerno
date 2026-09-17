@@ -69,7 +69,7 @@ def _mock_llm_client() -> MagicMock:
 def _run_mapping(conn, tenant_id):
     """Run map_control with the LLM mocked; all database writes are real."""
     with patch("src.services.mapping_service.get_llm_client", return_value=_mock_llm_client()), \
-         patch.dict("os.environ", {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict("os.environ", {"KERNO_LLM_MODEL": _MODEL_ID}):
         return map_control(conn, tenant_id, _CONTROL, _EVIDENCE)
 
 

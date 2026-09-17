@@ -139,7 +139,7 @@ def test_anonymised_value_appears_in_both_override_and_audit_log() -> None:
     capture_override(
         _FakeSession(),
         spy,
-        _make_input(justification_text="Contact admin@grunnbok.io for details"),
+        _make_input(justification_text="Contact admin@kerno.io for details"),
     )
     override_params = spy.calls[1][1]
     audit_after_state = json.loads(_audit_insert_params(spy)["after_state"])

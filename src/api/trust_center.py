@@ -3,7 +3,7 @@
 Plain-English summary
 ---------------------
 Enterprise buyers want to see a vendor's compliance posture before signing.
-The Trust Center gives each Grunnbok customer a public page —
+The Trust Center gives each Kerno customer a public page —
 GET /trust-center/{tenant_slug}/status — showing ONLY summary numbers: how
 many NIS2 controls are met, partially met, or gapped, by category, derived
 from the KER-109 system-of-record statuses (human overrides win over AI).
@@ -14,7 +14,7 @@ Security posture, in order of importance:
     compliance_lead, vciso, and platform_engineer roles (KER-202).
   * A private tenant and a nonexistent slug return the IDENTICAL 404 — same
     body, same code path length — so an unauthenticated caller can never
-    confirm a company is a Grunnbok customer.
+    confirm a company is a Kerno customer.
   * The tenant_id never appears in the URL or any response body; the slug is
     the only public identifier.
   * The slug lookup is the auth-bootstrap read (§13 KER-204 decision 2): it

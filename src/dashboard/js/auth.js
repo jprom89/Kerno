@@ -1,7 +1,7 @@
 /* Shared JWT token management for all dashboard pages.
    Import getToken / requireAuth / logout from this module. */
 
-const TOKEN_KEY = 'grunnbok_jwt';
+const TOKEN_KEY = 'kerno_jwt';
 
 export function getToken() {
     return localStorage.getItem(TOKEN_KEY);

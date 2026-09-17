@@ -3,7 +3,7 @@
 
 ## Context
 
-You are building Document #8 of the Grunnbok:
+You are building Document #8 of the Kerno Compliance Copilot:
 the Core Learning Pipeline & Data Isolation implementation.
 
 Before writing any code, read these two files in full:

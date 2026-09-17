@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 15 of the Grunnbok compliance copilot codebase.
+This document specifies Document 15 of the Kerno compliance copilot codebase.
 
 Document 15 is the second part of the DORA Register of Information sequence.
 It builds on the live register foundation created in Document 14 and adds:
@@ -310,4 +310,4 @@ Required tests:
 | CLAUDE.md | Highest |
 | This file | Authoritative for Document 15 scope |
 | PROMPT_doc14_dora_roi_live_register.md | Upstream live register foundation |
-| GRUNNBOK_STRATEGY.md | Context only |
+| KERNO_STRATEGY.md | Context only |

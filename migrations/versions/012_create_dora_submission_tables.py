@@ -11,7 +11,7 @@ What:  Creates two tables for the DORA RoI submission workflow:
     using the direct tenant_id column predicate (same pattern as migration 011).
 
 Why:   Document 16 (KER-106 part 3) adds submission lifecycle tracking on top of
-       the live register (Doc 14) and export/validation (Doc 15). Grunnbok must persist
+       the live register (Doc 14) and export/validation (Doc 15). Kerno must persist
        the status of each submission attempt (draft → ready → submitted) so that
        a future authority-portal integration can pick up the latest ready package and
        mark it as submitted without losing the audit trail of prior attempts.

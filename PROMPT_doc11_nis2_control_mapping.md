@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 11 of the Grunnbok compliance copilot codebase.
+This document specifies Document 11 of the Kerno compliance copilot codebase.
 
 Document 11 implements the NIS2 control catalogue — the library of regulatory
 obligations that every other part of the Decision layer reasons over. It is the
@@ -32,7 +32,7 @@ The four-layer architecture reminder:
 
 ## 2. Scope — KER-103 acceptance criteria (authoritative)
 
-Source: Grunnbok Sprint 1 Backlog, KER-103.
+Source: Kerno Sprint 1 Backlog, KER-103.
 
 The implementation is complete when all four acceptance criteria pass:
 
@@ -312,5 +312,5 @@ Required tests:
 |---|---|
 | CLAUDE.md (current version in working directory) | Highest |
 | This file (PROMPT_doc11_nis2_control_mapping.md) | Authoritative for Document 11 scope |
-| Grunnbok_Sprint1_Backlog.pdf KER-103 | Source of acceptance criteria |
-| Grunnbok_TrustCenter_Spec.pdf §4 (Framework Coverage Matrix) | Source of authoritative category list |
+| Kerno_Sprint1_Backlog.pdf KER-103 | Source of acceptance criteria |
+| Kerno_TrustCenter_Spec.pdf §4 (Framework Coverage Matrix) | Source of authoritative category list |

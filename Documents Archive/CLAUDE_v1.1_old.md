@@ -1,4 +1,4 @@
-# CLAUDE.md — Grunnbok: Codebase Constitution
+# CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution
 
 **Status:** Baseline v1.1 (Gap-Fixed)
 **Classification:** Internal — Read by Claude at the start of every session
@@ -32,7 +32,7 @@ If Claude cannot answer all three from the documents, it must stop and ask the h
 
 ## 1. Project Purpose
 
-Grunnbok is a B2B SaaS Compliance-as-a-Service platform targeting EU mid-market companies (50–500 employees) that must comply with NIS2, DORA, EU AI Act, and the Cyber Resilience Act.
+Kerno is a B2B SaaS Compliance-as-a-Service platform targeting EU mid-market companies (50–500 employees) that must comply with NIS2, DORA, EU AI Act, and the Cyber Resilience Act.
 
 The core product is a Compliance Copilot: an AI-assisted control-mapping engine that learns each tenant's specific risk appetite through Human-in-the-Loop (HITL) override data, making its recommendations progressively more accurate the more it is used.
 

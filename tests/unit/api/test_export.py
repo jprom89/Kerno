@@ -15,7 +15,7 @@ from src.api.schemas.export import EvidencePack, PackMetadata
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 
-os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ def _fake_pack() -> EvidencePack:
             control_family="governance",
             generated_at=datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc),
             export_id="x0000000-0000-4000-a000-000000000001",
-            grunnbok_version="dev",
+            kerno_version="dev",
         ),
         controls=[],
     )
@@ -56,7 +56,7 @@ def test_export_returns_json_attachment_with_filename():
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/json"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="grunnbok-evidence-pack-governance-2026-07-03.json"'
+        'attachment; filename="kerno-evidence-pack-governance-2026-07-03.json"'
     )
     body = response.json()
     assert body["metadata"]["control_family"] == "governance"
@@ -72,7 +72,7 @@ def test_export_sanitises_filename_from_family_value():
     assert response.status_code == 200
     disposition = response.headers["content-disposition"]
     assert '"; rm' not in disposition
-    assert "grunnbok-evidence-pack-gov___rm_-rf-" in disposition
+    assert "kerno-evidence-pack-gov___rm_-rf-" in disposition
 
 
 def test_export_missing_family_param_returns_422():

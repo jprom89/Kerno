@@ -45,7 +45,7 @@ Out of scope:
 ### 3.1 Item 5 — Timezone-naive DateTime columns in Doc 16 models
 
 Finding: submission_windows and submission_runs models use DateTime()
-without timezone=True. All other Grunnbok timestamp columns use
+without timezone=True. All other Kerno timestamp columns use
 DateTime(timezone=True). Mixed timezone awareness causes silent
 comparison errors when filtering across tables.
 

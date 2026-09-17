@@ -1,30 +1,30 @@
-# Grunnbok – Local Dev Quickstart
+# Kerno – Local Dev Quickstart
 
 ## Prereqs
 - Windows
 - Python 3.x on PATH (`python --version`)
 - PostgreSQL 18 running locally
-- Repo cloned to `J:\Grunnbok`
-- Database `grunnbok_dev` created, with pgvector 0.8.3 installed and extension enabled:
+- Repo cloned to `J:\Kerno`
+- Database `kerno_dev` created, with pgvector 0.8.3 installed and extension enabled:
   - `CREATE EXTENSION IF NOT EXISTS vector;`
 
 ## Environment
 
-Grunnbok uses `python-dotenv`. Copy `.env.example` to `.env` and adjust as needed:
+Kerno uses `python-dotenv`. Copy `.env.example` to `.env` and adjust as needed:
 
 ```powershell
-cd J:\Grunnbok
+cd J:\Kerno
 copy .env.example .env
 ```
 
 By default, `.env` should contain:
 
 ```text
-DATABASE_URL=postgresql://grunnbok_dev:grunnbok_dev@localhost:5432/grunnbok_dev
-GRUNNBOK_ENV=development
+DATABASE_URL=postgresql://kerno_dev:kerno_dev@localhost:5432/kerno_dev
+KERNO_ENV=development
 ```
 
-`GRUNNBOK_ENV=development` is required, not optional. The legacy static dashboard
+`KERNO_ENV=development` is required, not optional. The legacy static dashboard
 and the interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are only
 registered when it is set to exactly `development`; with it unset or set to
 anything else, every one of those URLs returns 404. That is deliberate — see
@@ -37,7 +37,7 @@ No manual `export`/`set` is required; `load_dotenv()` is wired into the app.
 From PowerShell:
 
 ```powershell
-cd J:\Grunnbok
+cd J:\Kerno
 python -m uvicorn src.api.app:app --reload --port 8001
 ```
 
@@ -51,14 +51,14 @@ The dashboard you actually want is the Next.js one, which runs as its own
 application:
 
 ```powershell
-cd J:\Grunnbok\frontend
+cd J:\Kerno\frontend
 npm run dev
 ```
 
 - Dashboard login: `http://localhost:3000/login`
 - Organisation: `dev-tenant` (required since KER-408 — an email is unique only
   within one organisation, so it alone does not identify an account)
-- To add or amend register entries, log in as `compliance_lead@grunnbok.local`
+- To add or amend register entries, log in as `compliance_lead@kerno.local`
   with `$DEV_SEED_PASSWORD` from your `.env`. Any role can read the register;
   only `compliance_lead` and `vciso` can write, and the server returns 403 to
   everyone else regardless of what the UI shows.
@@ -70,7 +70,7 @@ attributed to the logged-in user (KER-409).
 **Submission windows and runs are still only on the legacy dashboard** until
 KER-411 lands. The legacy static dashboard at
 `http://localhost:8001/dashboard/login.html` is served only when
-`GRUNNBOK_ENV=development`, and it is otherwise frozen: it keeps its JWT in
+`KERNO_ENV=development`, and it is otherwise frozen: it keeps its JWT in
 localStorage and is not the surface being developed.
 
 ### Before any manual click-through, restart the API
@@ -82,14 +82,14 @@ process has twice reported a feature missing that was in fact present.
 ## Database & migrations
 
 - Postgres: 18
-- Extension: `vector` 0.8.3 installed in `grunnbok_dev`
+- Extension: `vector` 0.8.3 installed in `kerno_dev`
 - Alembic: all 14 migrations applied, current head:
   - `014_add_tenant_credentials` (revision `o0p1q2r3`)
 
 If you need to re-run migrations:
 
 ```powershell
-cd J:\Grunnbok
+cd J:\Kerno
 alembic upgrade head
 ```
 
@@ -98,7 +98,7 @@ alembic upgrade head
 Run unit tests from the repo root:
 
 ```powershell
-cd J:\Grunnbok
+cd J:\Kerno
 pytest
 ```
 

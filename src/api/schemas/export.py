@@ -22,7 +22,7 @@ class PackMetadata(BaseModel):
     control_family: str
     generated_at: datetime
     export_id: str
-    grunnbok_version: str
+    kerno_version: str
 
 
 class EvidenceEntry(BaseModel):

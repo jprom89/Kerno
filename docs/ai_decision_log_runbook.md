@@ -1,14 +1,14 @@
 # AI-Decision Log Runbook (KER-203)
 
 **Audience:** compliance engineers, vCISOs, auditors, and on-call engineers.
-**System:** Grunnbok — `ai_decision_log` table (migration 020).
+**System:** Kerno Compliance Copilot — `ai_decision_log` table (migration 020).
 **Last updated:** 10 July 2026.
 
 ---
 
 ## 1. Purpose
 
-Every time Grunnbok's mapping engine produces a compliance recommendation, one
+Every time Kerno's mapping engine produces a compliance recommendation, one
 row is written to `ai_decision_log` **in the same database transaction** as
 the recommendation itself. A recommendation cannot exist without its retained
 decision record, and vice versa.
@@ -17,14 +17,14 @@ Each row records:
 
 | Field | Meaning |
 |---|---|
-| `correlation_id` | Grunnbok-generated UUID for this decision record |
+| `correlation_id` | Kerno-generated UUID for this decision record |
 | `control_id` | The control that was mapped (TEXT ref, matches `recommendations.control_id`) |
 | `evidence_ids` | The evidence record refs the model cited |
 | `input_snapshot_hash` | SHA-256 of the canonical JSON of the mapping inputs — see §4 |
 | `output_status` | The model's outcome: `met`, `partial`, or `gap` |
 | `confidence_score` | The model's self-reported confidence, 0.0–1.0 |
 | `rationale_extract` | Short extract of the model's reasoning |
-| `model_version` | The LLM that produced the decision (`GRUNNBOK_LLM_MODEL` at generation time) |
+| `model_version` | The LLM that produced the decision (`KERNO_LLM_MODEL` at generation time) |
 | `created_at` | Database timestamp of the decision |
 
 This log is **separate from the KER-107 human-decision audit ledger**, because
@@ -67,7 +67,7 @@ live here.
 - **EU AI Act Articles 12, 19, and 26** — record-keeping and log-retention
   duties for high-risk AI systems. The Annex III obligations (as deferred by
   the EU Digital Omnibus on AI, in force since ~2 July 2026) apply from
-  **2 December 2027**. Grunnbok ships the capability ahead of that deadline for
+  **2 December 2027**. Kerno ships the capability ahead of that deadline for
   procurement readiness with NIS2/DORA enterprise buyers.
 - The log demonstrates that AI mapping decisions are **reconstructable**:
   what the model saw (via hash), what it decided, how confident it was, and

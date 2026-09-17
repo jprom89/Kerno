@@ -74,7 +74,7 @@ def build_evidence_pack(conn, session, control_family: str) -> EvidencePack:
         control_family=control_family,
         generated_at=datetime.now(timezone.utc),
         export_id=export_id,
-        grunnbok_version=os.environ.get("GRUNNBOK_VERSION", "dev"),
+        kerno_version=os.environ.get("KERNO_VERSION", "dev"),
     )
     _record_export_audit_entry(conn, tenant_id, control_family, export_id, len(entries))
     return EvidencePack(metadata=metadata, controls=entries)

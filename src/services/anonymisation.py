@@ -3,7 +3,7 @@
 Plain-English summary
 ---------------------
 Before any piece of security metadata can be used for cross-tenant analytics or
-model improvement, Grunnbok must remove anything that could identify a specific
+model improvement, Kerno must remove anything that could identify a specific
 company's internal environment. This file does that stripping.
 
 Each of the five identifier types defined in LEARNING_PIPELINE_SPEC.md Section

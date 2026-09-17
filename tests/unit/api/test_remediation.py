@@ -16,9 +16,9 @@ from src.services.remediation_service import RemediationResult, ReReviewResult
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _CONTROL_ID = "e1000000-0000-4000-a000-000000000001"
-_ISSUE_KEY = "GRUNNBOK-123"
+_ISSUE_KEY = "KERNO-123"
 
-os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

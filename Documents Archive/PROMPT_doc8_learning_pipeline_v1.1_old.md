@@ -14,7 +14,7 @@ Answer all three questions from CLAUDE.md §0 before proceeding. Write your answ
 
 ## What You Are Building
 
-The core data isolation and learning pipeline for Grunnbok's Compliance Copilot. This is the foundation everything else runs on. It must be secure, readable by non-engineers, and fully testable.
+The core data isolation and learning pipeline for Kerno's Compliance Copilot. This is the foundation everything else runs on. It must be secure, readable by non-engineers, and fully testable.
 
 The output is 12 files in the order listed below. Complete each file before starting the next. Do not skip ahead.
 

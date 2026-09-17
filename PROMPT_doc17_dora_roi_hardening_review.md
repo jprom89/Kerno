@@ -1,5 +1,5 @@
 You are performing a **hardening review** of the DORA Register of Information
-implementation (Docs 14–16A) in the Grunnbok compliance copilot codebase.
+implementation (Docs 14–16A) in the Kerno compliance copilot codebase.
 
 This is *not* a feature sprint. It is a structured verification pass.
 
@@ -10,7 +10,7 @@ Read the following files in full before writing any review text or code:
 - PROMPT_doc15_dora_roi_export_validation.md         (Doc 15 — export + validation)
 - PROMPT_doc14_dora_roi_live_register.md             (Doc 14 — live register)
 - CLAUDE.md                                          (process and gate rules)
-- GRUNNBOK_STRATEGY.md                                  (context only)
+- KERNO_STRATEGY.md                                  (context only)
 
 Then read all **implemented code and tests** produced by Docs 14, 15, 16, and 16A:
 

@@ -1,4 +1,4 @@
-# Grunnbok Master Strategy Document
+# Kerno Master Strategy Document
 ## 7-Dive Research Summary · Gap Register · Sprint Roadmap · Next Steps
 
 **Status (13 August 2026): research memo — not a ship plan, not a sales
@@ -40,17 +40,17 @@ The EU regulatory wave of 2024–2027 is the single largest forced compliance sp
 
 ### The Three Structural Moats (Unreplicable by US Competitors)
 
-1. **EU data sovereignty — legal fact, not marketing claim.** The CLOUD Act applies to US-incorporated companies regardless of data storage location[^20][^21][^22]. Grunnbok as an EU-incorporated entity with no US presence cannot be served a CLOUD Act warrant. This is verifiable in due diligence. Vanta ($4.15B valuation[^23]) and Drata ($2B valuation[^24]) are permanently exposed.
+1. **EU data sovereignty — legal fact, not marketing claim.** The CLOUD Act applies to US-incorporated companies regardless of data storage location[^20][^21][^22]. Kerno as an EU-incorporated entity with no US presence cannot be served a CLOUD Act warrant. This is verifiable in due diligence. Vanta ($4.15B valuation[^23]) and Drata ($2B valuation[^24]) are permanently exposed.
 
-2. **Member-state-specific regulatory intelligence.** Germany's NIS2UmsuCG, France's ANSSI Cyber France Reference Framework, Netherlands DNB/AFM enforcement posture — 22 EU states have divergent implementation details[^25][^26][^27]. Vanta ships one generic NIS2 overlay. Grunnbok ships country-specific evidence formats, deadline calendars, and authority submission formats. Non-replicable within 2–3 years of competitor investment.
+2. **Member-state-specific regulatory intelligence.** Germany's NIS2UmsuCG, France's ANSSI Cyber France Reference Framework, Netherlands DNB/AFM enforcement posture — 22 EU states have divergent implementation details[^25][^26][^27]. Vanta ships one generic NIS2 overlay. Kerno ships country-specific evidence formats, deadline calendars, and authority submission formats. Non-replicable within 2–3 years of competitor investment.
 
-3. **Accumulated compliance intelligence is a *future* moat, not a live one.** Override decisions, scores, recommendation history, and evidence links can accumulate as tenant-specific memory[^28][^29]. That is not a trained model, and it is not injected into generation today: the production engine is a deterministic evidence scorer plus LLM prose, and retrieval/bias has no production caller. EU Data Act portability still applies[^30][^31]. Switching cost *once the loop is used for months* would be the named human decisions and register contents — not "Grunnbok's models." Do not use that phrase in investor or customer material until retrieval is actually wired (KER-404) and trained on real overrides.
+3. **Accumulated compliance intelligence is a *future* moat, not a live one.** Override decisions, scores, recommendation history, and evidence links can accumulate as tenant-specific memory[^28][^29]. That is not a trained model, and it is not injected into generation today: the production engine is a deterministic evidence scorer plus LLM prose, and retrieval/bias has no production caller. EU Data Act portability still applies[^30][^31]. Switching cost *once the loop is used for months* would be the named human decisions and register contents — not "Kerno's models." Do not use that phrase in investor or customer material until retrieval is actually wired (KER-404) and trained on real overrides.
 
 ***
 
 ## Part B: The Verified Regulatory Deadline Calendar
 
-### Hard Deadlines Affecting Grunnbok Customers (Chronological)
+### Hard Deadlines Affecting Kerno Customers (Chronological)
 
 | Date | Regulation | Obligation | Customer Segment |
 |---|---|---|---|
@@ -70,11 +70,11 @@ The EU regulatory wave of 2024–2027 is the single largest forced compliance sp
 
 ### Final Competitor Map
 
-| Competitor | Real Threat | Structural Gap vs Grunnbok | Status |
+| Competitor | Real Threat | Structural Gap vs Kerno | Status |
 |---|---|---|---|
 | **Vanta** | High | CLOUD Act exposed; generic NIS2 overlay; no member-state modules | Monitor quarterly |
 | **Drata** | Medium | Same as Vanta; may IPO before acquiring | Monitor |
-| **Diligent** | Medium (acquirer) | EU regulatory depth gap is Grunnbok's value to them | Start relationship Sprint 1 |
+| **Diligent** | Medium (acquirer) | EU regulatory depth gap is Kerno's value to them | Start relationship Sprint 1 |
 | **ServiceNow GRC** | Low | $200K–750K all-in; 6–18 months deploy; no EU sovereignty | Messaging target |
 | **Orbiq** | Medium (EU native) | No DORA RoI xBRL-CSV; no multi-tenant; no AI engine | Watch closely |
 | **Secfix** | Low | DACH SMB only; no DORA | Not a threat at enterprise |
@@ -87,7 +87,7 @@ The EU regulatory wave of 2024–2027 is the single largest forced compliance sp
 | Tier | Acquirer | Why | Action |
 |---|---|---|---|
 | 1 | **Diligent** | 3 acquisitions/year; EU-native (3rdRisk Jan 2026[^45]); NIS2/DORA gap | Warm relationship now |
-| 1 | **Vanta** | $300M ARR growing 69% YoY[^23][^46]; EU sovereignty gap; Grunnbok fills structural hole | Build for acquirability |
+| 1 | **Vanta** | $300M ARR growing 69% YoY[^23][^46]; EU sovereignty gap; Kerno fills structural hole | Build for acquirability |
 | 1 | **ServiceNow** | GRC platform; no EU regulatory depth; enterprise distribution | Build for acquirability |
 | 2 | **SAP** | CTPP-designated[^47]; EU native; SAP GRC needs EU compliance layer | Sprint 5+ |
 | 2 | **IBM/Archer** | Active buy-vs-build (Compliance.ai acq.)[^48]; GRC modernisation | Sprint 5+ |
@@ -129,9 +129,9 @@ These topics were identified but NOT yet researched. Listed by priority:
 | Gap | Why It Matters |
 |---|---|
 | **eIDAS 2.0 / EU Digital Identity Wallet** | Active enforcement from 2026; potential connector for identity verification in compliance workflows; may be a Sprint 4 feature |
-| **ENISA EUCS (EU Cloud Scheme) certification** | If Grunnbok can be EUCS-certified, it becomes the default choice for EU public sector procurement — potentially a €50M+ market segment |
+| **ENISA EUCS (EU Cloud Scheme) certification** | If Kerno can be EUCS-certified, it becomes the default choice for EU public sector procurement — potentially a €50M+ market segment |
 | **Sectoral NIS2 detail: healthcare and energy** | NIS2 Annex I includes hospitals and energy operators — a large, underserved segment; no deep dive yet on their specific evidence requirements |
-| **GDPR Article 28/32 as a selling point** | Grunnbok processes customer compliance data; its own GDPR DPA posture is a procurement prerequisite; has never been mapped |
+| **GDPR Article 28/32 as a selling point** | Kerno processes customer compliance data; its own GDPR DPA posture is a procurement prerequisite; has never been mapped |
 | **BaFin MVP platform API** | BaFin has its own digital submission platform for DORA RoI that differs slightly from DNB/MyDNB; the technical spec has not been retrieved |
 
 ### Tier 2 — High Value for Sprint 5+ Planning
@@ -139,7 +139,7 @@ These topics were identified but NOT yet researched. Listed by priority:
 | Gap | Why It Matters |
 |---|---|
 | **NCSC UK technical requirements** | UK CS&R Bill creates a new compliance market; the specific technical obligations haven't been retrieved from UK guidance |
-| **ISO 27001:2022 mapping depth** | ENISA guidance maps to ISO 27001:2022 — Grunnbok's control library needs validated ISO 27001 crosswalk; not yet verified |
+| **ISO 27001:2022 mapping depth** | ENISA guidance maps to ISO 27001:2022 — Kerno's control library needs validated ISO 27001 crosswalk; not yet verified |
 | **Pricing architecture for MSP operators** | Per-managed-entity pricing has not been benchmarked against comparable platforms; competitive MSP pricing models are unverified |
 | **Customer onboarding benchmarks** | Time-to-value for compliance SaaS; what's the typical onboarding time, and how does it affect CAC payback? |
 | **DORA ICT incident classification taxonomy** | Art. 18 major/non-major classification criteria in detail; needed for the incident module spec in Docs 14+ |
@@ -159,7 +159,7 @@ These topics were identified but NOT yet researched. Listed by priority:
 
 ### Build Philosophy: MVP First, Platform Second
 
-The hard deadline forcing MVP urgency is **September 11, 2026** (CRA reporting goes live — 12 weeks from now). Before that date, Grunnbok needs a working DORA incident workflow AND a CRA vulnerability reporting stub. These two features, combined with the NIS2 control library from Docs 11–13, constitute a legitimate MVP that generates real design partner value.
+The hard deadline forcing MVP urgency is **September 11, 2026** (CRA reporting goes live — 12 weeks from now). Before that date, Kerno needs a working DORA incident workflow AND a CRA vulnerability reporting stub. These two features, combined with the NIS2 control library from Docs 11–13, constitute a legitimate MVP that generates real design partner value.
 
 **Assume: 2-week sprints, 2-person engineering team (expandable)**
 
@@ -188,7 +188,7 @@ Goals:
 - Real-time update triggers: new vendor contract added → register updated automatically
 - 116 ESA quality check validator (inline pre-submission; addresses the 93.5% first-cycle failure rate[^52])
 - Criticality reclassification workflow
-- "Add Grunnbok as your ICT third-party" self-service onboarding widget (auto-populates customer's RoI with Grunnbok's own LEI and service details)
+- "Add Kerno as your ICT third-party" self-service onboarding widget (auto-populates customer's RoI with Kerno's own LEI and service details)
 - BaFin March 9–30 window and DNB March 2 window pre-configured in authority calendar
 
 **EU Data Act compliance (mandatory by January 2027[^30]):**
@@ -226,10 +226,10 @@ Goals:
 - BSI portal registration documentation generator
 - Management liability evidence package (BSIG §38 — board members personally liable; generates the documentation that protects management)
 - BaFin DORA documentation checklist as pre-built evidence template[^57]
-- **DORA TLPT supplier evidence pack** (Delegated Regulation 2025/1190[^58]): generates the ICT supplier documentation financial entity TLPT planners need from Grunnbok
+- **DORA TLPT supplier evidence pack** (Delegated Regulation 2025/1190[^58]): generates the ICT supplier documentation financial entity TLPT planners need from Kerno
 - DORA Concentration Risk / CTPP Dashboard: maps customer ICT vendor register against 19 CTPP designations (AWS, Google Cloud, Microsoft, SAP, Oracle)[^47]; flags concentration risk; generates exit strategy templates
 
-Deliverable: Germany is Grunnbok's first country-specific module. This is the sales tool for the 29,500-entity German market. Onboard first 5–10 paying German customers.
+Deliverable: Germany is Kerno's first country-specific module. This is the sales tool for the 29,500-entity German market. Onboard first 5–10 paying German customers.
 
 ***
 
@@ -244,10 +244,10 @@ Goals:
   - Per-managed-entity billing abstraction
   - Managed entity onboarding workflow (MSP adds client → client gets isolated tenant → pre-populated with MSP-selected control library)
   - Partner portal v1 (Big 4 and boutique advisor onboarding; lead protection; co-marketing pack)
-- Regnology partnership approach: integration spec for Grunnbok DORA RoI → Regnology ABACUS reporting pipeline
+- Regnology partnership approach: integration spec for Kerno DORA RoI → Regnology ABACUS reporting pipeline
 - **Zero-retention pass-through Jira connector upgrade:**
-  - Bi-directional sync: Grunnbok recommendations → Jira remediation tickets
-  - JSM incident trigger → DORA incident classification in Grunnbok
+  - Bi-directional sync: Kerno recommendations → Jira remediation tickets
+  - JSM incident trigger → DORA incident classification in Kerno
   - Zero-data-retention architecture documentation (NIS2 Art. 21(2)(d) supply chain procurement requirement[^59])
 
 Deliverable: Two more country modules. MSP operator tier live. First Big 4 partner on-boarded. 20–30 paying customers.
@@ -263,9 +263,9 @@ Goals:
 - CMDB connector enhancements: pull ICT asset inventory for DORA Art. 5 ICT asset management; feeds RoI template RT.01.01
 - ISO 27001:2022 crosswalk: map all NIS2 Art. 21 controls to ISO 27001:2022 clauses (ENISA guidance does this mapping[^61][^62] — implement as an automated crosswalk report)
 
-Deliverable: Full CRA Sprint 3 stub converted to live product. ISO 27001 crosswalk makes Grunnbok relevant to ISO 27001 buyers (expanding TAM beyond NIS2-only).
+Deliverable: Full CRA Sprint 3 stub converted to live product. ISO 27001 crosswalk makes Kerno relevant to ISO 27001 buyers (expanding TAM beyond NIS2-only).
 
-**This is the end of MVP. By Sprint 6 (week 12), Grunnbok has: NIS2 + DORA RoI + DORA Incidents + CRA reporting + Germany/BSI + Netherlands/DNB + France/ANSSI + MSP operator tier + Big 4 partner channel. This is a demonstrable, paying product.**
+**This is the end of MVP. By Sprint 6 (week 12), Kerno has: NIS2 + DORA RoI + DORA Incidents + CRA reporting + Germany/BSI + Netherlands/DNB + France/ANSSI + MSP operator tier + Big 4 partner channel. This is a demonstrable, paying product.**
 
 ***
 
@@ -284,15 +284,15 @@ Deliverable: First AI governance module. Sell to enterprise procurement teams re
 ***
 
 ### Sprint 8 (Weeks 15–16) — Live Regulatory Intelligence Feed
-**This is the feature that transforms Grunnbok from static compliance to intelligence platform**
+**This is the feature that transforms Kerno from static compliance to intelligence platform**
 
 Goals:
 - Regulatory change monitoring: ENISA, EUR-Lex, BaFin, ANSSI, DNB, ICO (UK) — automated ingestion of regulatory updates
-- Impact assessment engine: when a new implementing act or guidance is published, Grunnbok auto-flags which controls are affected for each tenant
+- Impact assessment engine: when a new implementing act or guidance is published, Kerno auto-flags which controls are affected for each tenant
 - Control library auto-update notifications (not auto-update — human approval required; but auto-flag)
 - NIS2 Commission Amendment monitoring (January 2026 package in progress[^1])
 
-Deliverable: This feature alone justifies a pricing tier uplift. "Grunnbok monitors regulatory change so your compliance team doesn't have to" is the conversion message that closes enterprise deals.
+Deliverable: This feature alone justifies a pricing tier uplift. "Kerno monitors regulatory change so your compliance team doesn't have to" is the conversion message that closes enterprise deals.
 
 ***
 
@@ -305,7 +305,7 @@ Goals:
 - UK ICO NIS incident reporting integration
 - UK-specific scope calculator (OES, RDS, MSP thresholds)
 
-Deliverable: UK module. Opens a second market with zero additional architecture work. Grunnbok is the only EU-native platform with a UK module — no UK-native tool will have the EU depth and no EU tool will ship UK first.
+Deliverable: UK module. Opens a second market with zero additional architecture work. Kerno is the only EU-native platform with a UK module — no UK-native tool will have the EU depth and no EU tool will ship UK first.
 
 ***
 
@@ -327,7 +327,7 @@ Deliverable: Full growth engine in place. Partner channel generating deals. This
 
 **Minimum Viable Product = End of Sprint 6 (Week 12)**
 
-A Grunnbok MVP that generates real customer value and revenue was *planned* as
+A Kerno MVP that generates real customer value and revenue was *planned* as
 the list below. **Honest status as of 13 August 2026 — these are not done
 just because they have a checkmark in older drafts:**
 
@@ -363,7 +363,7 @@ just because they have a checkmark in older drafts:**
 
 1. **Lock in hybrid pricing architecture in the contract template.** This cannot be retrofitted. Every design partner agreement should include module expansion pricing and a usage component. One week to draft.
 
-2. **Confirm EU entity status.** If Grunnbok is not yet incorporated in an EU member state, this must happen before any customer conversation. The CLOUD Act moat claim is a legal fact only if the entity is genuinely EU-incorporated with no US presence.
+2. **Confirm EU entity status.** If Kerno is not yet incorporated in an EU member state, this must happen before any customer conversation. The CLOUD Act moat claim is a legal fact only if the entity is genuinely EU-incorporated with no US presence.
 
 3. **Start Diligent outreach.** Three acquisitions in 12 months, EU-native focus, NIS2/DORA gap[^67][^68][^45]. A warm relationship started now converts to a term sheet within 18 months. Target: Head of Corporate Development at Diligent.
 
@@ -379,13 +379,13 @@ just because they have a checkmark in older drafts:**
 
 7. **Build DORA RoI first, not NIS2 reporting.** The DORA RoI xBRL-CSV with 116 quality checks is the most differentiating near-term feature — no pure-play compliance automation competitor has shipped this, the pain is acute (93.5% failure rate in first cycle[^52]), and the March 2027 annual cycle creates a recurring forcing event.
 
-8. **Approach Regnology partner programme.** Their financial entity customers need exactly what Grunnbok builds. Their existing Big 4 partner ecosystem (Deloitte, KPMG, PwC, d-fine[^69][^70]) is the distribution channel for Grunnbok's financial services GTM. Target: Regnology's Head of Alliances.
+8. **Approach Regnology partner programme.** Their financial entity customers need exactly what Kerno builds. Their existing Big 4 partner ecosystem (Deloitte, KPMG, PwC, d-fine[^69][^70]) is the distribution channel for Kerno's financial services GTM. Target: Regnology's Head of Alliances.
 
 ### Before September 11, 2026 (Sprint 6 Gate)
 
 9. **Ship CRA SRP integration.** The ENISA Single Reporting Platform API testing phase is open now[^56][^71]. Register for beta access immediately — teams that participate get a process advantage before the September 11 hard deadline[^60].
 
-10. **First paying customers.** Sprint 6 is the MVP gate. By September 11, 2026, Grunnbok should have 5–10 paying customers generating €50K–€150K ARR. This is not a financial target — it is a validation gate. Without paying customers by Sprint 6, re-evaluate product-market fit before Sprint 7.
+10. **First paying customers.** Sprint 6 is the MVP gate. By September 11, 2026, Kerno should have 5–10 paying customers generating €50K–€150K ARR. This is not a financial target — it is a validation gate. Without paying customers by Sprint 6, re-evaluate product-market fit before Sprint 7.
 
 ---
 

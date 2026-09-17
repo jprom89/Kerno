@@ -58,7 +58,7 @@ class AiDecisionLog(Base):
 
     __tablename__ = "ai_decision_log"
 
-    # Grunnbok-generated identity for this decision record. Never bound from HTTP input.
+    # Kerno-generated identity for this decision record. Never bound from HTTP input.
     correlation_id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True),
         primary_key=True,
@@ -91,7 +91,7 @@ class AiDecisionLog(Base):
     # Short extract of the model's reasoning (the recommendation stores it in full).
     rationale_extract: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Which model produced the decision (GRUNNBOK_LLM_MODEL at generation time).
+    # Which model produced the decision (KERNO_LLM_MODEL at generation time).
     model_version: Mapped[str] = mapped_column(String, nullable=False)
 
     # When the decision was recorded. Set by the database clock; the prune job

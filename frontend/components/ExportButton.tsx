@@ -48,7 +48,7 @@ export default function ExportButton({ family, families = [] }: ExportButtonProp
       anchor.href = url;
       anchor.download = filenameFromDisposition(
         response.headers.get("content-disposition"),
-        `grunnbok-evidence-pack-${selected}.json`,
+        `kerno-evidence-pack-${selected}.json`,
       );
       anchor.click();
       URL.revokeObjectURL(url);

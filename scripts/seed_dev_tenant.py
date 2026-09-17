@@ -17,7 +17,7 @@ import psycopg2
 from config.constants import DEFAULT_REMEDIATION_SLA_DAYS, RbacRole
 from src.services.auth_service import hash_password
 
-_DEV_EMAIL = "admin@grunnbok.local"
+_DEV_EMAIL = "admin@kerno.local"
 _DEV_PASSWORD = "changeme123"
 _DEV_DISPLAY_NAME = "Dev Tenant"
 _DEV_JIRA_ASSIGNEE = "dev-jira-account-id"
@@ -60,12 +60,12 @@ AND NOT EXISTS (
 def _seed_dev_users(cursor, tenant_id, password: str) -> list[str]:
     """Insert one active user per RBAC role under the dev tenant; return their emails.
 
-    Each user logs in as {role}@grunnbok.local with the given password. Idempotent —
+    Each user logs in as {role}@kerno.local with the given password. Idempotent —
     re-running leaves any existing user untouched. (KER-202.)
     """
     emails: list[str] = []
     for role in RbacRole:
-        email = f"{role.value}@grunnbok.local"
+        email = f"{role.value}@kerno.local"
         cursor.execute(
             _INSERT_DEV_USER, (str(tenant_id), email, hash_password(password), role.value)
         )
@@ -97,14 +97,14 @@ def _apply_seed(cursor, dev_password: str | None) -> list[str]:
 def main() -> None:
     """Connect to DATABASE_URL and seed the dev tenant, per-role users, and routing rule.
 
-    Refuses to run unless GRUNNBOK_ENV=development (SEC-02): this uses weak dev
+    Refuses to run unless KERNO_ENV=development (SEC-02): this uses weak dev
     credentials and must never be pointed at a staging or production database.
     Per-role users are seeded only when DEV_SEED_PASSWORD is set.
     """
-    if os.getenv("GRUNNBOK_ENV", "") != "development":
+    if os.getenv("KERNO_ENV", "") != "development":
         print(
-            "ERROR: seed_dev_tenant.py refused to run — GRUNNBOK_ENV is not "
-            "'development'. Set GRUNNBOK_ENV=development to run this script locally.",
+            "ERROR: seed_dev_tenant.py refused to run — KERNO_ENV is not "
+            "'development'. Set KERNO_ENV=development to run this script locally.",
             file=sys.stderr,
         )
         sys.exit(1)

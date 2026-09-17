@@ -1,5 +1,5 @@
 """
-LLM client factory for Grunnbok.
+LLM client factory for Kerno.
 
 What this module does
 ---------------------
@@ -10,7 +10,7 @@ EU routing, and API key are configured in exactly one place.
 
 Why this module exists
 ----------------------
-Grunnbok is an EU-native compliance SaaS selling NIS2/DORA/CRA/EU AI Act coverage
+Kerno is an EU-native compliance SaaS selling NIS2/DORA/CRA/EU AI Act coverage
 to European enterprises. Using a US-incorporated AI provider (OpenAI, Anthropic,
 Cohere) exposes customer compliance data to the US CLOUD Act, directly
 contradicting our product promise. Mistral AI SAS (Paris, France) is the only
@@ -38,7 +38,7 @@ How to use
 Environment variables required
 ------------------------------
 MISTRAL_API_KEY   — API key from console.mistral.ai
-GRUNNBOK_LLM_MODEL   — model to use, default "mistral-large-latest"
+KERNO_LLM_MODEL   — model to use, default "mistral-large-latest"
 
 How to test
 -----------

@@ -20,7 +20,7 @@ How to run:
     The script is idempotent: running it twice produces no duplicate rows.
     The DATABASE_URL environment variable must be set to a psycopg2-compatible
     connection string, e.g.:
-        postgresql://user:password@localhost:5432/grunnbok
+        postgresql://user:password@localhost:5432/kerno
 
 Seed contents:
     12 NIS2 controls spanning all 7 categories from §3.4.

@@ -3,7 +3,7 @@
  *
  * What:  the tenant's Register of Information — every ICT third-party
  *        relationship, with an add action for the roles allowed to write.
- * Why:   the register is the record Grunnbok maintains; this is its first product
+ * Why:   the register is the record Kerno maintains; this is its first product
  *        surface. The legacy static dashboard is development-only since
  *        Ticket B and is not being rebuilt.
  * How:   server component; data via lib/api.ts. Tests: npm test.

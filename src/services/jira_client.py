@@ -49,7 +49,7 @@ class JiraClient:
         due_date: date,
         description: str,
     ) -> str:
-        """Create a Jira issue and return its key (e.g. 'GRUNNBOK-123').
+        """Create a Jira issue and return its key (e.g. 'KERNO-123').
 
         Uses the v2 REST endpoint so description is plain text. Wraps every
         transport and HTTP failure in JiraClientError so callers never handle

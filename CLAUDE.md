@@ -1,4 +1,4 @@
-# CLAUDE.md — Grunnbok: Codebase Constitution v1.2
+# CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
 <!-- Version: 2.7 | Updated: 2026-08-20 | Changes: frozen DORA filing download; next is founder HTTPS then partner rows -->
 
 This file is the first thing Claude reads at the start of every session.
@@ -11,11 +11,11 @@ a convenience argument. If a rule creates friction, the friction is intentional.
 ## §0 — Current mandate (read before §1–§16)
 
 **Implementation priority lives in `NOW.md`.** That file is part of this
-constitution. It outranks `GRUNNBOK_STRATEGY.md`, every `PROMPT_doc*.md`, and
+constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
 
-As of 20 August 2026 Grunnbok is an EU **system of record** (live DORA
+As of 20 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
 dashboard. Landed and not to be re-built: hygiene C1/A/B/D, **KER-409**
 (register ledger + submissions 404) at `0b3e63e`, **KER-410** (Next.js
@@ -31,7 +31,7 @@ authoritative for status; if this paragraph and `NOW.md` ever disagree,
 `NOW.md` wins. Do not add coverage features, RAG, CRA, incidents,
 country packs, or MSP.
 
-`GRUNNBOK_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
+`KERNO_STRATEGY.md` is a research memo, not a ship plan. Checkmarks in its
 Part G are aspirational — those features are not built. Do not implement
 from that document.
 
@@ -43,12 +43,7 @@ call retrieval; `context_records.embedding` is never populated.
 
 ## §1 — Project Identity
 
-**Product:** Grunnbok
-
-The name is Norwegian: *grunnbok* is the official land register — the
-foundation book that is the legal source of title. Pronounced roughly
-GROON-bok.
-
+**Product:** Kerno Compliance Copilot
 **What it does:** Holds an EU operational-resilience **system of record** —
 starting with a live DORA Register of Information and named-human decisions
 on NIS2 controls, each tied to evidence, a reproducible score, and a
@@ -58,7 +53,7 @@ helps a human update that record; it is not the product.
 **Who uses it:** Compliance engineers, vCISOs, and fractional CTOs at
 mid-market European technology companies.
 
-**What it is not:** A fine-tuning system. Grunnbok never trains or modifies a
+**What it is not:** A fine-tuning system. Kerno never trains or modifies a
 base LLM. It is also not, today, a retrieval-augmented or
 embedding-personalised system. The retrieval/bias machinery exists and is
 tested; it has no production caller. Do not describe it as live. Reserved
@@ -381,7 +376,7 @@ Resolved:
 - SEC-01: reviewer_role constrained to ReviewerRole enum (VCISO/FCISO/INTERNAL_ADMIN);
   actor_attribution honest marker added to override audit entries.
   (Superseded — see "Resolved (Sprint 2a)" below for the full fix.)
-- SEC-02: seed script hard-exits unless GRUNNBOK_ENV=development;
+- SEC-02: seed script hard-exits unless KERNO_ENV=development;
   plaintext password no longer printed.
 - SEC-03/04: generic RuntimeError handler with correlation ID;
   JiraClientError no longer leaks to HTTP responses.
@@ -728,7 +723,7 @@ KER-205 builds a thin normalisation layer over context_records (migration
    forensic chain to a high-volume operational log.
 3. **Hash-only input snapshots.** SHA-256 of the canonical JSON of the mapping
    inputs. Verifiable ("was THIS input what produced THAT output?") without
-   storing personal data. model_version comes from GRUNNBOK_LLM_MODEL.
+   storing personal data. model_version comes from KERNO_LLM_MODEL.
 4. **Prune follows the KER-201 scheduler pattern** — cron entrypoint, no new
    dependency, per the §12 KER-201 decision 1 rationale. Prune runs are
    logged; prune does NOT write KER-107 entries per row (volume).
@@ -823,7 +818,7 @@ evidence-linking patterns.
 1. POST /api/v1/webhooks/ingest accepting JSON:
    { source_system, event_type, external_ref, payload, tenant_id_hint }.
 2. Per-tenant HMAC-SHA256 signature verification mandatory. Header:
-   X-Grunnbok-Signature: sha256=<hex>. Invalid or missing signature → 401,
+   X-Kerno-Signature: sha256=<hex>. Invalid or missing signature → 401,
    verified with a constant-time compare (hmac.compare_digest). Signature
    verification runs BEFORE body schema validation — a signature failure is
    never a 422.
@@ -872,7 +867,7 @@ evidence-linking patterns.
    under tenant context. The dedup store, by contrast, is only ever touched
    AFTER the tenant is resolved, so it gets ENABLE + FORCE + policy.
 3. **Registration lookup key.** Ingest requests carry
-   X-Grunnbok-Webhook-Id: <registration UUID> alongside the signature; the
+   X-Kerno-Webhook-Id: <registration UUID> alongside the signature; the
    server loads that one registration and verifies the HMAC against its
    secret (unknown id → 401, indistinguishable from a bad signature). The id
    is a non-secret handle — this avoids trial-verifying secrets across
@@ -938,7 +933,7 @@ Baseline: the full 373-test suite must stay green throughout.
 ## §14 — Sprint 3 Backlog
 
 **Sprint goal:** Ship a dashboard MVP that a Compliance Lead or vCISO can use
-to evaluate Grunnbok without touching Jira — in time for design partner sessions
+to evaluate Kerno without touching Jira — in time for design partner sessions
 before the September 2026 beta rollout.
 
 ### Stack decision (recorded 15 July 2026, product owner)
@@ -1003,7 +998,7 @@ is logged in and what role they hold).
    decoded from the verified token; the endpoint does not exist today).
 5. Logout: `/api/auth/logout` clears the httpOnly cookie and redirects to
    `/login`.
-6. Nav header on every dashboard page: Grunnbok logo, logged-in user email,
+6. Nav header on every dashboard page: Kerno logo, logged-in user email,
    role badge, logout button.
 7. FastAPI CORS: add `CORSMiddleware` (none exists today) reading a
    comma-separated `ALLOWED_ORIGINS` env var at startup; documented in
@@ -1023,7 +1018,7 @@ is logged in and what role they hold).
    decodes the presented JWT with the existing dependency helpers and returns
    { email, role } — no database read (identity lives in the verified token,
    per the KER-202 users-table design note).
-4. **GRUNNBOK_API_URL (server-side env var, never NEXT_PUBLIC_*)** is the only
+4. **KERNO_API_URL (server-side env var, never NEXT_PUBLIC_*)** is the only
    place the FastAPI base URL lives. The browser never calls FastAPI
    directly: all FastAPI calls go through Next.js route handlers and server
    components, which hold the httpOnly cookie. Documented in
@@ -1419,7 +1414,7 @@ explicit approval.
 The demo and any deck must use THIS sentence — verified true against the live
 schema, word by word:
 
-> "Every recommendation and every human decision made in Grunnbok is traceable
+> "Every recommendation and every human decision made in Kerno is traceable
 > to named evidence, a reproducible score, a named human, and a timestamp —
 > with tamper-evident, database-enforced logging of every human decision."
 
@@ -1639,7 +1634,7 @@ it changes how the Jira side is configured, not just what the server checks.
 
 ### Ticket B — development-only surfaces (delivered)
 
-Three surfaces now exist only when `GRUNNBOK_ENV` is exactly `development`:
+Three surfaces now exist only when `KERNO_ENV` is exactly `development`:
 the legacy static dashboard at `/dashboard/`, the interactive docs at `/docs`
 and `/redoc`, and the raw schema at `/openapi.json`. `GET /` no longer
 redirects into the legacy dashboard; it redirects to `FRONTEND_URL`, falling
@@ -1777,25 +1772,25 @@ to the AI log.
 
 ### ✅ RESOLVED (19 August 2026) — the docs switch and the dashboard switch are now separable
 
-Both gate on `GRUNNBOK_ENV == "development"`, as do the two seed scripts. The
+Both gate on `KERNO_ENV == "development"`, as do the two seed scripts. The
 first time anyone wants API docs on a deployed host, the only lever available
-is setting `GRUNNBOK_ENV=development` there — which simultaneously remounts the
+is setting `KERNO_ENV=development` there — which simultaneously remounts the
 legacy localStorage-JWT dashboard and unlocks `seed_dev_tenant.py` and
 `seed_demo_evidence.py` against that database. One convenience request
 disarms three unrelated controls.
 
-**Resolved:** `GRUNNBOK_ENABLE_DOCS=1` (exactly `"1"`; `true`/`yes`/`TRUE` are all
+**Resolved:** `KERNO_ENABLE_DOCS=1` (exactly `"1"`; `true`/`yes`/`TRUE` are all
 off, failing closed) serves `/docs`, `/redoc` and `/openapi.json` without
 touching the other two controls. The dashboard mount and both seed scripts
-still gate on `GRUNNBOK_ENV == "development"` alone.
+still gate on `KERNO_ENV == "development"` alone.
 `test_enable_docs_does_not_remount_the_legacy_dashboard` pins the separation by
 name, and a mutation that re-merges the two switches fails it.
 
 The original description follows, for why it mattered.
 
-The fix is a separate opt-in (`GRUNNBOK_ENABLE_DOCS`) that turns the schema
+The fix is a separate opt-in (`KERNO_ENABLE_DOCS`) that turns the schema
 back on without touching the other two. Not built in Ticket B because the
-approved scope named `GRUNNBOK_ENV` specifically, and because no staging
+approved scope named `KERNO_ENV` specifically, and because no staging
 environment exists yet — there is no Dockerfile, compose file, CI workflow or
 deploy manifest anywhere in the repo, so the coupling costs nothing today. It
 should be resolved before the first non-development deployment, which is the

@@ -6,7 +6,7 @@ Alembic revision chain:
 
 Plain-English summary
 ---------------------
-Every time the AI produces a compliance recommendation, Grunnbok must keep a
+Every time the AI produces a compliance recommendation, Kerno must keep a
 retained, queryable record of that decision: which control, which evidence,
 what the model said, how confident it was, and which model version said it.
 EU AI Act Articles 12/19/26 require this record-keeping for high-risk AI
@@ -28,7 +28,7 @@ overrides.original_control_id TEXT, tenant_embeddings.control_id TEXT).
 UUID columns would have made the same-transaction insert (AC-2) fail for
 every existing control ref. control_id is therefore TEXT and evidence_ids
 TEXT[], matching the recommendation row each log entry describes.
-correlation_id stays UUID (Grunnbok-generated), tenant_id stays UUID (real FK
+correlation_id stays UUID (Kerno-generated), tenant_id stays UUID (real FK
 to tenants).
 
 Row-Level Security: ENABLE + FORCE + tenant_isolation_policy. This is a pure

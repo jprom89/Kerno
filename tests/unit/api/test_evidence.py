@@ -23,7 +23,7 @@ from src.api.app import create_app
 from src.api.dependencies import get_conn, get_role, get_tenant_id
 from src.api.routers.overrides import get_reviewer_id
 
-os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _USER_ID = "d0000000-0000-4000-d000-000000000004"

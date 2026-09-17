@@ -21,7 +21,7 @@ import { Suspense, useEffect, useState } from "react";
 // a public identifier (the same slug the Trust Center exposes). Remembering it
 // here is a convenience only; nothing that authenticates anything is ever
 // placed in client-readable storage. The session JWT remains httpOnly.
-const LAST_ORG_KEY = "grunnbok_last_org";
+const LAST_ORG_KEY = "kerno_last_org";
 
 function LoginForm() {
   const router = useRouter();
@@ -75,9 +75,9 @@ function LoginForm() {
     <form
       onSubmit={handleSubmit}
       className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm"
-      aria-label="Sign in to Grunnbok"
+      aria-label="Sign in to Kerno"
     >
-      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Grunnbok</h1>
+      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Kerno</h1>
       <label className="mb-4 block">
         <span className="mb-1 block text-sm font-medium text-slate-700">Organisation</span>
         <input

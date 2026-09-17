@@ -3,7 +3,7 @@
  *
  * What:  select or drop one document, choose its type, upload it.
  * Why:   this is the step that did not exist — a customer had no way to get a
- *        document into Grunnbok at all except by wiring signed webhooks.
+ *        document into Kerno at all except by wiring signed webhooks.
  * How:   posts multipart to the /api/evidence proxy (the browser never calls
  *        FastAPI directly). Tests: npm test.
  */

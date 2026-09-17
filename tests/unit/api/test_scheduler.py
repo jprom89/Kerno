@@ -14,7 +14,7 @@ from src.scheduler.nightly_bias_recalculation import RecalculationRunResult
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 
-os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 def _override_get_conn():

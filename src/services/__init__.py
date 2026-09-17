@@ -1,4 +1,4 @@
-"""Business logic — the rules of how Grunnbok works, independent of any framework.
+"""Business logic — the rules of how Kerno works, independent of any framework.
 
 Services here orchestrate the models and database helpers: setting tenant
 context, capturing overrides, anonymising telemetry, recalculating each tenant's

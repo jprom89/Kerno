@@ -97,9 +97,9 @@ class _ExecutableConn:
 
 
 def _jwt_secret() -> str:
-    secret = os.environ.get("GRUNNBOK_JWT_SECRET")
+    secret = os.environ.get("KERNO_JWT_SECRET")
     if not secret:
-        raise RuntimeError("GRUNNBOK_JWT_SECRET environment variable is not set")
+        raise RuntimeError("KERNO_JWT_SECRET environment variable is not set")
     return secret
 
 

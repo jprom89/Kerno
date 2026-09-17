@@ -3,7 +3,7 @@
 Plain-English summary
 ---------------------
 As compliance engineers at a customer correct the AI's control recommendations
-(their "overrides"), Grunnbok learns the direction in which that company's correct
+(their "overrides"), Kerno learns the direction in which that company's correct
 answers tend to sit. It stores that learning as a single vector of numbers — the
 "retrieval bias vector" — one per tenant. Every night the batch job recomputes
 it from the latest overrides, and every search the company runs is nudged by it

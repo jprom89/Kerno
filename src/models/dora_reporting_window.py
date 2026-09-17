@@ -5,7 +5,7 @@ What:  Defines the SQLAlchemy ORM model for the dora_reporting_windows table.
        authority's annual submission window.
 
 Why:   Financial entities must submit their DORA Register of Information to the
-       relevant competent authority within a defined annual window. Grunnbok stores
+       relevant competent authority within a defined annual window. Kerno stores
        these windows as global reference data (no tenant_id) so the service layer
        can present upcoming deadlines to any tenant without duplication.
        Document 14 (KER-106 part 1) creates the foundation; Document 16 will

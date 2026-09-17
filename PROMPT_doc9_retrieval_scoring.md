@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 9 of the Grunnbok learning pipeline codebase.
+This document specifies Document 9 of the Kerno learning pipeline codebase.
 
 Document 9 closes the architectural pipeline break identified during the Document 8
 build review: the bias vector written nightly to the `retrieval_bias` table never

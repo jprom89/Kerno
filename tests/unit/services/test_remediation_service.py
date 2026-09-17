@@ -21,7 +21,7 @@ from src.services.remediation_service import flag_for_rereview, trigger_remediat
 _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 _CONTROL_ID = "e1000000-0000-4000-a000-000000000001"
 _TASK_ID = "f1000000-0000-4000-a000-000000000001"
-_ISSUE_KEY = "GRUNNBOK-123"
+_ISSUE_KEY = "KERNO-123"
 
 
 # ── Test infrastructure ───────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ def _gap_spy(**kwargs) -> _RemediationSpyConn:
 def _trigger(spy, session=None):
     with patch("src.services.remediation_service.JiraClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
-        mock_client.project_key = "GRUNNBOK"
+        mock_client.project_key = "KERNO"
         mock_client.create_issue.return_value = _ISSUE_KEY
         result = trigger_remediation(spy, session or _FakeSession(), _CONTROL_ID)
     return result, mock_client
@@ -171,7 +171,7 @@ def test_jira_called_with_control_reference_sla_and_rationale() -> None:
     spy = _gap_spy()
     result, mock_client = _trigger(spy)
     kwargs = mock_client.create_issue.call_args.kwargs
-    assert kwargs["project_key"] == "GRUNNBOK"
+    assert kwargs["project_key"] == "KERNO"
     assert kwargs["summary"] == "Remediation: NIS2-1.1 — Governance policy"
     assert kwargs["due_date"] == datetime.now(timezone.utc).date() + timedelta(days=14)
     assert "NIS2-1.1" in kwargs["description"]

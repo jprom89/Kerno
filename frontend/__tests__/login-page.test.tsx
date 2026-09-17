@@ -29,7 +29,7 @@ function fillAndSubmit() {
     target: { value: "acme-gmbh" },
   });
   fireEvent.change(screen.getByLabelText("Email"), {
-    target: { value: "lead@grunnbok.local" },
+    target: { value: "lead@kerno.local" },
   });
   fireEvent.change(screen.getByLabelText("Password"), {
     target: { value: "correct-horse" },
@@ -72,7 +72,7 @@ describe("LoginPage", () => {
     const sent = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     // KER-408: email alone does not identify an account.
     expect(sent.tenant_slug).toBe("acme-gmbh");
-    expect(sent.email).toBe("lead@grunnbok.local");
+    expect(sent.email).toBe("lead@kerno.local");
   });
 
   it("pre-fills the organisation from an ?org= link", async () => {

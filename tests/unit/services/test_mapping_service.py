@@ -129,7 +129,7 @@ def test_set_tenant_context_is_first_db_call():
     mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event"), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     assert len(spy.calls) > 0
     assert "SET LOCAL" in spy.calls[0][0]
@@ -147,7 +147,7 @@ def test_recommendation_writes_ai_decision_log_in_same_transaction():
     mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event"), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     statements = [sql for sql, _ in spy.calls]
     assert any("INSERT INTO recommendations" in sql for sql in statements)
@@ -166,9 +166,9 @@ def test_recommendation_writes_ai_decision_log_in_same_transaction():
 
 
 def test_missing_model_env_var_raises_mapping_error(monkeypatch):
-    monkeypatch.delenv("GRUNNBOK_LLM_MODEL", raising=False)
+    monkeypatch.delenv("KERNO_LLM_MODEL", raising=False)
     spy = _SpyConn()
-    with pytest.raises(MappingError, match="GRUNNBOK_LLM_MODEL"):
+    with pytest.raises(MappingError, match="KERNO_LLM_MODEL"):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
 
 
@@ -177,7 +177,7 @@ def test_llm_api_error_raises_mapping_error():
     mock_client = MagicMock()
     mock_client.chat.complete.side_effect = httpx.TimeoutException("timeout")
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}), \
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}), \
          pytest.raises(MappingError, match="LLM API call failed"):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
 
@@ -186,7 +186,7 @@ def test_invalid_json_from_llm_raises_mapping_error():
     spy = _SpyConn()
     mock_client = _mock_llm_client("not valid json{{{")
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}), \
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}), \
          pytest.raises(MappingError, match="invalid JSON"):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
 
@@ -230,7 +230,7 @@ def test_map_control_returns_mapping_recommendation_with_correct_fields():
     mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event"), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         result = map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     assert isinstance(result, MappingRecommendation)
     assert result.control_id == "ctrl-001"
@@ -247,7 +247,7 @@ def test_low_confidence_sets_requires_human_review_true():
     mock_client = _mock_llm_client(json.dumps(low_payload))
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event"), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         result = map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     assert result.requires_human_review is True
 
@@ -261,7 +261,7 @@ def test_confidence_exactly_at_threshold_does_not_require_human_review():
     mock_client = _mock_llm_client(json.dumps(threshold_payload))
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event"), \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         result = map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     assert result.requires_human_review is False
 
@@ -276,7 +276,7 @@ def test_audit_event_emitted_with_correct_event_type():
     mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
     with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
          patch("src.services.mapping_service.write_audit_event") as mock_audit, \
-         patch.dict(os.environ, {"GRUNNBOK_LLM_MODEL": _MODEL_ID}):
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
         map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
     mock_audit.assert_called_once()
     event_type_arg = mock_audit.call_args[0][2]

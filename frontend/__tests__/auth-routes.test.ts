@@ -25,7 +25,7 @@ function loginRequest(body: object): NextRequest {
 }
 
 beforeEach(() => {
-  process.env.GRUNNBOK_API_URL = "http://backend.test";
+  process.env.KERNO_API_URL = "http://backend.test";
 });
 
 describe("POST /api/auth/login", () => {
@@ -36,12 +36,12 @@ describe("POST /api/auth/login", () => {
       }),
     );
     const response = await loginPost(
-      loginRequest({ email: "lead@grunnbok.local", password: "pw" }),
+      loginRequest({ email: "lead@kerno.local", password: "pw" }),
     );
 
     expect(response.status).toBe(200);
     const setCookie = response.headers.get("set-cookie") ?? "";
-    expect(setCookie).toContain(`grunnbok_session=${FAKE_JWT}`);
+    expect(setCookie).toContain(`kerno_session=${FAKE_JWT}`);
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=lax");
     expect(setCookie).toContain("Path=/");
@@ -60,7 +60,7 @@ describe("POST /api/auth/login", () => {
       .fn()
       .mockResolvedValue(new Response(JSON.stringify({ detail: "invalid credentials" }), { status: 401 }));
     const response = await loginPost(
-      loginRequest({ email: "lead@grunnbok.local", password: "wrong" }),
+      loginRequest({ email: "lead@kerno.local", password: "wrong" }),
     );
 
     expect(response.status).toBe(401);
@@ -74,7 +74,7 @@ describe("POST /api/auth/logout", () => {
 
     expect(response.status).toBe(200);
     const setCookie = response.headers.get("set-cookie") ?? "";
-    expect(setCookie).toContain("grunnbok_session=");
+    expect(setCookie).toContain("kerno_session=");
     expect(setCookie).toContain("Max-Age=0");
     expect(setCookie).toContain("HttpOnly");
   });

@@ -14,7 +14,7 @@ from src.services.coverage_service import CategoryCoverage, CoverageControl, Cov
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 
-os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

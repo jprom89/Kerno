@@ -1,7 +1,7 @@
 """Queries active dora_register_entries rows for a tenant, normalizes and validates them,
 and returns a frozen DORAExportPackage ready for DORA authority filing.
 
-Why:   the filing package must be validated and frozen before it leaves Grunnbok,
+Why:   the filing package must be validated and frozen before it leaves Kerno,
        so an authority never receives a half-formed register.
 How:   pytest tests/unit/services/test_dora_roi_export_service.py -v
 """

@@ -1,4 +1,4 @@
-"""Evidence intake — turns an uploaded file into the text Grunnbok can reason over.
+"""Evidence intake — turns an uploaded file into the text Kerno can reason over.
 
 Plain-English summary
 ---------------------
