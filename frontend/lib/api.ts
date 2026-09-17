@@ -5,7 +5,7 @@
  *        Bearer header and calls the FastAPI backend; fetchMe() is the
  *        per-page-load session check (KER-301 AC-4).
  * Why:   one wrapper so every story calls FastAPI the same way — and only
- *        from the server. KERNO_API_URL is a server-side env var, never
+ *        from the server. GRUNNBOK_API_URL is a server-side env var, never
  *        NEXT_PUBLIC_*: the browser must never call FastAPI directly; all
  *        calls go through Next.js route handlers and server components,
  *        which hold the httpOnly cookie (decided 15 July 2026).
@@ -16,7 +16,7 @@
 import { cookies } from "next/headers";
 
 /** Name of the httpOnly cookie carrying the FastAPI JWT. */
-export const SESSION_COOKIE = "kerno_session";
+export const SESSION_COOKIE = "grunnbok_session";
 
 /** The logged-in identity as returned by GET /api/v1/auth/me — display strings only. */
 export interface Me {
@@ -26,9 +26,9 @@ export interface Me {
 
 /** Return the FastAPI base URL from the server-side environment, without a trailing slash. */
 export function apiBaseUrl(): string {
-  const url = process.env.KERNO_API_URL;
+  const url = process.env.GRUNNBOK_API_URL;
   if (!url) {
-    throw new Error("KERNO_API_URL is not set (server-side env var — see .env.example)");
+    throw new Error("GRUNNBOK_API_URL is not set (server-side env var — see .env.example)");
   }
   return url.replace(/\/+$/, "");
 }

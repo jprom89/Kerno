@@ -79,7 +79,7 @@ def test_submission_windows_timestamps_are_timezone_aware(db_connection) -> None
     """created_at and updated_at on dora_submission_windows must be TIMESTAMPTZ after migration 013.
 
     Migration 013 converted these columns from TIMESTAMP (timezone-naive) to
-    TIMESTAMP WITH TIME ZONE to align with all other Kerno audit columns.
+    TIMESTAMP WITH TIME ZONE to align with all other Grunnbok audit columns.
     """
     for col in ("created_at", "updated_at"):
         _assert_column_is_timestamptz(db_connection, "dora_submission_windows", col)

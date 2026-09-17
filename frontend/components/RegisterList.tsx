@@ -3,7 +3,7 @@
  *
  * What:  every ICT third-party relationship on record, with criticality and
  *        contract dates, plus an add action for the roles allowed to write.
- * Why:   this register is the object Kerno exists to hold. Until now it had an
+ * Why:   this register is the object Grunnbok exists to hold. Until now it had an
  *        API and no product surface — the only UI was the legacy dashboard,
  *        which Ticket B turned off outside development.
  * How:   rendered by app/dashboard/register/page.tsx. Tests: npm test.

@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 12 of the Kerno compliance copilot codebase.
+This document specifies Document 12 of the Grunnbok compliance copilot codebase.
 
 Document 12 activates the control_evidence_links table created as a stub in
 Document 11 and builds the full evidence-linking and retrieval service on top
@@ -27,7 +27,7 @@ The four-layer architecture reminder:
 
 ## 2. Scope — KER-104 acceptance criteria (authoritative)
 
-Source: Kerno Sprint 1 Backlog, KER-104.
+Source: Grunnbok Sprint 1 Backlog, KER-104.
 
 The implementation is complete when all four acceptance criteria pass:
 
@@ -259,5 +259,5 @@ Required tests (implement all):
 |---|---|
 | CLAUDE.md (current version in working directory) | Highest |
 | This file (PROMPT_doc12_evidence_linking.md) | Authoritative for Document 12 scope |
-| Kerno_Sprint1_Backlog.pdf KER-104 | Source of acceptance criteria |
+| Grunnbok_Sprint1_Backlog.pdf KER-104 | Source of acceptance criteria |
 | PROMPT_doc11_nis2_control_mapping.md §3.3 | Source of control_evidence_links stub definition |

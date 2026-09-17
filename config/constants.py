@@ -2,7 +2,7 @@
 
 What this file does
 -------------------
-Defines every numeric constant used across the Kerno learning pipeline.
+Defines every numeric constant used across the Grunnbok learning pipeline.
 No logic lives here — only named values with documented origins.
 
 Why this file exists

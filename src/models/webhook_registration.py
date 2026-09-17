@@ -54,7 +54,7 @@ class WebhookRegistration(Base):
     __tablename__ = "webhook_registrations"
 
     # Non-secret public handle for this registration — carried by ingest
-    # requests in the X-Kerno-Webhook-Id header.
+    # requests in the X-Grunnbok-Webhook-Id header.
     id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True),
         primary_key=True,

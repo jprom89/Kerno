@@ -58,7 +58,7 @@ def export_evidence_pack(
         raise HTTPException(status_code=422, detail=str(exc))
     safe_family = _UNSAFE_FILENAME_CHARS.sub("_", control_family)
     filename = (
-        f"kerno-evidence-pack-{safe_family}-"
+        f"grunnbok-evidence-pack-{safe_family}-"
         f"{pack.metadata.generated_at.date().isoformat()}.json"
     )
     return Response(

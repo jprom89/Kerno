@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Kerno Compliance Copilot",
-  description: "NIS2/DORA control coverage dashboard",
+  title: "Grunnbok",
+  description: "EU operational-resilience system of record",
 };
 
 export default function RootLayout({

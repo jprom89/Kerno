@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-This service implements the mathematical heart of Kerno's learning loop.
+This service implements the mathematical heart of Grunnbok's learning loop.
 
 Each night, for every tenant that has received at least one human override since
 the last calculation, this service asks: "Given everything this company's

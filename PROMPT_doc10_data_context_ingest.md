@@ -8,10 +8,10 @@
 
 ## 1. Purpose
 
-This document specifies Document 10 of the Kerno compliance copilot codebase.
+This document specifies Document 10 of the Grunnbok compliance copilot codebase.
 
 Document 10 implements the Data Context layer — the first of the four architectural
-layers in Kerno's pipeline. It provides the ingest path that populates the context
+layers in Grunnbok's pipeline. It provides the ingest path that populates the context
 store with raw material the Decision layer (Documents 11–13) will reason over.
 
 Without this layer, the Decision layer has nothing to classify, and the learning
@@ -27,7 +27,7 @@ The four-layer architecture is:
 
 ## 2. Scope — KER-102 acceptance criteria (authoritative)
 
-Source: Kerno Sprint 1 Backlog, KER-102.
+Source: Grunnbok Sprint 1 Backlog, KER-102.
 
 The implementation is complete when all four acceptance criteria pass:
 
@@ -254,4 +254,4 @@ Unit tests for jira_connector.py. Mock the HTTP layer and ingest_service.
 |---|---|
 | CLAUDE.md (current version in working directory) | Highest |
 | This file (PROMPT_doc10_data_context_ingest.md) | Authoritative for Document 10 scope |
-| Kerno_Sprint1_Backlog.pdf KER-102 | Source of acceptance criteria |
+| Grunnbok_Sprint1_Backlog.pdf KER-102 | Source of acceptance criteria |

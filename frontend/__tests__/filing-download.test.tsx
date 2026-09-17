@@ -77,7 +77,7 @@ describe("FilingDownloadButton", () => {
       ok: true,
       status: 200,
       blob: async () => new Blob(["{\"frozen\":true}"], { type: "application/json" }),
-      headers: { get: (name: string) => (name === "content-disposition" ? 'attachment; filename="kerno-dora-filing-2032-run-1.json"' : null) },
+      headers: { get: (name: string) => (name === "content-disposition" ? 'attachment; filename="grunnbok-dora-filing-2032-run-1.json"' : null) },
     } as unknown as Response);
 
     render(<FilingDownloadButton runId="run-1" />);

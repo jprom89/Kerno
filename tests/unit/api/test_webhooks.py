@@ -114,8 +114,8 @@ def _event_body(**overrides) -> bytes:
 def _sign(body: bytes, secret: str = _SECRET) -> dict:
     digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return {
-        "X-Kerno-Webhook-Id": _REGISTRATION_ID,
-        "X-Kerno-Signature": f"sha256={digest}",
+        "X-Grunnbok-Webhook-Id": _REGISTRATION_ID,
+        "X-Grunnbok-Signature": f"sha256={digest}",
         "Content-Type": "application/json",
     }
 
@@ -198,7 +198,7 @@ def test_ingest_missing_signature_returns_401_not_422():
     spy = _SpyConn()
     body = b"not even json"
     response = _post_ingest(
-        _ingest_app(spy), body, {"X-Kerno-Webhook-Id": _REGISTRATION_ID}
+        _ingest_app(spy), body, {"X-Grunnbok-Webhook-Id": _REGISTRATION_ID}
     )
     assert response.status_code == 401, "signature failures are never 422"
 

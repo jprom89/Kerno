@@ -1,4 +1,4 @@
-"""Kerno Compliance Copilot — application source root.
+"""Grunnbok — application source root.
 
 Subpackages:
     api/           HTTP surface: FastAPI app factory, routers, schemas, dependencies.

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 # Must be set before src.api.app is imported — load_dotenv() in app.py runs at import
 # time and would otherwise install the real .env secret, breaking JWT signature checks.
 _JWT_SECRET = "test-secret-for-unit-tests"
-os.environ["KERNO_JWT_SECRET"] = _JWT_SECRET
+os.environ["GRUNNBOK_JWT_SECRET"] = _JWT_SECRET
 
 from src.api.app import create_app
 from src.api.dependencies import get_conn, get_role, get_tenant_id

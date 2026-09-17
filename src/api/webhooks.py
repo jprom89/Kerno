@@ -12,7 +12,7 @@ raw request body.
 
 Ingest order of operations is security-critical and fixed:
   1. Verify the signature FIRST, against the registration named by
-     X-Kerno-Webhook-Id. Any failure — unknown id, inactive registration,
+     X-Grunnbok-Webhook-Id. Any failure — unknown id, inactive registration,
      missing/malformed header, wrong signature — is the same 401. The raw
      body is read before any parsing so a signature failure can never
      surface as a 422.
@@ -186,8 +186,8 @@ async def ingest_webhook(
     try:
         tenant_id = verify_and_resolve_tenant(
             conn,
-            request.headers.get("X-Kerno-Webhook-Id", ""),
-            request.headers.get("X-Kerno-Signature"),
+            request.headers.get("X-Grunnbok-Webhook-Id", ""),
+            request.headers.get("X-Grunnbok-Signature"),
             body_bytes,
         )
     except WebhookAuthenticationError:
@@ -210,7 +210,7 @@ async def ingest_webhook(
     if control_id is not None:
         _link_ingested_evidence(
             conn, tenant_id, control_id, record_id,
-            request.headers.get("X-Kerno-Webhook-Id", ""),
+            request.headers.get("X-Grunnbok-Webhook-Id", ""),
         )
     record_dedup(conn, tenant_id, event.source_system, event.external_ref)
     _record_ingest_ledger_entry(conn, tenant_id, record_id, event)

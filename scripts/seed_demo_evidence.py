@@ -2,16 +2,16 @@
 
 What:  Inserts six NIS2 Article 21(2) controls' worth of context_records and
        links each to its control via control_evidence_links, under the dev
-       tenant (admin@kerno.local), with curated relevance scores that produce
+       tenant (admin@grunnbok.local), with curated relevance scores that produce
        a deliberate 2 met / 1 partial / 3 gap spread when the hybrid engine
        scores them.
 Why:   The dev tenant has zero evidence, so POST /recommendations/generate
        returns a uniform wall of gaps. This gives the design-partner demo real
        contrast (a strong "met", a genuine "partial", and clear "gap" cases,
        including the "policy on paper, no enforcement" story on 21.2e).
-How:   KERNO_ENV=development python scripts/seed_demo_evidence.py
+How:   GRUNNBOK_ENV=development python scripts/seed_demo_evidence.py
        Idempotent — deterministic UUIDs + ON CONFLICT DO NOTHING, so re-running
-       changes nothing. Dev-only: hard-exits unless KERNO_ENV=development.
+       changes nothing. Dev-only: hard-exits unless GRUNNBOK_ENV=development.
 
 WARNING: these are FICTIONAL documents for a dev demo tenant. If real
 design-partner data ever shares this tenant, prune this seed first so nobody
@@ -32,7 +32,7 @@ except ImportError:
 
 import psycopg2
 
-_DEV_EMAIL = "admin@kerno.local"
+_DEV_EMAIL = "admin@grunnbok.local"
 
 # Fixed namespace so every record_id / link_id is a stable function of the
 # evidence's external_id — the source of idempotency (re-runs collide on the
@@ -207,13 +207,13 @@ def _seed_control(cursor, tenant_id: str, control_ref: str, evidence: list[dict]
 def main() -> None:
     """Seed the demo evidence set under the dev tenant. Dev-only, idempotent.
 
-    Refuses to run unless KERNO_ENV=development. Resolves the dev tenant, sets
+    Refuses to run unless GRUNNBOK_ENV=development. Resolves the dev tenant, sets
     its RLS context for the whole transaction (both target tables are FORCE
     row-level secured), and seeds every control in _EVIDENCE_BY_CONTROL.
     """
-    if os.getenv("KERNO_ENV", "") != "development":
+    if os.getenv("GRUNNBOK_ENV", "") != "development":
         print(
-            "ERROR: seed_demo_evidence.py refused to run - KERNO_ENV is not "
+            "ERROR: seed_demo_evidence.py refused to run - GRUNNBOK_ENV is not "
             "'development'. This inserts fictional demo data and must never "
             "touch a staging or production database.",
             file=sys.stderr,

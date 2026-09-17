@@ -24,7 +24,7 @@ _ACTOR_ID = "d0000000-0000-4000-d000-000000000004"
 _WINDOW_ID = "b0000000-0000-4000-b000-000000000001"
 _RUN_ID = "f0000000-0000-4000-f000-000000000001"
 
-os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ def test_download_package_returns_stored_bytes_unchanged():
     assert response.headers["content-type"].startswith("application/json")
     disposition = response.headers["content-disposition"]
     assert disposition.startswith("attachment;")
-    assert f"kerno-dora-filing-2025-{_RUN_ID}.json" in disposition
+    assert f"grunnbok-dora-filing-2025-{_RUN_ID}.json" in disposition
     record.assert_called_once()
 
 

@@ -15,7 +15,7 @@ import { middleware } from "@/middleware";
 function dashboardRequest(cookieValue?: string): NextRequest {
   const request = new NextRequest("http://localhost:3000/dashboard");
   if (cookieValue) {
-    request.cookies.set("kerno_session", cookieValue);
+    request.cookies.set("grunnbok_session", cookieValue);
   }
   return request;
 }

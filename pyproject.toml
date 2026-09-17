@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kerno"
+name = "grunnbok"
 version = "0.1.0"
-description = "Kerno Compliance Copilot — automated EU regulatory control mapping"
+description = "Grunnbok — EU operational-resilience system of record"
 requires-python = ">=3.11"
 
 dependencies = [

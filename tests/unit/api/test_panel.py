@@ -17,7 +17,7 @@ _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _CONTROL_ID = "NIS2-4.2"
 _GENERATED_AT = datetime(2025, 6, 1, tzinfo=timezone.utc)
 
-os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

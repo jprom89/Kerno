@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-When a compliance engineer tells Kerno that the AI got a control mapping wrong,
+When a compliance engineer tells Grunnbok that the AI got a control mapping wrong,
 two things must happen in the same database transaction:
 
   1. The override itself is saved (what the human decided, and their confidence weight).

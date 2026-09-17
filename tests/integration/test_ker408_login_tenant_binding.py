@@ -76,7 +76,7 @@ def ker408_two_orgs(db_connection):
 def _tenant_of(token: str) -> str:
     import os
 
-    return jwt.decode(token, os.environ["KERNO_JWT_SECRET"], algorithms=["HS256"])["tenant_id"]
+    return jwt.decode(token, os.environ["GRUNNBOK_JWT_SECRET"], algorithms=["HS256"])["tenant_id"]
 
 
 @pytest.mark.integration

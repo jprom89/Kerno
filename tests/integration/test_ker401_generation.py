@@ -116,7 +116,7 @@ def _count(conn, tenant_id, sql: str, params: list) -> int:
 def test_generation_commits_recommendation_log_and_ledger_together(
     db_connection, tenant_a_id, ker401_seed, monkeypatch
 ):
-    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    monkeypatch.setenv("GRUNNBOK_LLM_MODEL", "mistral-large-latest")
     with patch(
         "src.services.recommendation_service.get_llm_client",
         return_value=_mock_llm_client(),

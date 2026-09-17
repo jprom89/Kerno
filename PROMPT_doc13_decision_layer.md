@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document specifies Document 13 of the Kerno compliance copilot codebase.
+This document specifies Document 13 of the Grunnbok compliance copilot codebase.
 
 Document 13 implements the Decision layer recommendation engine — the capstone
 of Sprint 1. It wires together all prior documents into a single end-to-end path:
@@ -34,7 +34,7 @@ The four-layer architecture:
 
 ## 2. Scope — KER-105 acceptance criteria (authoritative)
 
-Source: Kerno Sprint 1 Backlog, KER-105.
+Source: Grunnbok Sprint 1 Backlog, KER-105.
 
 The implementation is complete when all four acceptance criteria pass:
 
@@ -350,6 +350,6 @@ Required tests (implement all):
 |---|---|
 | CLAUDE.md (current version in working directory) | Highest |
 | This file (PROMPT_doc13_decision_layer.md) | Authoritative for Document 13 scope |
-| Kerno_Sprint1_Backlog.pdf KER-105 | Source of acceptance criteria |
+| Grunnbok_Sprint1_Backlog.pdf KER-105 | Source of acceptance criteria |
 | PROMPT_doc12_evidence_linking.md §3.2 | EvidenceResult and LINK_STATUS constants |
 | PROMPT_doc11_nis2_control_mapping.md §3.1 | ComplianceControl schema |

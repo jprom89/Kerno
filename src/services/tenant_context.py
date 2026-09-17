@@ -2,7 +2,7 @@
 
 Plain-English summary
 ---------------------
-Before Kerno reads or writes any tenant data, it has to tell the database which
+Before Grunnbok reads or writes any tenant data, it has to tell the database which
 company the request belongs to. This module is the one approved way to do that
 from the application's business logic.
 

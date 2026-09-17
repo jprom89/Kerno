@@ -134,4 +134,4 @@ def _filing_download_filename(filing: FrozenFilingPackage) -> str:
     """Return a Content-Disposition filename that cannot inject header syntax."""
     safe_year = _UNSAFE_FILENAME_CHARS.sub("_", str(filing.reporting_year))
     safe_id = _UNSAFE_FILENAME_CHARS.sub("_", filing.run_id)
-    return f"kerno-dora-filing-{safe_year}-{safe_id}.json"
+    return f"grunnbok-dora-filing-{safe_year}-{safe_id}.json"

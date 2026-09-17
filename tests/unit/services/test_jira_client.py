@@ -23,7 +23,7 @@ _DUE_DATE = date(2026, 7, 17)
 def jira_env(monkeypatch):
     monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
     monkeypatch.setenv("JIRA_API_TOKEN", "test-token")
-    monkeypatch.setenv("JIRA_PROJECT_KEY", "KERNO")
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "GRUNNBOK")
 
 
 def _client_with(handler) -> JiraClient:
@@ -35,7 +35,7 @@ def test_create_issue_returns_key_and_sends_correct_payload(jira_env):
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["request"] = request
-        return httpx.Response(201, json={"key": "KERNO-7"})
+        return httpx.Response(201, json={"key": "GRUNNBOK-7"})
 
     client = _client_with(handler)
     issue_key = client.create_issue(
@@ -45,12 +45,12 @@ def test_create_issue_returns_key_and_sends_correct_payload(jira_env):
         due_date=_DUE_DATE,
         description="Control gap details",
     )
-    assert issue_key == "KERNO-7"
+    assert issue_key == "GRUNNBOK-7"
     request = captured["request"]
     assert request.url.path == "/rest/api/2/issue"
     assert request.headers["Authorization"] == "Bearer test-token"
     fields = json.loads(request.content)["fields"]
-    assert fields["project"]["key"] == "KERNO"
+    assert fields["project"]["key"] == "GRUNNBOK"
     assert fields["assignee"]["accountId"] == "acct-42"
     assert fields["duedate"] == "2026-07-17"
     assert fields["summary"].startswith("Remediation:")
@@ -63,7 +63,7 @@ def test_non_created_response_raises_jira_client_error(jira_env):
     client = _client_with(handler)
     with pytest.raises(JiraClientError, match="HTTP 400"):
         client.create_issue(
-            project_key="KERNO", summary="s", assignee_account_id="a",
+            project_key="GRUNNBOK", summary="s", assignee_account_id="a",
             due_date=_DUE_DATE, description="d",
         )
 
@@ -75,7 +75,7 @@ def test_transport_failure_raises_jira_client_error(jira_env):
     client = _client_with(handler)
     with pytest.raises(JiraClientError, match="request failed"):
         client.create_issue(
-            project_key="KERNO", summary="s", assignee_account_id="a",
+            project_key="GRUNNBOK", summary="s", assignee_account_id="a",
             due_date=_DUE_DATE, description="d",
         )
 

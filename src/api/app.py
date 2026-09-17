@@ -1,9 +1,9 @@
-"""FastAPI application factory for the Kerno API.
+"""FastAPI application factory for the Grunnbok API.
 
 What:  registers every router and exception handler, runs a startup environment
        check, serves the legacy static dashboard from /dashboard/ in development
        only, and serves FastAPI's interactive API documentation in development
-       or wherever KERNO_ENABLE_DOCS=1.
+       or wherever GRUNNBOK_ENABLE_DOCS=1.
 Why:   one factory builds the whole app so tests can construct isolated
        instances with their own dependency overrides. Two surfaces are gated
        rather than always present: the legacy dashboard (it authenticates by
@@ -12,7 +12,7 @@ Why:   one factory builds the whole app so tests can construct isolated
        describing our own security design). Both are useful locally and are
        liabilities on a reachable host. Their switches are deliberately
        SEPARATE — the docs have their own flag so that wanting the schema on a
-       deployed host never becomes a reason to set KERNO_ENV=development there,
+       deployed host never becomes a reason to set GRUNNBOK_ENV=development there,
        which would also remount the dashboard and unlock the seed scripts.
        Startup additionally refuses a shipped .env.example CORS placeholder
        outside development.
@@ -52,8 +52,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    if not os.environ.get("KERNO_JWT_SECRET"):
-        raise RuntimeError("KERNO_JWT_SECRET environment variable is not set")
+    if not os.environ.get("GRUNNBOK_JWT_SECRET"):
+        raise RuntimeError("GRUNNBOK_JWT_SECRET environment variable is not set")
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL environment variable is not set")
     _reject_example_origins()
@@ -102,19 +102,19 @@ def _allowed_origins() -> list[str]:
 def _is_development() -> bool:
     """Return True when this process is running in the local development environment.
 
-    Read at call time rather than import time so tests can set KERNO_ENV and
+    Read at call time rather than import time so tests can set GRUNNBOK_ENV and
     build an app for either environment. Unset or misspelled means not
     development: the gate fails closed, matching how the seed scripts read the
     same variable (SEC-02).
     """
-    return os.environ.get("KERNO_ENV", "") == "development"
+    return os.environ.get("GRUNNBOK_ENV", "") == "development"
 
 
 def _docs_enabled() -> bool:
     """Return True when the interactive docs and the raw schema should be served.
 
-    Development serves them, and KERNO_ENABLE_DOCS=1 opts a deployed host in
-    WITHOUT setting KERNO_ENV=development — which would also remount the legacy
+    Development serves them, and GRUNNBOK_ENABLE_DOCS=1 opts a deployed host in
+    WITHOUT setting GRUNNBOK_ENV=development — which would also remount the legacy
     localStorage-JWT dashboard and unlock both seed scripts against that
     database. One convenience request should not disarm three unrelated
     controls, which is what a single shared flag forced.
@@ -122,7 +122,7 @@ def _docs_enabled() -> bool:
     Exactly "1" and nothing else: "true", "yes" and "TRUE" are all off, so a
     half-remembered value fails closed rather than publishing the schema.
     """
-    return _is_development() or os.environ.get("KERNO_ENABLE_DOCS", "") == "1"
+    return _is_development() or os.environ.get("GRUNNBOK_ENABLE_DOCS", "") == "1"
 
 
 def _frontend_url() -> str | None:
@@ -158,7 +158,7 @@ def create_app() -> FastAPI:
 
     The legacy static dashboard is registered in development only. The
     interactive documentation is registered in development or when
-    KERNO_ENABLE_DOCS=1. Anything not registered 404s rather than being served
+    GRUNNBOK_ENABLE_DOCS=1. Anything not registered 404s rather than being served
     to anonymous callers.
     """
     # These must be constructor arguments: FastAPI registers the documentation
@@ -227,7 +227,7 @@ def create_app() -> FastAPI:
         """
         target = _frontend_url()
         if target is None:
-            return JSONResponse(status_code=200, content={"service": "kerno-api", "status": "ok"})
+            return JSONResponse(status_code=200, content={"service": "grunnbok-api", "status": "ok"})
         return RedirectResponse(url=target, status_code=302)
 
     @app.exception_handler(TenantContextMissingError)

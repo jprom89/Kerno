@@ -32,7 +32,7 @@ from unittest.mock import MagicMock, patch
 # Must be set before src.api.app is imported: load_dotenv() runs at import time
 # and would otherwise install the real .env secret, breaking these signatures.
 _JWT_SECRET = "test-secret-for-unit-tests"
-os.environ["KERNO_JWT_SECRET"] = _JWT_SECRET
+os.environ["GRUNNBOK_JWT_SECRET"] = _JWT_SECRET
 
 import jwt
 import pytest
@@ -97,7 +97,7 @@ GATED_ROUTES = [
         "POST",
         "/api/v1/remediation/close-callback",
         PLATFORM_ONLY,
-        json={"jira_issue_key": "KERNO-1", "control_id": "ctrl-001"},
+        json={"jira_issue_key": "GRUNNBOK-1", "control_id": "ctrl-001"},
     ),
     GatedRoute(
         "POST",

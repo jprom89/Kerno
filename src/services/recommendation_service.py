@@ -403,7 +403,7 @@ def _llm_rationale_and_opinion(
     the deterministic template; prose is not the decision, so the fallback
     cannot poison scores.
     """
-    model_id = os.environ.get("KERNO_LLM_MODEL")
+    model_id = os.environ.get("GRUNNBOK_LLM_MODEL")
     if not model_id:
         return None, None
     try:
@@ -570,7 +570,7 @@ def _record_generation(
     a None user means a system-initiated run (future batch trigger).
     """
     rationale_model = (
-        os.environ.get("KERNO_LLM_MODEL", "unknown")
+        os.environ.get("GRUNNBOK_LLM_MODEL", "unknown")
         if rationale_source == RATIONALE_SOURCE_LLM
         else RATIONALE_SOURCE_TEMPLATE
     )

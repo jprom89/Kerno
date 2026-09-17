@@ -1,4 +1,4 @@
-"""Shared fixtures for Kerno's integration test suite.
+"""Shared fixtures for Grunnbok's integration test suite.
 
 Plain-English summary
 ---------------------

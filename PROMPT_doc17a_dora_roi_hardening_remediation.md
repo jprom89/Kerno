@@ -237,4 +237,4 @@ Apply to every file changed:
 | This document (Doc 17A) | Authoritative for this remediation |
 | PROMPT_doc17_dora_roi_hardening_review.md | Source of findings |
 | PROMPT_doc16_dora_roi_submission_workflow.md | Upstream behavior contract |
-| KERNO_STRATEGY.md | Context only |
+| GRUNNBOK_STRATEGY.md | Context only |

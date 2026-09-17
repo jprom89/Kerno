@@ -21,19 +21,19 @@ from fastapi.testclient import TestClient
 from src.api.app import create_app
 from src.api.dependencies import get_conn
 
-os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
 
 _PATCH_TARGET = "src.api.routers.auth.authenticate_and_issue_token"
 _FAKE_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.fake.token"
 _ONE_HOUR_SECONDS = 3600
 
 
-def _signed_token(email="lead@kerno.local", role="compliance_lead", *,
+def _signed_token(email="lead@grunnbok.local", role="compliance_lead", *,
                   expires_in=_ONE_HOUR_SECONDS, **claim_overrides) -> str:
     """Mint a genuinely signed JWT with the KER-202 claim shape for /me tests.
 
     The signing secret is read at CALL time, not import time: other test
-    modules overwrite KERNO_JWT_SECRET during collection, and the endpoint
+    modules overwrite GRUNNBOK_JWT_SECRET during collection, and the endpoint
     decodes with whatever the env holds when the request runs.
     """
     payload = {
@@ -44,7 +44,7 @@ def _signed_token(email="lead@kerno.local", role="compliance_lead", *,
         "exp": int(time.time()) + expires_in,
     }
     payload.update(claim_overrides)
-    return jwt.encode(payload, os.environ["KERNO_JWT_SECRET"], algorithm="HS256")
+    return jwt.encode(payload, os.environ["GRUNNBOK_JWT_SECRET"], algorithm="HS256")
 
 
 def _override_get_conn():
@@ -110,9 +110,9 @@ def _get_me(token: str | None):
 
 
 def test_me_returns_email_and_role_for_valid_token():
-    response = _get_me(_signed_token(email="vciso@kerno.local", role="vciso"))
+    response = _get_me(_signed_token(email="vciso@grunnbok.local", role="vciso"))
     assert response.status_code == 200
-    assert response.json() == {"email": "vciso@kerno.local", "role": "vciso"}
+    assert response.json() == {"email": "vciso@grunnbok.local", "role": "vciso"}
 
 
 def test_me_never_returns_tenant_or_user_ids():

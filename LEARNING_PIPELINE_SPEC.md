@@ -2,7 +2,7 @@
 
 **Document Status:** Spec for a designed subsystem — **not the production
 recommendation path** as of 13 August 2026.
-**Target Framework:** Kerno Compliance Copilot Core Engine
+**Target Framework:** Grunnbok Core Engine
 **Classification:** Internal Technical Spec. Not a sales or investor claim
 that the pipeline is live.
 **Last updated:** 2026-08-13 (status correction; body otherwise v1.1)
@@ -17,7 +17,7 @@ what `POST /api/v1/recommendations/generate` does today.
 
 ## 1. Executive Summary
 
-Kerno does not fine-tune base Large Language Models. The *designed* personalisation path is an Override-Weighted Retrieval-Augmented Generation (RAG) pipeline: human overrides (KER-106) would adjust a per-tenant retrieval bias, and similarity search would use that bias at query time.
+Grunnbok does not fine-tune base Large Language Models. The *designed* personalisation path is an Override-Weighted Retrieval-Augmented Generation (RAG) pipeline: human overrides (KER-106) would adjust a per-tenant retrieval bias, and similarity search would use that bias at query time.
 
 **As of 13 August 2026 that path is not live.** Overrides are stored and nightly bias recalculation can write `retrieval_bias`. Nothing in the production generate path calls `get_similar_controls()` or `retrieve_similar_records()`. Evidence upload does not write embeddings (`context_records.embedding` stays NULL). Switching cost and "calibrated recommendations" in this document are conditional on wiring retrieval into generation (KER-404) and on real override volume. Do not quote this section to investors as a description of the running product.
 
@@ -25,7 +25,7 @@ Kerno does not fine-tune base Large Language Models. The *designed* personalisat
 
 ## 2. The Vector Store Decision: pgvector + RLS
 
-Kerno uses a shared PostgreSQL instance with the pgvector extension and native Row-Level Security (RLS), rather than dedicated per-tenant vector clusters (such as separate Qdrant collections).
+Grunnbok uses a shared PostgreSQL instance with the pgvector extension and native Row-Level Security (RLS), rather than dedicated per-tenant vector clusters (such as separate Qdrant collections).
 
 ### 2.1 Why Not Dedicated Clusters
 
@@ -108,7 +108,7 @@ Both layers must be present. The RLS policy is a safety net; the application gua
 
 ### 4.2 GDPR Legal Basis
 
-Cross-tenant model optimisation is grounded in **GDPR Article 6(1)(f) — Legitimate Interest**. Kerno has a legitimate interest in improving the accuracy and security performance of its automated mapping engine.
+Cross-tenant model optimisation is grounded in **GDPR Article 6(1)(f) — Legitimate Interest**. Grunnbok has a legitimate interest in improving the accuracy and security performance of its automated mapping engine.
 
 The anonymisation pipeline is the legal gate. Before any data is processed for cross-tenant optimisation, the following identifiers must be stripped and replaced with generalised tokens:
 
@@ -120,7 +120,7 @@ The anonymisation pipeline is the legal gate. Before any data is processed for c
 | Cloud account IDs (AWS, GCP, Azure) | `[CLOUD_ACCOUNT]` |
 | Internal ticket references (`[A-Z]+-[0-9]+`) | `[INTERNAL_TICKET]` |
 
-Manual override justification text is defined in Kerno's standard Data Processing Agreement as confidential business data, held under zero-knowledge retention limits relative to Kerno's central engineering staff.
+Manual override justification text is defined in Grunnbok's standard Data Processing Agreement as confidential business data, held under zero-knowledge retention limits relative to Grunnbok's central engineering staff.
 
 ---
 

@@ -10,7 +10,7 @@ Five things happen to a webhook over its life, and all five live here:
   2. ``rotate_secret`` — replaces a registration's secret with a fresh one,
      returned once.
   3. ``verify_and_resolve_tenant`` — the security gate for every inbound
-     delivery: loads the one registration named by X-Kerno-Webhook-Id,
+     delivery: loads the one registration named by X-Grunnbok-Webhook-Id,
      recomputes HMAC-SHA256 over the raw body with that registration's
      secret, compares in constant time, and returns the registration's
      tenant. The tenant is NEVER taken from the request; tenant_id_hint is
@@ -60,7 +60,7 @@ from src.exceptions import UnsupportedEventTypeError, WebhookAuthenticationError
 # characters = a 256-bit HMAC key.
 _SIGNING_SECRET_BYTES = 32
 
-# The scheme prefix every X-Kerno-Signature value must carry.
+# The scheme prefix every X-Grunnbok-Signature value must carry.
 _SIGNATURE_PREFIX = "sha256="
 
 
@@ -168,7 +168,7 @@ def rotate_secret(conn, registration_id, tenant_id) -> str:
 def verify_and_resolve_tenant(conn, webhook_id: str, signature: str | None, body_bytes: bytes) -> str:
     """Authenticate a delivery and return the tenant it belongs to.
 
-    Loads the registration named by the X-Kerno-Webhook-Id header — a
+    Loads the registration named by the X-Grunnbok-Webhook-Id header — a
     deliberate PRE-CONTEXT read (the signature IS the authentication, so no
     tenant context exists yet; the registrations table is RLS-without-FORCE
     for exactly this). Recomputes HMAC-SHA256 over the raw request body with

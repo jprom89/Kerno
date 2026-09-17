@@ -43,7 +43,7 @@ const VALIDATION_STYLES: Record<string, string> = {
 /**
  * Render a FastAPI error body as a string.
  *
- * Kerno's own handlers return `detail` as a string, but FastAPI's built-in
+ * Grunnbok's own handlers return `detail` as a string, but FastAPI's built-in
  * request validation returns an array of objects — reachable here just by
  * sending a malformed body — and interpolating that yields "[object Object]".
  */
@@ -111,7 +111,7 @@ export default function SubmissionsView({ windows, runs, readOnly }: Submissions
         {windows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
             No filing window is open today. Windows are supervisory reference data —
-            an authority publishes them, and Kerno does not create them — so this is
+            an authority publishes them, and Grunnbok does not create them — so this is
             normal outside a reporting period rather than an error.
           </p>
         ) : (

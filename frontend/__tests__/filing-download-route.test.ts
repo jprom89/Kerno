@@ -17,14 +17,14 @@ jest.mock("next/headers", () => ({
   cookies: async () => ({ get: cookieGet }),
 }));
 
-const ORIGINAL_API_URL = process.env.KERNO_API_URL;
+const ORIGINAL_API_URL = process.env.GRUNNBOK_API_URL;
 
 beforeAll(() => {
-  process.env.KERNO_API_URL = "http://backend.test";
+  process.env.GRUNNBOK_API_URL = "http://backend.test";
 });
 
 afterAll(() => {
-  process.env.KERNO_API_URL = ORIGINAL_API_URL;
+  process.env.GRUNNBOK_API_URL = ORIGINAL_API_URL;
 });
 
 function request(): NextRequest {
@@ -40,7 +40,7 @@ describe("GET /api/submissions/runs/[runId]/package", () => {
         status: 200,
         headers: {
           "Content-Type": "application/json",
-          "Content-Disposition": 'attachment; filename="kerno-dora-filing-2032-run-1.json"',
+          "Content-Disposition": 'attachment; filename="grunnbok-dora-filing-2032-run-1.json"',
         },
       }),
     );
@@ -48,7 +48,7 @@ describe("GET /api/submissions/runs/[runId]/package", () => {
     const response = await GET(request(), params);
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Disposition")).toContain(
-      "kerno-dora-filing-2032-run-1.json",
+      "grunnbok-dora-filing-2032-run-1.json",
     );
     await expect(response.text()).resolves.toBe('{"frozen":true}');
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0];

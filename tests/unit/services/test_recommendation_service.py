@@ -411,7 +411,7 @@ def _mock_rationale_client(payload: dict):
 
 
 def test_llm_writes_rationale_but_cannot_alter_the_score(monkeypatch) -> None:
-    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    monkeypatch.setenv("GRUNNBOK_LLM_MODEL", "mistral-large-latest")
     client = _mock_rationale_client({
         "rationale": "The Security Patch record demonstrates active remediation.",
         "own_status": "partial",
@@ -458,7 +458,7 @@ def test_template_fallback_on_llm_failure() -> None:
 
 
 def test_malformed_opinion_keeps_rationale_and_drops_opinion(monkeypatch) -> None:
-    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    monkeypatch.setenv("GRUNNBOK_LLM_MODEL", "mistral-large-latest")
     client = _mock_rationale_client({
         "rationale": "Coverage is adequate.",
         "own_status": "definitely-fine",  # not a valid status
@@ -518,7 +518,7 @@ def _rate_limit_error():
 def test_backoff_retries_then_recovers_on_rate_limit(monkeypatch) -> None:
     from unittest.mock import MagicMock
 
-    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    monkeypatch.setenv("GRUNNBOK_LLM_MODEL", "mistral-large-latest")
     sleeps: list[float] = []
     monkeypatch.setattr(
         "src.services.recommendation_service.time.sleep", lambda s: sleeps.append(s)
@@ -553,7 +553,7 @@ def test_backoff_retries_then_recovers_on_rate_limit(monkeypatch) -> None:
 def test_non_rate_limit_error_falls_straight_through_no_retry(monkeypatch) -> None:
     from unittest.mock import MagicMock
 
-    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    monkeypatch.setenv("GRUNNBOK_LLM_MODEL", "mistral-large-latest")
     sleeps: list[float] = []
     monkeypatch.setattr(
         "src.services.recommendation_service.time.sleep", lambda s: sleeps.append(s)

@@ -19,14 +19,14 @@ jest.mock("next/headers", () => ({
 
 import { fetchSubmissionRun, fetchSubmissionRuns } from "@/lib/api";
 
-const ORIGINAL_API_URL = process.env.KERNO_API_URL;
+const ORIGINAL_API_URL = process.env.GRUNNBOK_API_URL;
 
 beforeAll(() => {
-  process.env.KERNO_API_URL = "http://backend.test";
+  process.env.GRUNNBOK_API_URL = "http://backend.test";
 });
 
 afterAll(() => {
-  process.env.KERNO_API_URL = ORIGINAL_API_URL;
+  process.env.GRUNNBOK_API_URL = ORIGINAL_API_URL;
 });
 
 describe("fetchSubmissionRun", () => {

@@ -68,7 +68,7 @@ def _build_dummy_hash() -> str:
     Called once at module load time so the dummy hash is available for
     _dummy_verify() without recomputing it on every failed login attempt.
     """
-    return hash_password("kerno_dummy_password_for_timing_consistency")
+    return hash_password("grunnbok_dummy_password_for_timing_consistency")
 
 
 def hash_password(plaintext: str) -> str:
@@ -129,12 +129,12 @@ def _issue_jwt(user_id: str, email: str, role: str, tenant_id: str) -> str:
 
     sub is the user_id (the verified actor), and the token also carries email,
     role (an RbacRole value consumed by require_role), and tenant_id (consumed by
-    get_tenant_id). Reads KERNO_JWT_SECRET from the environment; raises RuntimeError
+    get_tenant_id). Reads GRUNNBOK_JWT_SECRET from the environment; raises RuntimeError
     if it is absent (the lifespan check in app.py normally prevents this).
     """
-    secret = os.environ.get("KERNO_JWT_SECRET")
+    secret = os.environ.get("GRUNNBOK_JWT_SECRET")
     if not secret:
-        raise RuntimeError("KERNO_JWT_SECRET environment variable is not set")
+        raise RuntimeError("GRUNNBOK_JWT_SECRET environment variable is not set")
     now = int(time.time())
     payload = {
         "sub": user_id,

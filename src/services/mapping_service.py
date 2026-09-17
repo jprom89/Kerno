@@ -204,9 +204,9 @@ def _format_evidence(evidence: list[EvidenceInput]) -> str:
 
 
 def _get_model_id() -> str:
-    model_id = os.environ.get("KERNO_LLM_MODEL")
+    model_id = os.environ.get("GRUNNBOK_LLM_MODEL")
     if not model_id:
-        raise MappingError("KERNO_LLM_MODEL environment variable is not set")
+        raise MappingError("GRUNNBOK_LLM_MODEL environment variable is not set")
     return model_id
 
 

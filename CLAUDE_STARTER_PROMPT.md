@@ -5,7 +5,7 @@
 ---
 
 ```
-You are building the Kerno Compliance Copilot core learning pipeline.
+You are building the Grunnbok core learning pipeline.
 
 Before writing any code, complete these steps in order:
 

@@ -2,7 +2,7 @@
 
 What:  proves the legacy static dashboard is served only in development; that
        the interactive docs are served in development OR under
-       KERNO_ENABLE_DOCS=1 and nowhere else; that the bare root URL redirects to
+       GRUNNBOK_ENABLE_DOCS=1 and nowhere else; that the bare root URL redirects to
        the configured frontend without ever redirecting to itself or off to an
        unvalidated origin; and that a shipped .env.example CORS placeholder
        stops the app booting outside development.
@@ -14,8 +14,8 @@ Why:   before this, /openapi.json served the whole route inventory, every
        wanting the schema on a host also remount the dashboard.
 How:   pytest tests/unit/api/test_app_environment_gating.py -v
 
-Every test pins KERNO_ENV explicitly. It cannot be left ambient: load_dotenv()
-runs when src.api.app is imported and the local .env sets KERNO_ENV=development,
+Every test pins GRUNNBOK_ENV explicitly. It cannot be left ambient: load_dotenv()
+runs when src.api.app is imported and the local .env sets GRUNNBOK_ENV=development,
 so a test that merely declines to set it passes locally for the wrong reason and
 fails on a machine without a .env.
 """
@@ -28,7 +28,7 @@ import pathlib
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ.setdefault("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
+os.environ.setdefault("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
 
 from config.constants import (
     EXAMPLE_ALLOWED_ORIGIN,
@@ -44,11 +44,11 @@ DASHBOARD_PATHS = ("/dashboard/login.html", "/dashboard/")
 @pytest.fixture
 def env(monkeypatch):
     """Clear every variable these tests depend on so each one states its own environment."""
-    for name in ("KERNO_ENV", "FRONTEND_URL", "ALLOWED_ORIGINS", "KERNO_ENABLE_DOCS"):
+    for name in ("GRUNNBOK_ENV", "FRONTEND_URL", "ALLOWED_ORIGINS", "GRUNNBOK_ENABLE_DOCS"):
         monkeypatch.delenv(name, raising=False)
     # The lifespan requires these before it reaches anything under test here, so
     # a startup test would otherwise fail for an unrelated reason.
-    monkeypatch.setenv("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
+    monkeypatch.setenv("GRUNNBOK_JWT_SECRET", "test-secret-for-unit-tests")
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused/for-startup-checks-only")
     return monkeypatch
 
@@ -58,13 +58,13 @@ def env(monkeypatch):
 
 @pytest.mark.parametrize("path", DOC_PATHS)
 def test_docs_are_absent_outside_development(env, path):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     assert TestClient(create_app()).get(path).status_code == 404
 
 
 @pytest.mark.parametrize("path", DOC_PATHS)
 def test_docs_are_served_in_development(env, path):
-    env.setenv("KERNO_ENV", "development")
+    env.setenv("GRUNNBOK_ENV", "development")
     assert TestClient(create_app()).get(path).status_code == 200
 
 
@@ -72,12 +72,12 @@ def test_schema_is_gone_not_merely_the_viewers(env):
     # The regression this file exists for: docs_url=None and redoc_url=None
     # remove the two HTML viewers and leave /openapi.json serving everything.
     # Anyone can point their own Swagger UI at a raw schema.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     assert TestClient(create_app()).get("/openapi.json").status_code == 404
 
 
 def test_unset_environment_is_treated_as_not_development(env):
-    # Fails closed: a missing or misspelled KERNO_ENV must lock down, not open up.
+    # Fails closed: a missing or misspelled GRUNNBOK_ENV must lock down, not open up.
     client = TestClient(create_app())
     assert client.get("/openapi.json").status_code == 404
     assert client.get("/dashboard/login.html").status_code == 404
@@ -88,12 +88,12 @@ def test_unset_environment_is_treated_as_not_development(env):
 
 @pytest.mark.parametrize("path", DASHBOARD_PATHS)
 def test_legacy_dashboard_is_absent_outside_development(env, path):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     assert TestClient(create_app()).get(path).status_code == 404
 
 
 def test_legacy_dashboard_is_served_in_development(env):
-    env.setenv("KERNO_ENV", "development")
+    env.setenv("GRUNNBOK_ENV", "development")
     response = TestClient(create_app()).get("/dashboard/login.html")
     assert response.status_code == 200
 
@@ -102,23 +102,23 @@ def test_legacy_dashboard_is_served_in_development(env):
 
 
 def test_root_redirects_to_the_configured_frontend(env):
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("FRONTEND_URL", "https://app.kerno.io")
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("FRONTEND_URL", "https://app.grunnbok.io")
     response = TestClient(create_app()).get("/", follow_redirects=False)
     assert response.status_code == 302
-    assert response.headers["location"] == "https://app.kerno.io"
+    assert response.headers["location"] == "https://app.grunnbok.io"
 
 
 def test_root_never_redirects_to_the_legacy_dashboard(env):
     # The behaviour being replaced. Worth asserting by name so a revert is loud.
-    env.setenv("KERNO_ENV", "development")
-    env.setenv("FRONTEND_URL", "https://app.kerno.io")
+    env.setenv("GRUNNBOK_ENV", "development")
+    env.setenv("FRONTEND_URL", "https://app.grunnbok.io")
     response = TestClient(create_app()).get("/", follow_redirects=False)
     assert "/dashboard/login.html" not in response.headers.get("location", "")
 
 
 def test_root_falls_back_to_the_first_allowed_origin(env):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv("ALLOWED_ORIGINS", "https://first.example,https://second.example")
     response = TestClient(create_app()).get("/", follow_redirects=False)
     assert response.status_code == 302
@@ -126,32 +126,32 @@ def test_root_falls_back_to_the_first_allowed_origin(env):
 
 
 def test_frontend_url_wins_over_allowed_origins(env):
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("FRONTEND_URL", "https://app.kerno.io")
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("FRONTEND_URL", "https://app.grunnbok.io")
     env.setenv("ALLOWED_ORIGINS", "https://ignored.example")
     response = TestClient(create_app()).get("/", follow_redirects=False)
-    assert response.headers["location"] == "https://app.kerno.io"
+    assert response.headers["location"] == "https://app.grunnbok.io"
 
 
 def test_root_trailing_slash_is_normalised(env):
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("FRONTEND_URL", "https://app.kerno.io/")
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("FRONTEND_URL", "https://app.grunnbok.io/")
     response = TestClient(create_app()).get("/", follow_redirects=False)
-    assert response.headers["location"] == "https://app.kerno.io"
+    assert response.headers["location"] == "https://app.grunnbok.io"
 
 
 def test_root_identifies_itself_when_no_frontend_is_configured(env):
     # Not a redirect. RedirectResponse(url="") emits an empty Location header,
     # which resolves to the request URI — an infinite loop on the front door.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     response = TestClient(create_app()).get("/", follow_redirects=False)
     assert response.status_code == 200
-    assert response.json() == {"service": "kerno-api", "status": "ok"}
+    assert response.json() == {"service": "grunnbok-api", "status": "ok"}
 
 
 def test_root_descriptor_leaks_nothing(env):
     # The descriptor must not hand back what disabling /openapi.json removed.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     body = TestClient(create_app()).get("/", follow_redirects=False).json()
     assert set(body) == {"service", "status"}
     assert "production" not in str(body).lower()
@@ -163,12 +163,12 @@ def test_root_descriptor_leaks_nothing(env):
         "",
         "   ",
         "//evil.example",  # protocol-relative: looks relative, redirects off-origin
-        "app.kerno.io",  # scheme-less: resolves under this host and 404s
+        "app.grunnbok.io",  # scheme-less: resolves under this host and 404s
         "javascript:alert(1)",
     ],
 )
 def test_root_refuses_a_target_that_is_not_an_absolute_http_url(env, value):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv("FRONTEND_URL", value)
     response = TestClient(create_app()).get("/", follow_redirects=False)
     assert response.status_code == 200, f"{value!r} should not produce a redirect"
@@ -177,7 +177,7 @@ def test_root_refuses_a_target_that_is_not_an_absolute_http_url(env, value):
 
 def test_blank_frontend_url_falls_through_to_allowed_origins(env):
     # An operator writing a bare "FRONTEND_URL=" line yields "" from dotenv.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv("FRONTEND_URL", "")
     env.setenv("ALLOWED_ORIGINS", "https://fallback.example")
     response = TestClient(create_app()).get("/", follow_redirects=False)
@@ -219,7 +219,7 @@ def test_the_placeholder_is_never_the_first_origin():
 
 
 def test_startup_refuses_the_current_placeholder_outside_development(env):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv("ALLOWED_ORIGINS", f"https://app.example,{EXAMPLE_ALLOWED_ORIGIN}")
     with pytest.raises(RuntimeError, match="ALLOWED_ORIGINS"):
         with TestClient(create_app()):
@@ -228,7 +228,7 @@ def test_startup_refuses_the_current_placeholder_outside_development(env):
 
 def test_startup_refuses_the_superseded_placeholder_outside_development(env):
     # A .env copied before the placeholder changed must still fail closed.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv(
         "ALLOWED_ORIGINS", f"http://localhost:3000,{SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN}"
     )
@@ -240,14 +240,14 @@ def test_startup_refuses_the_superseded_placeholder_outside_development(env):
 def test_development_still_boots_with_the_example_env(env):
     # `cp .env.example .env` is the documented local path; breaking it would
     # protect nothing and cost the setup instructions.
-    env.setenv("KERNO_ENV", "development")
+    env.setenv("GRUNNBOK_ENV", "development")
     env.setenv("ALLOWED_ORIGINS", f"http://localhost:3000,{EXAMPLE_ALLOWED_ORIGIN}")
     with TestClient(create_app()) as client:
         assert client.get("/openapi.json").status_code == 200
 
 
 def test_a_real_origin_starts_and_is_the_cors_allow_list(env):
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     env.setenv("ALLOWED_ORIGINS", "https://app.example")
     app = create_app()
     with TestClient(app) as client:
@@ -261,18 +261,18 @@ def test_a_real_origin_starts_and_is_the_cors_allow_list(env):
 def test_unset_origins_is_fail_closed_not_a_startup_error(env):
     # No allow-list means no cross-origin access. That is the safe state, not a
     # misconfiguration to refuse on.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     with TestClient(create_app()) as client:
         assert client.get("/").status_code == 200
     assert _allowed_origins() == []
 
 
-# ── KERNO_ENABLE_DOCS: docs without disarming the other controls ────────────
+# ── GRUNNBOK_ENABLE_DOCS: docs without disarming the other controls ────────────
 
 
 def test_enable_docs_serves_the_schema_outside_development(env):
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("KERNO_ENABLE_DOCS", "1")
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("GRUNNBOK_ENABLE_DOCS", "1")
     client = TestClient(create_app())
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/docs").status_code == 200
@@ -283,8 +283,8 @@ def test_enable_docs_does_not_remount_the_legacy_dashboard(env):
     # again, asking for the schema on a deployed host also serves a dashboard
     # that keeps its JWT in localStorage. Pinned by name so that cannot happen
     # quietly.
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("KERNO_ENABLE_DOCS", "1")
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("GRUNNBOK_ENABLE_DOCS", "1")
     client = TestClient(create_app())
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/dashboard/login.html").status_code == 404
@@ -294,15 +294,15 @@ def test_enable_docs_does_not_remount_the_legacy_dashboard(env):
 @pytest.mark.parametrize("value", ["true", "yes", "TRUE", "0", "", "on", "enabled"])
 def test_only_the_exact_string_one_enables_docs(env, value):
     # Fails closed: a half-remembered value must not publish the schema.
-    env.setenv("KERNO_ENV", "production")
-    env.setenv("KERNO_ENABLE_DOCS", value)
+    env.setenv("GRUNNBOK_ENV", "production")
+    env.setenv("GRUNNBOK_ENABLE_DOCS", value)
     assert TestClient(create_app()).get("/openapi.json").status_code == 404
 
 
 def test_enable_docs_is_read_at_call_time(env):
-    # Same requirement as KERNO_ENV: read inside create_app, not at import, so
+    # Same requirement as GRUNNBOK_ENV: read inside create_app, not at import, so
     # one process can build apps for either configuration.
-    env.setenv("KERNO_ENV", "production")
+    env.setenv("GRUNNBOK_ENV", "production")
     assert TestClient(create_app()).get("/openapi.json").status_code == 404
-    env.setenv("KERNO_ENABLE_DOCS", "1")
+    env.setenv("GRUNNBOK_ENABLE_DOCS", "1")
     assert TestClient(create_app()).get("/openapi.json").status_code == 200

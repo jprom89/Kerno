@@ -1,7 +1,7 @@
 # NOW.md — Current mandate (20 August 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
-outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
+outranks `GRUNNBOK_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
 Read this before starting a coding session.
 
 It does **not** override `CLAUDE.md` §2 (readability), §3 (tenant isolation),
@@ -9,9 +9,9 @@ or §6 (GDPR data classification). Those still bind.
 
 ---
 
-## What Kerno is (the object we are filling)
+## What Grunnbok is (the object we are filling)
 
-Kerno is an EU **system of record** for operational-resilience obligations:
+Grunnbok is an EU **system of record** for operational-resilience obligations:
 the live DORA Register of Information (maintain → validate → submit) and
 named-human decisions on controls, with evidence attached.
 
@@ -97,7 +97,7 @@ Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independen
 5. ~~`ALLOWED_ORIGINS` / obviously-invalid `.env.example` placeholder~~ —
    ✅ done `cd62237`. Placeholder is `https://REPLACE-ME.invalid` (RFC 2606, cannot
    be registered), the API refuses to start outside development while a
-   placeholder is still in the allow-list, and `KERNO_ENABLE_DOCS=1`
+   placeholder is still in the allow-list, and `GRUNNBOK_ENABLE_DOCS=1`
    serves the docs without remounting `/dashboard/` or unlocking the seed
    scripts. Putting the API on an HTTPS host is a founder task, not a
    ticket — nothing in the repo deploys anything.
@@ -117,7 +117,7 @@ add coverage features, Trust Center polish, or recommendation chrome.
 
 Use only this sentence (already verified in `CLAUDE.md` §15):
 
-> Every recommendation and every human decision made in Kerno is traceable
+> Every recommendation and every human decision made in Grunnbok is traceable
 > to named evidence, a reproducible score, a named human, and a timestamp —
 > with tamper-evident, database-enforced logging of every human decision.
 
@@ -127,7 +127,7 @@ dashboard.
 
 ## Do not claim (false for the running system)
 
-- Personalised RAG, a live learning loop, or "Kerno's models"
+- Personalised RAG, a live learning loop, or "Grunnbok's models"
 - Production retrieval: `generate_recommendation()` does not call
   `get_similar_controls()` or `retrieve_similar_records()`
 - Populated embeddings: `context_records.embedding` stays NULL on upload
@@ -206,4 +206,4 @@ and the frozen filing download are **done** — they are not in this list.
 If the story does not move the **register you can maintain and file**, or the
 **named human decision** that updates it, it is the wrong story.
 
-Do not implement from `KERNO_STRATEGY.md` Part F/G.
+Do not implement from `GRUNNBOK_STRATEGY.md` Part F/G.

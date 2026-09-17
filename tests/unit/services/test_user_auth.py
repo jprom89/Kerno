@@ -20,7 +20,7 @@ from src.services.auth_service import (
 )
 
 _JWT_SECRET = "test-secret-for-unit-tests"
-os.environ["KERNO_JWT_SECRET"] = _JWT_SECRET
+os.environ["GRUNNBOK_JWT_SECRET"] = _JWT_SECRET
 
 _USER_ID = str(uuid.UUID("d0000000-0000-4000-d000-000000000004"))
 _TENANT_ID = str(uuid.UUID("c0000000-0000-4000-a000-000000000003"))

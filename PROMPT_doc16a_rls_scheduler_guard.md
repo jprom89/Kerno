@@ -154,4 +154,4 @@ Apply to every file changed:
 | CLAUDE.md | Highest |
 | This patch spec | Authoritative for this patch |
 | PROMPT_doc16_dora_roi_submission_workflow.md | Upstream behavior contract |
-| KERNO_STRATEGY.md | Context only |
+| GRUNNBOK_STRATEGY.md | Context only |
