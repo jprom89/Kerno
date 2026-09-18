@@ -353,6 +353,11 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
             # Runs go before entries: neither references the other, but both
             # must precede the tenants DELETE below.
             "dora_submission_runs", "dora_register_entries",
+            # DORA-V2-001 (migration 025) — child-first: roles and identifiers
+            # carry a composite FK to organisations, and all three carry an FK
+            # to tenants.
+            "dora_organization_roles", "dora_organization_identifiers",
+            "dora_organizations",
             # KER-205 (migration 022) — both hold FKs to tenants, so the final
             # DELETE FROM tenants fails if they are left behind.
             "webhook_ingest_dedup", "webhook_registrations",

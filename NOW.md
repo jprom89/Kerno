@@ -150,8 +150,9 @@ work is authorised.
 | Ticket | What | Status |
 |---|---|---|
 | **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (this commit) |
-| **DORA-V2-001** | Organizations, identifiers, roles | not started — needs explicit approval |
-| **DORA-V2-002 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
+| **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (this commit) |
+| **DORA-V2-002** | Contracts, ICT services, functions/designations | not started — needs explicit approval |
+| **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 ## Honest claim (demo, deck, outreach)
 

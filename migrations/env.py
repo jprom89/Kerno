@@ -24,6 +24,9 @@ import src.models.audit_log  # noqa: F401
 import src.models.compliance_control  # noqa: F401
 import src.models.control_crosswalk  # noqa: F401
 import src.models.control_evidence_link  # noqa: F401
+import src.models.dora_organization  # noqa: F401
+import src.models.dora_organization_identifier  # noqa: F401
+import src.models.dora_organization_role  # noqa: F401
 import src.models.dora_register_entry  # noqa: F401
 import src.models.dora_reporting_window  # noqa: F401
 import src.models.dora_submission_run  # noqa: F401
