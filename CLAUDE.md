@@ -1,5 +1,5 @@
-# CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.7 | Updated: 2026-08-20 | Changes: frozen DORA filing download; next is founder HTTPS then partner rows -->
+# CLAUDE.md — Kerno: Codebase Constitution v1.2
+<!-- Version: 2.9 | Updated: 2026-09-18 | Changes: RoI domain expansion (not rewrite) recorded in NOW.md -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -14,6 +14,14 @@ a convenience argument. If a rule creates friction, the friction is intentional.
 constitution. It outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
 `FILE_STRUCTURE.md` for *what to build next*. It does not override §2, §3,
 or §6.
+
+**Register-first is in force until the founder says otherwise.** Read
+`NOW.md` § “Register-first (in force until told otherwise)” before naming,
+positioning, or picking the next slice. Company is Kerno; first product is
+Kerno Register. Domain expansion (canonical objects + relationship
+junction + freeze/ledger kept), not a rewrite. The five-step architecture
+there is a company map, not a sprint backlog. Do not implement from
+`KERNO_STRATEGY.md`.
 
 As of 20 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage
@@ -43,12 +51,18 @@ call retrieval; `context_records.embedding` is never populated.
 
 ## §1 — Project Identity
 
-**Product:** Kerno Compliance Copilot
-**What it does:** Holds an EU operational-resilience **system of record** —
-starting with a live DORA Register of Information and named-human decisions
-on NIS2 controls, each tied to evidence, a reproducible score, and a
-tamper-evident ledger. A hybrid engine (deterministic scorer + LLM prose)
-helps a human update that record; it is not the product.
+**Company:** Kerno.
+**First product:** Kerno Register — the system of record for DORA ICT
+third-party arrangements. Register-first is the entry wedge, not the
+entire destination. Do not rename the company. Do not define Kerno as
+only a DORA spreadsheet replacement. Do not turn the register into a
+generic customizable database.
+
+**What it does (this wedge):** Holds a live DORA Register of Information
+and named-human decisions on NIS2 controls, each tied to evidence, a
+reproducible score, and a tamper-evident ledger. A hybrid engine
+(deterministic scorer + LLM prose) helps a human update that record; it
+is not the product.
 
 **Who uses it:** Compliance engineers, vCISOs, and fractional CTOs at
 mid-market European technology companies.

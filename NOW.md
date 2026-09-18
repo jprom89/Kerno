@@ -1,4 +1,4 @@
-# NOW.md — Current mandate (20 August 2026)
+# NOW.md — Current mandate (17 September 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
 outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
@@ -9,11 +9,99 @@ or §6 (GDPR data classification). Those still bind.
 
 ---
 
+## Register-first (in force until told otherwise)
+
+Recorded 17 September 2026. Refer to this section in product, naming, and
+sequencing decisions until the founder explicitly replaces it.
+
+**Company vs product.** The company is **Kerno**. The first product is
+**Kerno Register** — the system of record for DORA ICT third-party
+arrangements. Do not rename the company. Do not tie the corporate identity
+to a single product word (Grunnbok is rejected). “RoI”, “ICT Register”,
+and “Third-Party Register” belong in the tagline, not as a new company
+name. “System of Record” is too abstract to be the product name.
+
+**Wedge, not destination.** Register-first is a credible implementation of
+the original niche thesis — a painful, regulation-driven job rather than
+another GRC dashboard — *if* the register is the entry wedge and not the
+entire company. The broader story (NIS2 + DORA → defensible evidence,
+assigned remediation, management-ready reporting, later a Kerno-backed
+vCISO motion) stays in `KERNO_STRATEGY.md`. That memo is not a ship plan.
+Year 1 remains founder-led; vCISO referral is after logos.
+
+**Honest object.** DORA’s Register of Information is not a generic
+spreadsheet: the ITS spans interconnected entities, providers, contracts,
+services, functions, and supply chains. **Kerno Register’s domain data is
+still a prototype abstraction** — one `dora_register_entries` row is
+roughly “this provider, this service, this function, these dates.” That
+row is not the ITS. Around it, the SoR machinery is already real: tenant
+RLS, RBAC, named-human writes, hash-chained ledger, submission runs, and
+a freeze of exact bytes. Do not describe the current app as the
+15-template ITS. Do not ship xBRL / ESA ~116 as a bolt-on to the flat
+row. Do not add thirty columns to `dora_register_entries`.
+
+**Domain expansion, not a rewrite** (17 September 2026; in force with this
+section). The regulatory templates are **projections of the domain
+graph**, not the database schema. Do not create 15 tables because the
+ITS has 15 templates. Canonical objects: FinancialEntity (+ Branch),
+ICTProvider (+ identifiers), ContractualArrangement, ICTService,
+BusinessFunction, and a junction **ICTServiceRelationship** (entity ×
+contract × provider × service × function). Supply chain is
+provider→provider with rank; assessments hang off the relationship.
+Keep `dora_register_entries` as a **migration bridge**; missing derived
+fields stay NULL / needs_review, never invented. The Register UI stays
+an Arrangements **view** over that graph. Ledger `object_type` /
+before-after and the freeze pipeline stay; Increment 4 swaps the payload
+generator, not the snapshot idea.
+
+Four increments, in order: (1) canonical objects + RLS, (2) relationship
++ importer + UI reads the projection, (3) identifiers, chains,
+assessments, (4) ITS compiler → ESA checks → xBRL-CSV into the existing
+freeze. Do not start (3)/(4) before (1)/(2). Do not write migrations
+before every proposed table is mapped to the 15 official templates.
+Evidence today links to **controls**, not RoI objects; reuse
+`context_records`, do not spawn one link table per object — a polymorphic
+link needs a design pass (`control_evidence_links` has no `tenant_id`).
+
+**Partner-data test.** Do not seed three clean demo vendors. Import a
+real RoI / vendor spreadsheet: same provider under several contracts,
+several services per contract, one function on many services, one
+provider on many entities, identifiers, subcontractors, gaps, spelling
+conflicts. That exposes the schema. HTTPS remains founder ops so they
+can log in; it is not a reason to skip the messy import.
+
+**Company map, not a backlog.** The architecture is:
+
+Register first → evidence and ownership → validation and regulatory
+export → continuous third-party oversight → broader compliance system of
+record.
+
+Permission to grow later. Not tickets. Evidence, ownership, and the ledger already exist. Validation and export
+are the honest gap (20 rules, frozen JSON, not ESA/xBRL). The next
+*engineering design* is the canonical relational schema mapped to the 15
+templates — not more DORA chrome, not Increment 4 yet. Continuous
+oversight is how this becomes Orbiq. Broader SoR is how this becomes
+Kertos. Founder HTTPS, then a partner’s messy register, remain the
+proof.
+
+**It fails if either.** Kerno becomes a generic customizable database, *or*
+the company is permanently defined as a DORA spreadsheet replacement. Do
+not add coverage chrome, Trust Center polish, NIS2 workflow suites, or a
+vCISO OS to avoid “looking like Excel.” Stay a register until a partner
+keeps the record here. Expansion is earned by that.
+
+---
+
 ## What Kerno is (the object we are filling)
 
-Kerno is an EU **system of record** for operational-resilience obligations:
-the live DORA Register of Information (maintain → validate → submit) and
-named-human decisions on controls, with evidence attached.
+The company is **Kerno**. The product in the UI is **Kerno Register** —
+the system of record for DORA ICT third-party arrangements. That register
+is the entry wedge, not the entire destination. Do not rename the company.
+Do not permanently define Kerno as a DORA spreadsheet replacement.
+
+Kerno holds an EU **system of record** for operational-resilience
+obligations: the live DORA Register of Information (maintain → validate →
+submit) and named-human decisions on controls, with evidence attached.
 
 Coverage grids, recommendation queues, and LLM rationale are **how a human
 updates that record**. They are not the product. A US GRC buyer already

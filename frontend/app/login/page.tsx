@@ -75,9 +75,12 @@ function LoginForm() {
     <form
       onSubmit={handleSubmit}
       className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm"
-      aria-label="Sign in to Kerno"
+      aria-label="Sign in to Kerno Register"
     >
-      <h1 className="mb-6 text-2xl font-semibold text-slate-900">Kerno</h1>
+      <h1 className="mb-1 text-2xl font-semibold text-slate-900">Kerno Register</h1>
+      <p className="mb-6 text-sm text-slate-600">
+        The system of record for DORA ICT third-party arrangements.
+      </p>
       <label className="mb-4 block">
         <span className="mb-1 block text-sm font-medium text-slate-700">Organisation</span>
         <input
