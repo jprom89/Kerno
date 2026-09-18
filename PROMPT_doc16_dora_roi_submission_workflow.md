@@ -1,9 +1,15 @@
 # PROMPT_doc16_dora_roi_submission_workflow.md
 # Document 16 — DORA RoI Submission Workflow + Reporting Calendars
-# Spec version: 1.0 | Status: Authoritative
+# Spec version: 1.0 | Status: Historical (superseded — see banner)
 # Covers: KER-106 (part 3 of 3)
 # Builds on: Doc 14 (live register), Doc 15 (export + validation)
 # Supersedes: any prior description of DORA RoI submission workflow in prompts
+
+> **Historical DORA v1 implementation document.** Retained for implementation
+> history only. `DORA_MODEL_V2.md` is authoritative for future DORA domain
+> architecture; `NOW.md` remains authoritative for current build priority.
+> (Marked historical 18 September 2026, DORA-V2-000.)
+
 
 ---
 

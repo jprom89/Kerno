@@ -1,3 +1,8 @@
+> **Historical DORA v1 implementation document.** Retained for implementation
+> history only. `DORA_MODEL_V2.md` is authoritative for future DORA domain
+> architecture; `NOW.md` remains authoritative for current build priority.
+> (Marked historical 18 September 2026, DORA-V2-000.)
+
 You are performing a **hardening review** of the DORA Register of Information
 implementation (Docs 14–16A) in the Kerno compliance copilot codebase.
 

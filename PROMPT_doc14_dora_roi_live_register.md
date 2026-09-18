@@ -1,8 +1,14 @@
 # PROMPT_doc14_dora_roi_live_register.md
 # Document 14 — DORA Register of Information Live Register Foundation
-# Spec version: 1.0 | Status: Authoritative
+# Spec version: 1.0 | Status: Historical (superseded — see banner)
 # Covers: KER-106 (part 1 of 3)
 # Supersedes: any inline description of DORA RoI in Claude prompts
+
+> **Historical DORA v1 implementation document.** Retained for implementation
+> history only. `DORA_MODEL_V2.md` is authoritative for future DORA domain
+> architecture; `NOW.md` remains authoritative for current build priority.
+> (Marked historical 18 September 2026, DORA-V2-000.)
+
 
 ---
 

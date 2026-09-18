@@ -1,8 +1,14 @@
 # PROMPT_doc15_dora_roi_export_validation.md
 # Document 15 — DORA Register of Information Export + Validation
-# Spec version: 1.0 | Status: Authoritative
+# Spec version: 1.0 | Status: Historical (superseded — see banner)
 # Covers: KER-106 (part 2 of 3)
 # Supersedes: any inline description of DORA RoI export or validation in Claude prompts
+
+> **Historical DORA v1 implementation document.** Retained for implementation
+> history only. `DORA_MODEL_V2.md` is authoritative for future DORA domain
+> architecture; `NOW.md` remains authoritative for current build priority.
+> (Marked historical 18 September 2026, DORA-V2-000.)
+
 
 ---
 

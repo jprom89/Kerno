@@ -1,7 +1,9 @@
 # NOW.md — Current mandate (20 August 2026)
 
 This file is in force via `CLAUDE.md` §0. For implementation priority it
-outranks `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and `FILE_STRUCTURE.md`.
+outranks `DORA_MODEL_V2.md`, `KERNO_STRATEGY.md`, every `PROMPT_doc*.md`, and
+`FILE_STRUCTURE.md`. `DORA_MODEL_V2.md` is authoritative for *how* the DORA
+domain is modelled; this file is authoritative for *what is built next*.
 Read this before starting a coding session.
 
 It does **not** override `CLAUDE.md` §2 (readability), §3 (tenant isolation),
@@ -112,6 +114,44 @@ Order in the sitting: 409 → 410 → 411. After 409, 410 and 411 are independen
 
 Nav already leads with Register. Coverage stays a read-only view. Do not
 add coverage features, Trust Center polish, or recommendation chrome.
+
+## DORA v2 relational workstream (authority established 18 September 2026)
+
+This is a parallel workstream, not a replacement for items 7 and 8 above.
+Founder HTTPS and the partner's own vendors and evidence stay where they are
+and stay first: **real partner and vendor data remains a required proof
+point**, and the v2 model must survive it before any regulatory compiler
+work is authorised.
+
+- **`DORA_MODEL_V2.md` governs all future DORA domain-model work.** It sits
+  immediately below this file in the authority order set out in
+  `CLAUDE.md` §0. Documents 14–17B are historical v1 implementation records.
+- **`dora_register_entries` is now legacy v1 persistence and a migration
+  input.** Do not add regulatory concepts to it. Do not drop it. Do not
+  transform its rows destructively. It remains operational until the v2
+  cutover is proven.
+- **Everything that works today keeps working.** The current register
+  UI/API, submission windows and runs, and the frozen filing download stay
+  live until v2 cutover is proven on real data — not until it compiles.
+- **Retained, not renegotiated:** the KER-107 hash-chained audit ledger,
+  RLS + FORCE tenant isolation, RBAC via Ticket A's literal-string matrix,
+  and the frozen-filing invariant (a later register edit never changes an
+  existing frozen package). v2 writes use explicit `dora_*` object
+  vocabularies on the *existing* ledger — no parallel DORA audit subsystem.
+- **Incremental, never greenfield.** v2 lands through `DORA-V2-*` tickets in
+  the order `DORA_MODEL_V2.md` §36 sets out, each explicitly approved before
+  implementation. A schema that compiles is not a reason to advance.
+- **Mandatory real-data checkpoint.** After service arrangements, usages and
+  locations (V2-003) and before any regulatory projection, validation, or
+  package work (V2-008 through V2-010), the relational model is tested
+  against a real partner register (`DORA_MODEL_V2.md` §37). That checkpoint
+  is not skippable.
+
+| Ticket | What | Status |
+|---|---|---|
+| **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (this commit) |
+| **DORA-V2-001** | Organizations, identifiers, roles | not started — needs explicit approval |
+| **DORA-V2-002 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 ## Honest claim (demo, deck, outreach)
 

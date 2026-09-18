@@ -1,9 +1,15 @@
 # PROMPT_doc17b_dora_roi_schema_and_service_hardening.md
 # Document 17B — DORA RoI Schema and Service Hardening (Items 5–10)
-# Spec version: 1.0 | Status: Authoritative
+# Spec version: 1.0 | Status: Historical (superseded — see banner)
 # Type: Hardening patch — no new features, no new models, no new public API
 # Source: Doc 17 hardening review §3.2.6 items 5–10
 # Prerequisite: Doc 17A must be merged before this patch is applied
+
+> **Historical DORA v1 implementation document.** Retained for implementation
+> history only. `DORA_MODEL_V2.md` is authoritative for future DORA domain
+> architecture; `NOW.md` remains authoritative for current build priority.
+> (Marked historical 18 September 2026, DORA-V2-000.)
+
 
 ---
 

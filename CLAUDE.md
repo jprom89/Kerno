@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno Compliance Copilot: Codebase Constitution v1.2
-<!-- Version: 2.7 | Updated: 2026-08-20 | Changes: frozen DORA filing download; next is founder HTTPS then partner rows -->
+<!-- Version: 2.8 | Updated: 2026-09-18 | Changes: DORA-V2-000 — DORA_MODEL_V2.md established as authoritative DORA domain architecture; Docs 14–17 marked historical -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -38,6 +38,38 @@ from that document.
 Demo and outreach language: use only the approved sentence in §15. Do not
 describe a live RAG or learning loop. `generate_recommendation()` does not
 call retrieval; `context_records.embedding` is never populated.
+
+### DORA domain-model authority (established 18 September 2026, DORA-V2-000)
+
+`DORA_MODEL_V2.md` at the repository root is the **authoritative DORA
+Register domain architecture**. For any question about how DORA objects are
+modelled — organisations, contracts, ICT services, functions, service
+arrangements, service usages, supply edges, assessments, register profiles,
+snapshots, projections, filing packages — the order of authority is:
+
+1. `CLAUDE.md` — this file: global engineering constitution
+2. `NOW.md` — current implementation mandate
+3. `DORA_MODEL_V2.md` — authoritative DORA domain architecture
+4. The currently approved `DORA-V2-*` ticket — implementation scope
+5. Older `PROMPT_doc*.md` files — historical implementation records, where
+   not superseded
+6. `KERNO_STRATEGY.md` — context and research only
+7. `FILE_STRUCTURE.md` — historical map, known-stale (§4)
+
+This hierarchy sits *below* this file on purpose. Nothing in
+`DORA_MODEL_V2.md` relaxes §2 (readability), §3 (tenant isolation), §6
+(GDPR and data classification), §7 (migrations), §11 (review protocol and
+the live-database rule), §15 (the approved claim), or §17 (the audit
+response). Where the two appear to disagree, this file wins and the
+disagreement is a defect in `DORA_MODEL_V2.md` to be raised, not a licence.
+
+Documents 14 through 17B (`PROMPT_doc14_…` to `PROMPT_doc17b_…`) are
+**historical DORA v1 implementation records**. They describe what was built
+and why; they no longer decide what is built next. `dora_register_entries`
+is legacy v1 persistence and a migration input — do not add regulatory
+concepts to it. Implementation of the v2 model proceeds incrementally
+through `DORA-V2-*` tickets, never as a greenfield rewrite, and no
+`DORA-V2-*` ticket is implemented until it is explicitly approved.
 
 ---
 
