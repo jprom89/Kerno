@@ -1,5 +1,5 @@
 # CLAUDE.md — Kerno: Codebase Constitution v1.2
-<!-- Version: 2.8 | Updated: 2026-09-17 | Changes: register-first in force in NOW.md until founder says otherwise -->
+<!-- Version: 2.9 | Updated: 2026-09-18 | Changes: RoI domain expansion (not rewrite) recorded in NOW.md -->
 
 This file is the first thing Claude reads at the start of every session.
 It defines the rules that govern every line of code written for this project.
@@ -18,8 +18,10 @@ or §6.
 **Register-first is in force until the founder says otherwise.** Read
 `NOW.md` § “Register-first (in force until told otherwise)” before naming,
 positioning, or picking the next slice. Company is Kerno; first product is
-Kerno Register. The five-step architecture there is a company map, not a
-sprint backlog. Do not implement from `KERNO_STRATEGY.md`.
+Kerno Register. Domain expansion (canonical objects + relationship
+junction + freeze/ledger kept), not a rewrite. The five-step architecture
+there is a company map, not a sprint backlog. Do not implement from
+`KERNO_STRATEGY.md`.
 
 As of 20 August 2026 Kerno is an EU **system of record** (live DORA
 register + named-human control decisions), not an AI GRC coverage

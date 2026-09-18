@@ -31,14 +31,44 @@ Year 1 remains founder-led; vCISO referral is after logos.
 
 **Honest object.** DORA’s Register of Information is not a generic
 spreadsheet: the ITS spans interconnected entities, providers, contracts,
-services, functions, and supply chains. **Kerno Register today is not that
-graph.** It is a live, tenant-scoped ICT line (provider, service, type,
-criticality, function, data types, countries, contract dates, exit note)
-with named-human writes, a KER-107 ledger, ~20 structural validation
-rules, and a filing JSON frozen at Start-run. Excel-plus-converter is the
-real competitor for the last-mile zip. Do not describe the current app as
-the 15-template ITS. Do not build xBRL / ESA ~116 before a design partner
-keeps their vendors in this register.
+services, functions, and supply chains. **Kerno Register’s domain data is
+still a prototype abstraction** — one `dora_register_entries` row is
+roughly “this provider, this service, this function, these dates.” That
+row is not the ITS. Around it, the SoR machinery is already real: tenant
+RLS, RBAC, named-human writes, hash-chained ledger, submission runs, and
+a freeze of exact bytes. Do not describe the current app as the
+15-template ITS. Do not ship xBRL / ESA ~116 as a bolt-on to the flat
+row. Do not add thirty columns to `dora_register_entries`.
+
+**Domain expansion, not a rewrite** (17 September 2026; in force with this
+section). The regulatory templates are **projections of the domain
+graph**, not the database schema. Do not create 15 tables because the
+ITS has 15 templates. Canonical objects: FinancialEntity (+ Branch),
+ICTProvider (+ identifiers), ContractualArrangement, ICTService,
+BusinessFunction, and a junction **ICTServiceRelationship** (entity ×
+contract × provider × service × function). Supply chain is
+provider→provider with rank; assessments hang off the relationship.
+Keep `dora_register_entries` as a **migration bridge**; missing derived
+fields stay NULL / needs_review, never invented. The Register UI stays
+an Arrangements **view** over that graph. Ledger `object_type` /
+before-after and the freeze pipeline stay; Increment 4 swaps the payload
+generator, not the snapshot idea.
+
+Four increments, in order: (1) canonical objects + RLS, (2) relationship
++ importer + UI reads the projection, (3) identifiers, chains,
+assessments, (4) ITS compiler → ESA checks → xBRL-CSV into the existing
+freeze. Do not start (3)/(4) before (1)/(2). Do not write migrations
+before every proposed table is mapped to the 15 official templates.
+Evidence today links to **controls**, not RoI objects; reuse
+`context_records`, do not spawn one link table per object — a polymorphic
+link needs a design pass (`control_evidence_links` has no `tenant_id`).
+
+**Partner-data test.** Do not seed three clean demo vendors. Import a
+real RoI / vendor spreadsheet: same provider under several contracts,
+several services per contract, one function on many services, one
+provider on many entities, identifiers, subcontractors, gaps, spelling
+conflicts. That exposes the schema. HTTPS remains founder ops so they
+can log in; it is not a reason to skip the messy import.
 
 **Company map, not a backlog.** The architecture is:
 
@@ -46,11 +76,13 @@ Register first → evidence and ownership → validation and regulatory
 export → continuous third-party oversight → broader compliance system of
 record.
 
-Permission to grow later. Not tickets. Evidence, ownership, and the
-ledger already exist. Validation and export are the honest gap (20 rules,
-frozen JSON, not ESA/xBRL). Continuous oversight is how this becomes
-Orbiq. Broader SoR is how this becomes Kertos. Next sitting is still
-founder HTTPS, then the partner’s own vendors and evidence.
+Permission to grow later. Not tickets. Evidence, ownership, and the ledger already exist. Validation and export
+are the honest gap (20 rules, frozen JSON, not ESA/xBRL). The next
+*engineering design* is the canonical relational schema mapped to the 15
+templates — not more DORA chrome, not Increment 4 yet. Continuous
+oversight is how this becomes Orbiq. Broader SoR is how this becomes
+Kertos. Founder HTTPS, then a partner’s messy register, remain the
+proof.
 
 **It fails if either.** Kerno becomes a generic customizable database, *or*
 the company is permanently defined as a DORA spreadsheet replacement. Do
