@@ -12,8 +12,9 @@ Run: pytest tests/unit/services/test_dora_organization_service.py -v
 
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -390,6 +391,88 @@ def test_rejected_input_never_reaches_the_ledger():
     with pytest.raises(ValueError):
         _write(create_organization, spy, OrganizationInput(legal_name=""))
     assert _ledger_calls(spy) == []
+
+
+# ── Concurrency: the update path locks its read; nothing else locks ────────
+
+
+_ROW_LOCK_CLAUSES = ("FOR UPDATE", "FOR NO KEY UPDATE", "FOR SHARE", "FOR KEY SHARE")
+
+
+def _row_locking_statements(spy: _SpyConn) -> list[str]:
+    return [str(c[0]) for c in spy.calls if any(clause in str(c[0]) for clause in _ROW_LOCK_CLAUSES)]
+
+
+def test_update_locks_the_row_on_its_read_then_writes_then_takes_the_ledger_lock():
+    # Lock order is the contract: organisation row lock first, the tenant's
+    # ledger advisory lock last. A read that came after the UPDATE, or a
+    # ledger append that came before the row lock, would reopen the stale
+    # before_state window or invert the order against every other writer.
+    spy = _SpyConn([_org_exists()])
+    _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="After Ltd"))
+    order = [str(c[0]) for c in spy.calls]
+    locking_read = next(i for i, s in enumerate(order) if "FOR NO KEY UPDATE" in s)
+    update_at = next(i for i, s in enumerate(order) if "UPDATE dora_organizations" in s)
+    advisory_at = next(i for i, s in enumerate(order) if "pg_advisory_xact_lock" in s)
+    assert locking_read < update_at < advisory_at
+    assert order[locking_read].lstrip().startswith("SELECT")
+    assert "FROM dora_organizations" in order[locking_read]
+    assert "tenant_id = :tenant_id" in order[locking_read]
+    assert _row_locking_statements(spy) == [order[locking_read]]
+
+
+def test_the_lock_is_no_key_update_not_the_stronger_for_update():
+    # FOR NO KEY UPDATE is what the UPDATE of non-key columns takes itself and
+    # it lets a child row's FK check (FOR KEY SHARE) through; FOR UPDATE would
+    # queue every identifier and role insert behind an amendment.
+    spy = _SpyConn([_org_exists()])
+    _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="After Ltd"))
+    statements = _row_locking_statements(spy)
+    assert len(statements) == 1
+    assert statements[0].rstrip().endswith("FOR NO KEY UPDATE")
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda spy: create_organization(spy, _TENANT_ID, OrganizationInput(legal_name="X"), actor_id=_ACTOR_ID, actor_role="vciso"),
+        lambda spy: get_organization(spy, _TENANT_ID, _ORG_ID),
+        lambda spy: list_organizations(spy, _TENANT_ID),
+        lambda spy: add_organization_identifier(spy, _TENANT_ID, _ORG_ID, "LEI", "X", actor_id=_ACTOR_ID, actor_role="vciso"),
+        lambda spy: list_organization_identifiers(spy, _TENANT_ID, _ORG_ID),
+        lambda spy: add_organization_role(spy, _TENANT_ID, _ORG_ID, "ict_provider", actor_id=_ACTOR_ID, actor_role="vciso"),
+        lambda spy: list_organization_roles(spy, _TENANT_ID, _ORG_ID),
+    ],
+    ids=["create", "get", "list", "add_identifier", "list_identifiers", "add_role", "list_roles"],
+)
+def test_no_other_operation_takes_a_row_lock(call):
+    spy = _SpyConn([_org_exists()])
+    call(spy)
+    assert _row_locking_statements(spy) == []
+
+
+def test_update_of_an_unknown_organization_locks_nothing_and_writes_nothing():
+    spy = _SpyConn()
+    assert _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="X")) is None
+    assert _calls_matching(spy, "UPDATE dora_organizations") == []
+    assert _ledger_calls(spy) == []
+
+
+def test_ledger_states_carry_utc_timestamps_whatever_zone_the_row_came_back_in():
+    # psycopg2 hands timestamptz back in the session's zone. The ledger writes
+    # UTC either way, so an update's before_state equals the prior entry's
+    # after_state field for field and not only instant for instant.
+    session_zone = timezone(timedelta(hours=2))
+    row_in_session_zone = (
+        _ORG_ID, _TENANT_ID, "Alpha Bank AG", "DE", True,
+        _NOW.astimezone(session_zone), _NOW.astimezone(session_zone),
+    )
+    fragment, _ = _org_exists()
+    spy = _SpyConn([(fragment, _SelectResult([row_in_session_zone]))])
+    _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="After Ltd"))
+    before = json.loads(_ledger_calls(spy)[0][1]["before_state"])
+    assert before["created_at"] == "2026-09-18T12:00:00+00:00"
+    assert before["updated_at"] == "2026-09-18T12:00:00+00:00"
 
 
 # ── Authorisation constant ──────────────────────────────────────────────────

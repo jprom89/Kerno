@@ -30,6 +30,38 @@ implementation, which §17 Ticket A's design rejects. ORGANIZATION_CAPABLE_ROLES
 below is the allow-list a future router must apply, and it is the same as the
 live register's — filing authority, not the NIS2 evidence-pack list. Until a
 router exists, nothing outside tests can reach these functions.
+
+Concurrency and lock order — recorded decision
+-----------------------------------------------
+update_organization reads the row with SELECT ... FOR NO KEY UPDATE. Under
+READ COMMITTED (the level the application runs at) a plain read let two
+amendments capture the same old row; the second then wrote a before_state
+that was not the state it replaced, and the ledger's hash chain was valid
+regardless, because the per-tenant advisory lock inside append_audit_entry is
+taken after the state was captured and cannot protect it. With the locking
+read the second amendment waits for the first to commit and is then handed
+the committed row, so every successful update records the actual state it
+replaced. That is the whole guarantee: a stale user edit is NOT rejected — it
+waits, then wins, with an accurate trail. Rejecting it would need an
+optimistic token (an expected updated_at) in the API this service does not
+yet have. FOR NO KEY UPDATE, not FOR UPDATE, because it is the lock the UPDATE
+of these non-key columns takes anyway, and it does not block a child row's
+foreign-key check (FOR KEY SHARE) on the organisation.
+
+Lock order in this service is fixed: an organisation row lock is taken first
+and only in update_organization; the tenant's ledger advisory lock is taken
+last, inside append_audit_entry, on every write path. Nothing takes a row
+lock after the advisory lock, so the two cannot form a cycle. Read-only
+getters take no locks. The row lock lives until the caller commits or rolls
+back — the service still owns no transaction.
+
+Identifier and role writes still check-then-insert. The UNIQUE constraints
+are the guarantee: two concurrent inserts of the same identifier or role
+cannot both succeed, but the loser surfaces as the driver's UniqueViolation,
+not as this service's ValueError. Consistent domain-level conflict handling
+for that case is a gate before any API or import ticket exposes these
+functions, not something to bolt on here (tests/integration/
+test_dora_v2_001_update_concurrency.py records the decision).
 """
 
 from __future__ import annotations
@@ -153,6 +185,11 @@ FROM dora_organizations
 WHERE tenant_id = :tenant_id
 ORDER BY legal_name ASC, organization_id ASC
 """
+
+# The locking read behind update_organization. Same projection and predicate
+# as _SELECT_ORGANIZATION; the lock clause is the only difference, so the row
+# the caller sees is the row the UPDATE below will overwrite.
+_SELECT_ORGANIZATION_FOR_UPDATE = _SELECT_ORGANIZATION + "FOR NO KEY UPDATE\n"
 
 _UPDATE_ORGANIZATION = """
 UPDATE dora_organizations
@@ -278,15 +315,17 @@ def update_organization(
 ) -> OrganizationOutput | None:
     """Amend an organisation and return it, or None if it does not exist here.
 
-    Reads the row as it stands first so the ledger entry carries before_state
-    as well as after_state — an amendment to a legal identity is only
-    reconstructable if what it replaced was captured. Raises
+    Reads the row with a row lock first so the ledger entry's before_state is
+    the state this write replaces — a concurrent amendment waits here until
+    the earlier one commits and is then handed the committed row. An
+    amendment to a legal identity is only reconstructable if what it replaced
+    was captured. The lock is held until the caller's transaction ends. Raises
     TenantContextMissingError on a bad tenant and ValueError on invalid input.
     """
     _guard_tenant(tenant_id)
     normalized = _normalize_organization_input(org_input)
     set_tenant_context(conn, tenant_id)
-    previous = _fetch_organization(conn, tenant_id, organization_id)
+    previous = _lock_organization_for_update(conn, tenant_id, organization_id)
     if previous is None:
         return None
     updated = dataclasses.replace(
@@ -477,6 +516,21 @@ def _fetch_organization(conn, tenant_id, organization_id: str) -> OrganizationOu
     return _organization_row_to_output(row) if row is not None else None
 
 
+def _lock_organization_for_update(conn, tenant_id, organization_id: str) -> OrganizationOutput | None:
+    """Read one organisation for this tenant under a FOR NO KEY UPDATE row lock, or None.
+
+    Only the update path uses this. Under READ COMMITTED the lock makes a
+    concurrent amendment wait for an uncommitted one and then see its
+    committed values, which is what keeps before_state honest. Requires tenant
+    context to already be set.
+    """
+    row = conn.execute(
+        _SELECT_ORGANIZATION_FOR_UPDATE,
+        {"tenant_id": str(tenant_id), "organization_id": str(organization_id)},
+    ).fetchone()
+    return _organization_row_to_output(row) if row is not None else None
+
+
 def _require_organization(conn, tenant_id, organization_id: str) -> None:
     """Raise EntryNotFoundError unless this tenant has this organisation.
 
@@ -571,11 +625,18 @@ def _role_row_to_output(row) -> OrganizationRoleOutput:
 
 
 def _to_ledger_state(record) -> dict:
-    """Return a dataclass as a dict the audit ledger can serialise (datetimes → ISO 8601)."""
+    """Return a dataclass as a dict the audit ledger can serialise (datetimes → ISO 8601, UTC).
+
+    Timestamps the service generated are UTC already; timestamps read back
+    from PostgreSQL arrive in the session's zone. Both are written as UTC so
+    an update's before_state equals the previous entry's after_state field for
+    field, not merely instant for instant.
+    """
     state = dataclasses.asdict(record)
     for field_name, value in state.items():
         if isinstance(value, datetime):
-            state[field_name] = value.isoformat()
+            aware = value.astimezone(timezone.utc) if value.tzinfo is not None else value
+            state[field_name] = aware.isoformat()
     return state
 
 
