@@ -403,6 +403,13 @@ def _row_locking_statements(spy: _SpyConn) -> list[str]:
     return [str(c[0]) for c in spy.calls if any(clause in str(c[0]) for clause in _ROW_LOCK_CLAUSES)]
 
 
+def _position_of(statements: list[str], fragment: str) -> int:
+    for index, statement in enumerate(statements):
+        if fragment in statement:
+            return index
+    raise AssertionError(f"no statement containing {fragment!r} was issued")
+
+
 def test_update_locks_the_row_on_its_read_then_writes_then_takes_the_ledger_lock():
     # Lock order is the contract: organisation row lock first, the tenant's
     # ledger advisory lock last. A read that came after the UPDATE, or a
@@ -411,14 +418,30 @@ def test_update_locks_the_row_on_its_read_then_writes_then_takes_the_ledger_lock
     spy = _SpyConn([_org_exists()])
     _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="After Ltd"))
     order = [str(c[0]) for c in spy.calls]
-    locking_read = next(i for i, s in enumerate(order) if "FOR NO KEY UPDATE" in s)
-    update_at = next(i for i, s in enumerate(order) if "UPDATE dora_organizations" in s)
-    advisory_at = next(i for i, s in enumerate(order) if "pg_advisory_xact_lock" in s)
+    locking_read = _position_of(order, "FOR NO KEY UPDATE")
+    update_at = _position_of(order, "UPDATE dora_organizations")
+    advisory_at = _position_of(order, "pg_advisory_xact_lock")
     assert locking_read < update_at < advisory_at
     assert order[locking_read].lstrip().startswith("SELECT")
     assert "FROM dora_organizations" in order[locking_read]
     assert "tenant_id = :tenant_id" in order[locking_read]
     assert _row_locking_statements(spy) == [order[locking_read]]
+
+
+def test_update_reads_the_organisation_exactly_once_and_ledgers_what_the_locked_read_returned():
+    # A plain pre-read for before_state followed by a locking read whose
+    # result is discarded would satisfy the ordering test above. The spy
+    # answers the locked read and any plain read with different names, and
+    # only one read may happen at all.
+    locked_row = _org_row(legal_name="Locked Read Ltd")
+    plain_row = _org_row(legal_name="Plain Read Ltd")
+    fragment, _ = _org_exists()
+    spy = _SpyConn([("FOR NO KEY UPDATE", _SelectResult([locked_row])), (fragment, _SelectResult([plain_row]))])
+    _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="After Ltd"))
+    reads = [c for c in spy.calls if str(c[0]).lstrip().startswith("SELECT") and "FROM dora_organizations" in str(c[0])]
+    assert len(reads) == 1
+    before = json.loads(_ledger_calls(spy)[0][1]["before_state"])
+    assert before["legal_name"] == "Locked Read Ltd"
 
 
 def test_the_lock_is_no_key_update_not_the_stronger_for_update():
@@ -451,7 +474,7 @@ def test_no_other_operation_takes_a_row_lock(call):
     assert _row_locking_statements(spy) == []
 
 
-def test_update_of_an_unknown_organization_locks_nothing_and_writes_nothing():
+def test_update_of_an_unknown_organization_returns_none_and_writes_nothing():
     spy = _SpyConn()
     assert _write(update_organization, spy, _ORG_ID, OrganizationInput(legal_name="X")) is None
     assert _calls_matching(spy, "UPDATE dora_organizations") == []

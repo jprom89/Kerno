@@ -80,9 +80,9 @@ class DORAOrganization(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # No database trigger maintains updated_at (migration 025 creates none);
+    # the writer sets it explicitly. An ORM-side onupdate hook would document
+    # behaviour the database does not provide, so none is declared.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

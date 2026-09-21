@@ -155,16 +155,21 @@ work is authorised.
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 **V2-001 review follow-ups (21 September 2026, branch
-`dora-v2-001/concurrent-audit-before-state`, PR open for independent diff
+`dora-v2-001/concurrent-audit-before-state`, pushed for independent diff
 review — not merged):** the three V2-001 models now match migration 025
 exactly (tenants FKs, `gen_random_uuid()` and `true` server defaults, the
-identifier index), pinned by a scoped Alembic comparison with server-default
-comparison on plus catalog checks of every CHECK, FK, UNIQUE and index; and
-`update_organization` reads under `FOR NO KEY UPDATE`, so a concurrent
-amendment ledgers the state it actually replaced. That fix protects audit
-before-state accuracy only. A stale user edit is **not** rejected — it waits,
-then wins, with an accurate trail. Rejecting it needs an optimistic token in
-an API that does not exist yet.
+identifier index, no ORM-only `onupdate`), pinned by a scoped Alembic
+comparison with server-default comparison on plus catalog checks of every
+CHECK, FK, UNIQUE and index; and `update_organization` reads under
+`FOR NO KEY UPDATE`, so a concurrent amendment ledgers the state it actually
+replaced. That fix protects audit before-state accuracy only. A stale user
+edit is **not** rejected — it waits, then wins, with an accurate trail.
+Rejecting it needs an optimistic token in an API that does not exist yet.
+Lock order is recorded per call and per transaction in the service docstring:
+a caller-owned transaction that has already ledgered can deadlock against a
+concurrent single update of the same row; PostgreSQL aborts one side (40P01),
+the loser writes nothing, and that is pre-existing KER-107 behaviour, pinned
+by a live test, not re-designed here.
 
 **Gate before any DORA-V2 API or import ticket exposes identifier or role
 writes:** `add_organization_identifier` and `add_organization_role`

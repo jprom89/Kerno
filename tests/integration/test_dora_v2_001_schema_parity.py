@@ -23,7 +23,15 @@ from __future__ import annotations
 import os
 
 import pytest
-from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint, create_engine
+from sqlalchemy import (
+    CheckConstraint,
+    DefaultClause,
+    ForeignKeyConstraint,
+    MetaData,
+    UniqueConstraint,
+    create_engine,
+    text,
+)
 
 from src.models import Base
 from src.models.dora_organization import DORAOrganization
@@ -54,6 +62,21 @@ _EXPECTED_CHECKS = {
     "ck_dora_organization_roles_role_type":
         "CHECK (((role_type)::text = ANY ((ARRAY['financial_entity'::character varying, "
         "'ict_provider'::character varying])::text[])))",
+}
+
+# The same five CHECKs as the models declare them. Alembic never compares
+# CHECK expressions, so the model side is pinned here in its source form.
+_EXPECTED_MODEL_CHECKS = {
+    "ck_dora_organizations_legal_name_canonical":
+        "legal_name = btrim(legal_name) AND legal_name <> ''",
+    "ck_dora_organizations_country_code_iso2":
+        "country_code IS NULL OR country_code ~ '^[A-Z]{2}$'",
+    "ck_dora_organization_identifiers_type_canonical":
+        "identifier_type = upper(btrim(identifier_type)) AND identifier_type <> ''",
+    "ck_dora_organization_identifiers_value_canonical":
+        "identifier_value = btrim(identifier_value) AND identifier_value <> ''",
+    "ck_dora_organization_roles_role_type":
+        "role_type IN ('financial_entity', 'ict_provider')",
 }
 
 _EXPECTED_FOREIGN_KEYS = {
@@ -89,7 +112,8 @@ _CONSTRAINT_DEFS_SQL = """
 SELECT con.conname, con.contype, pg_get_constraintdef(con.oid)
 FROM pg_constraint con
 JOIN pg_class rel ON rel.oid = con.conrelid
-WHERE rel.relname = %s AND con.contype = %s
+JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+WHERE ns.nspname = 'public' AND rel.relname = %s AND con.contype = %s
 """
 
 _INDEX_DEFS_SQL = """
@@ -112,7 +136,7 @@ def _in_scope_object(obj, name, type_, reflected, compare_to) -> bool:
     return True
 
 
-def _scoped_metadata_diff() -> list:
+def _scoped_metadata_diff(metadata: MetaData) -> list:
     """Run compare_metadata for the three tables only, with types and server defaults compared."""
     from alembic.autogenerate import compare_metadata
     from alembic.migration import MigrationContext
@@ -129,9 +153,43 @@ def _scoped_metadata_diff() -> list:
                     "include_object": _in_scope_object,
                 },
             )
-            return compare_metadata(migration_context, Base.metadata)
+            return compare_metadata(migration_context, metadata)
     finally:
         engine.dispose()
+
+
+def _flattened(diffs: list) -> list:
+    """Return compare_metadata's output as a flat list: column diffs arrive nested in lists."""
+    flat = []
+    for group in diffs:
+        flat.extend(group if isinstance(group, list) else [group])
+    return flat
+
+
+def _copy_of_the_models(*models) -> MetaData:
+    """Return a fresh MetaData holding tenants plus the given models' tables, for mutation tests."""
+    copied = MetaData()
+    for model in (Tenant, *models):
+        model.__table__.to_metadata(copied)
+    return copied
+
+
+def _references(model, table_name: str) -> bool:
+    """Return True if any foreign key on the model's table points at table_name."""
+    for constraint in model.__table__.constraints:
+        if isinstance(constraint, ForeignKeyConstraint) and constraint.referred_table.name == table_name:
+            return True
+    return False
+
+
+def _model_check_texts() -> dict[str, str]:
+    """Return {name: sqltext} for every CHECK the three models declare."""
+    texts: dict[str, str] = {}
+    for model in _MODELS:
+        for constraint in model.__table__.constraints:
+            if isinstance(constraint, CheckConstraint):
+                texts[constraint.name] = str(constraint.sqltext)
+    return texts
 
 
 def _catalog_definitions(conn, table: str, constraint_type: str) -> dict[str, str]:
@@ -163,7 +221,7 @@ def _model_constraint_names(kind) -> set[str]:
 
 @pytest.mark.integration
 def test_alembic_finds_no_drift_between_the_models_and_the_live_tables(db_connection):
-    diffs = _scoped_metadata_diff()
+    diffs = _scoped_metadata_diff(Base.metadata)
     assert diffs == [], (
         "ORM metadata and migration 025 disagree; autogenerate would propose: "
         + "; ".join(str(diff)[:200] for diff in diffs)
@@ -171,29 +229,31 @@ def test_alembic_finds_no_drift_between_the_models_and_the_live_tables(db_connec
 
 
 @pytest.mark.integration
-def test_the_scope_filter_is_not_hiding_the_three_tables(db_connection):
+@pytest.mark.parametrize("missing", _MODELS, ids=[m.__tablename__ for m in _MODELS])
+def test_the_scope_filter_is_not_hiding_any_of_the_three_tables(db_connection, missing):
     # A comparison that never looked at the tables would also report no
-    # drift. Prove the scope keeps them: dropping one model from the metadata
-    # must surface as a missing table.
-    from alembic.autogenerate import compare_metadata
-    from alembic.migration import MigrationContext
-    from sqlalchemy import MetaData
+    # drift. Prove the scope keeps each one: dropping that model from the
+    # metadata must surface as a table the database has and the models lack.
+    # A child cannot outlive the parent its composite FK resolves against, so
+    # dropping dora_organizations drops both children from the copy too.
+    remaining = [
+        model for model in _MODELS
+        if model is not missing and not _references(model, missing.__tablename__)
+    ]
+    diffs = _flattened(_scoped_metadata_diff(_copy_of_the_models(*remaining)))
+    removed = [d for d in diffs if d[0] == "remove_table" and d[1].name == missing.__tablename__]
+    assert removed, f"the scoped comparison did not notice {missing.__tablename__} missing"
 
-    two_of_three = MetaData()
-    for model in (Tenant, DORAOrganization, DORAOrganizationIdentifier):
-        model.__table__.to_metadata(two_of_three)
-    engine = create_engine(os.environ["DATABASE_URL"])
-    try:
-        with engine.connect() as connection:
-            migration_context = MigrationContext.configure(
-                connection,
-                opts={"include_name": _in_scope_reflected, "include_object": _in_scope_object},
-            )
-            diffs = compare_metadata(migration_context, two_of_three)
-    finally:
-        engine.dispose()
-    removed = [d for d in diffs if d[0] == "remove_table" and d[1].name == "dora_organization_roles"]
-    assert removed, "the scoped comparison did not notice a whole table missing from the metadata"
+
+@pytest.mark.integration
+def test_server_default_comparison_is_actually_in_effect(db_connection):
+    # The flag is what makes a dropped gen_random_uuid() or true default
+    # visible. Prove it is honoured, not merely spelled: a copy of the models
+    # with one default changed must produce exactly that modify_default.
+    mutated = _copy_of_the_models(*_MODELS)
+    mutated.tables["dora_organizations"].c.is_active.server_default = DefaultClause(text("false"))
+    diffs = _flattened(_scoped_metadata_diff(mutated))
+    assert [(d[0], d[2], d[3]) for d in diffs] == [("modify_default", "dora_organizations", "is_active")]
 
 
 # ── What the comparison cannot see, verified from the catalogs ──────────────
@@ -205,7 +265,7 @@ def test_check_constraints_are_exactly_what_migration_025_wrote(db_connection):
     for table in _SCOPE:
         found.update(_catalog_definitions(db_connection, table, "c"))
     assert found == _EXPECTED_CHECKS
-    assert set(found) == _model_constraint_names(CheckConstraint)
+    assert _model_check_texts() == _EXPECTED_MODEL_CHECKS
 
 
 @pytest.mark.integration

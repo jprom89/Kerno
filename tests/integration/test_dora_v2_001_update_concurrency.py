@@ -23,6 +23,12 @@ under a deadline, until the catalog says the second session is blocked on the
 first, then releases the first. Every session carries lock_timeout and
 statement_timeout, so a broken interleaving fails with an error instead of
 hanging the suite, and every session is rolled back and closed in a finally.
+
+The last test pins the lock order the service docstring records per
+transaction, not per call: a caller-owned transaction that has already
+ledgered holds the tenant advisory lock, so amending a row a competing session
+holds closes a cycle. PostgreSQL resolves it; the test proves the loser leaves
+nothing behind and the winner's trail is still accurate.
 """
 
 from __future__ import annotations
@@ -57,6 +63,9 @@ _ISOLATION_LEVEL = "read committed"
 # LockNotAvailable rather than hanging; the synchronisation deadline is what
 # the main thread will wait for the catalog to confirm a session is blocked.
 _LOCK_TIMEOUT_MS = 10_000
+# A statement must be allowed to outlive the lock wait it may contain, or
+# statement_timeout would fire first and hide which bound was hit.
+_STATEMENT_TIMEOUT_FACTOR = 2
 _SYNC_DEADLINE_SECONDS = 10.0
 _SYNC_POLL_SECONDS = 0.01
 _THREAD_JOIN_SECONDS = 15.0
@@ -68,6 +77,11 @@ _STATE_ZERO = "Version Zero Ltd"
 _STATE_ONE = "Version One Ltd"
 _STATE_TWO = "Version Two Ltd"
 
+# Only the lock-order test needs a second row; the names say who wrote what.
+_OTHER_STATE_ZERO = "Other Zero Ltd"
+_FIRST_AMENDS_OTHER = "First Session Amends Other"
+_SECOND_AMENDS_OTHER = "Second Session Amends Other"
+
 
 def _session(lock_timeout_ms: int) -> _DbConnection:
     """Open an independent READ COMMITTED session with bounded lock and statement waits."""
@@ -75,7 +89,9 @@ def _session(lock_timeout_ms: int) -> _DbConnection:
     raw.set_session(isolation_level="READ COMMITTED", autocommit=False)
     conn = _DbConnection(raw)
     conn.execute("SET lock_timeout = %s", [f"{lock_timeout_ms}ms"])
-    conn.execute("SET statement_timeout = %s", [f"{lock_timeout_ms * 2}ms"])
+    conn.execute(
+        "SET statement_timeout = %s", [f"{lock_timeout_ms * _STATEMENT_TIMEOUT_FACTOR}ms"]
+    )
     conn.commit()
     return conn
 
@@ -104,15 +120,22 @@ def _isolation_level(conn: _DbConnection) -> str:
     return conn.execute("SHOW transaction_isolation").fetchone()[0]
 
 
-def _wait_until_blocked_by(monitor: _DbConnection, waiting_pid: int, holding_pid: int) -> None:
+def _wait_until_blocked_by(
+    monitor: _DbConnection, waiting: _CompetingUpdate, waiting_pid: int, holding_pid: int
+) -> None:
     """Block until the catalog reports waiting_pid is waiting on a lock held by holding_pid.
 
     Polls pg_blocking_pids() under a deadline. Raises AssertionError if the
     deadline passes, which is the honest outcome when the interleaving under
-    test never happened.
+    test never happened — and at once, carrying the real cause, if the
+    competing thread finished or failed before it ever blocked.
     """
     deadline = time.monotonic() + _SYNC_DEADLINE_SECONDS
     while time.monotonic() < deadline:
+        if not waiting.is_alive():
+            raise AssertionError(
+                f"backend {waiting_pid} finished before blocking on {holding_pid}"
+            ) from waiting.error
         with monitor.transaction():
             blocked = monitor.execute(
                 "SELECT %s = ANY (pg_blocking_pids(%s))", [holding_pid, waiting_pid]
@@ -200,7 +223,9 @@ def test_second_of_two_concurrent_updates_ledgers_the_state_it_actually_replaced
         # Under READ COMMITTED it can only see state zero as committed data.
         competitor = _CompetingUpdate(second, tenant_a_id, organization_id, _STATE_TWO)
         competitor.start()
-        _wait_until_blocked_by(db_connection, waiting_pid=second_pid, holding_pid=first_pid)
+        _wait_until_blocked_by(
+            db_connection, competitor, waiting_pid=second_pid, holding_pid=first_pid
+        )
 
         # Release session one; session two proceeds against the committed row.
         first.commit()
@@ -249,12 +274,15 @@ def test_second_of_two_concurrent_updates_ledgers_the_state_it_actually_replaced
 def test_a_competing_update_rejected_at_the_lock_writes_neither_row_nor_ledger_entry(
     db_connection, tenant_a_id
 ):
-    # The locking read is where a competitor now waits. If its wait is cut
-    # short — here by lock_timeout, the only rejection READ COMMITTED
-    # produces — its transaction aborts before the UPDATE and before the
-    # ledger append, so it can leave neither a business change nor a success
-    # entry. Stale user edits are NOT rejected by this design: a competitor
-    # that waits out the lock proceeds against the fresh row (previous test).
+    # A competitor whose wait is cut short aborts before its UPDATE and before
+    # its ledger append, so it can leave neither a business change nor a
+    # success entry. lock_timeout is the cut this test can make on demand;
+    # the application sets none, so the rejection production actually sees
+    # is deadlock detection, proven in the last test of this file. Stale user
+    # edits are NOT rejected by this design: a competitor that waits out the
+    # lock proceeds against the fresh row (previous test). This test passes
+    # on the plain-SELECT implementation too — it pins requirement 4, not the
+    # fix.
     organization_id = _create_state_zero(db_connection, tenant_a_id)
     first = second = None
     try:
@@ -293,18 +321,22 @@ def test_the_locking_read_does_not_block_a_child_row_referencing_the_organisatio
 ):
     # FOR NO KEY UPDATE is the lock an UPDATE of non-key columns takes itself.
     # A child INSERT's foreign-key check takes FOR KEY SHARE on the parent,
-    # which is compatible — so attaching an identifier to an organisation
-    # someone is amending does not queue behind the amendment. FOR UPDATE
-    # would make this raw insert wait out lock_timeout and fail.
+    # which is compatible, so the row lock alone does not queue a child row
+    # behind an amendment; FOR UPDATE would make this insert wait out
+    # lock_timeout and fail. The insert is raw on purpose: through the
+    # service, add_organization_identifier would wait on the tenant's ledger
+    # advisory lock, which the uncommitted amendment already holds, and that
+    # wait would hide which lock was being measured.
     organization_id = _create_state_zero(db_connection, tenant_a_id)
     first = second = None
     try:
         first = _session(_LOCK_TIMEOUT_MS)
         second = _session(_REJECTION_LOCK_TIMEOUT_MS)
-        update_organization(
+        amended = update_organization(
             first, tenant_a_id, organization_id, OrganizationInput(legal_name=_STATE_ONE),
             actor_id=_ACTOR, actor_role=_ROLE,
         )
+        assert amended is not None
         with second.transaction():
             second.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
             second.execute(
@@ -313,7 +345,125 @@ def test_the_locking_read_does_not_block_a_child_row_referencing_the_organisatio
                 "VALUES (%s, %s, 'LEI', '5493001KJTIIGC8Y1R12')",
                 [str(tenant_a_id), organization_id],
             )
+        # Session one's amendment must still have been open while the child
+        # row landed — otherwise the insert measured nothing.
+        uncommitted = first.execute(
+            "SELECT legal_name FROM dora_organizations WHERE organization_id = %s",
+            [organization_id],
+        ).fetchone()[0]
+        assert uncommitted == _STATE_ONE
         first.commit()
     finally:
         _close_quietly(second)
         _close_quietly(first)
+
+    with db_connection.transaction():
+        db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
+        landed = db_connection.execute(
+            "SELECT identifier_value FROM dora_organization_identifiers "
+            "WHERE organization_id = %s",
+            [organization_id],
+        ).fetchall()
+    assert [row[0] for row in landed] == ["5493001KJTIIGC8Y1R12"]
+
+
+# ── Lock order per transaction: a cycle is possible, and it resolves cleanly ─
+
+
+def _deadlock_timeout_ms(conn: _DbConnection) -> int:
+    """Return the server's deadlock_timeout in milliseconds."""
+    with conn.transaction():
+        setting = conn.execute(
+            "SELECT setting FROM pg_settings WHERE name = 'deadlock_timeout'"
+        ).fetchone()[0]
+    return int(setting)
+
+
+def _legal_names(conn: _DbConnection, tenant_id, *organization_ids: str) -> list[str]:
+    """Return the committed legal names of the given organisations, in the order asked."""
+    names = []
+    for organization_id in organization_ids:
+        with conn.transaction():
+            names.append(get_organization(conn, tenant_id, organization_id).legal_name)
+    return names
+
+
+@pytest.mark.integration
+def test_a_transaction_that_already_ledgered_can_deadlock_and_the_loser_leaves_nothing(
+    db_connection, tenant_a_id
+):
+    # Per call, the row lock precedes the tenant advisory lock. Per
+    # transaction it need not: session one amends X and so holds the advisory
+    # lock until it commits; session two amends Y, holds Y's row lock, and
+    # waits on that advisory lock; session one then amends Y too and waits on
+    # Y's row lock. That is a cycle. PostgreSQL aborts one side with 40P01
+    # after deadlock_timeout — which side depends on whose wait timer fires
+    # first, so both outcomes are accepted and the invariants are the same:
+    # the loser wrote neither row nor ledger entry, every committed entry's
+    # before_state is the state it really replaced, and the chain verifies.
+    if _deadlock_timeout_ms(db_connection) >= _LOCK_TIMEOUT_MS:
+        pytest.skip("deadlock_timeout is not below this test's lock_timeout")
+    org_x = _create_state_zero(db_connection, tenant_a_id)
+    with db_connection.transaction():
+        org_y = create_organization(
+            db_connection, tenant_a_id, OrganizationInput(legal_name=_OTHER_STATE_ZERO),
+            actor_id=_ACTOR, actor_role=_ROLE,
+        ).organization_id
+
+    first = second = None
+    competitor = None
+    first_error: BaseException | None = None
+    try:
+        first = _session(_LOCK_TIMEOUT_MS)
+        second = _session(_LOCK_TIMEOUT_MS)
+        first_pid = _backend_pid(first)
+        second_pid = _backend_pid(second)
+
+        update_organization(
+            first, tenant_a_id, org_x, OrganizationInput(legal_name=_STATE_ONE),
+            actor_id=_ACTOR, actor_role=_ROLE,
+        )
+        competitor = _CompetingUpdate(second, tenant_a_id, org_y, _SECOND_AMENDS_OTHER)
+        competitor.start()
+        _wait_until_blocked_by(
+            db_connection, competitor, waiting_pid=second_pid, holding_pid=first_pid
+        )
+        try:
+            update_organization(
+                first, tenant_a_id, org_y, OrganizationInput(legal_name=_FIRST_AMENDS_OTHER),
+                actor_id=_ACTOR, actor_role=_ROLE,
+            )
+            first.commit()
+        except psycopg2.errors.DeadlockDetected as exc:
+            first_error = exc
+            first.rollback()
+        competitor.join(_THREAD_JOIN_SECONDS)
+        assert not competitor.is_alive(), "the competing update never finished"
+    finally:
+        _close_quietly(first)
+        if competitor is not None:
+            competitor.join(_THREAD_JOIN_SECONDS)
+        _close_quietly(second)
+
+    losers = [error for error in (first_error, competitor.error) if error is not None]
+    assert len(losers) == 1, f"expected exactly one aborted side, got {losers!r}"
+    assert isinstance(losers[0], psycopg2.errors.DeadlockDetected)
+    first_lost = first_error is not None
+
+    expected_names = (
+        [_STATE_ZERO, _SECOND_AMENDS_OTHER] if first_lost else [_STATE_ONE, _FIRST_AMENDS_OTHER]
+    )
+    assert _legal_names(db_connection, tenant_a_id, org_x, org_y) == expected_names
+
+    entries_x = _update_entries_for(db_connection, tenant_a_id, org_x)
+    entries_y = _update_entries_for(db_connection, tenant_a_id, org_y)
+    loser_name = _FIRST_AMENDS_OTHER if first_lost else _SECOND_AMENDS_OTHER
+    assert loser_name not in [e.after_state["legal_name"] for e in entries_x + entries_y]
+    assert [e.after_state["legal_name"] for e in entries_x] == ([] if first_lost else [_STATE_ONE])
+    assert [e.after_state["legal_name"] for e in entries_y] == [expected_names[1]]
+    # The winner's before_state is the state it really replaced: the loser
+    # never committed, so that is the original in both cases.
+    assert [e.before_state["legal_name"] for e in entries_x] == ([] if first_lost else [_STATE_ZERO])
+    assert [e.before_state["legal_name"] for e in entries_y] == [_OTHER_STATE_ZERO]
+    with db_connection.transaction():
+        assert verify_audit_chain(db_connection, tenant_a_id).is_valid

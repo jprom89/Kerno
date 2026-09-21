@@ -18,6 +18,8 @@ How to run or test:
     pytest tests/unit/services/test_dora_organization_service.py -v
     pytest tests/security/test_dora_organization_isolation.py -m integration -v
     pytest tests/integration/test_dora_v2_001_organizations.py -m integration -v
+    pytest tests/integration/test_dora_v2_001_update_concurrency.py -m integration -v
+    pytest tests/integration/test_dora_v2_001_schema_parity.py -m integration -v
 
 Write authorisation — recorded decision
 ----------------------------------------
@@ -48,20 +50,31 @@ yet have. FOR NO KEY UPDATE, not FOR UPDATE, because it is the lock the UPDATE
 of these non-key columns takes anyway, and it does not block a child row's
 foreign-key check (FOR KEY SHARE) on the organisation.
 
-Lock order in this service is fixed: an organisation row lock is taken first
-and only in update_organization; the tenant's ledger advisory lock is taken
-last, inside append_audit_entry, on every write path. Nothing takes a row
-lock after the advisory lock, so the two cannot form a cycle. Read-only
-getters take no locks. The row lock lives until the caller commits or rolls
-back — the service still owns no transaction.
+Lock order, stated per call and per transaction because they differ. Per
+call: the only explicit row lock in this service is the update path's, and it
+is taken before the tenant's ledger advisory lock (pg_advisory_xact_lock,
+inside append_audit_entry); the identifier and role inserts take only the
+implicit FOR KEY SHARE their foreign-key checks need, also before the ledger
+lock. Per transaction: the advisory lock is transaction-scoped, so a
+caller-owned transaction that has already ledgered one write holds it while
+any later update_organization takes its row lock — the inverted order. A
+concurrent single-call update of that same row (row lock held, waiting on
+the advisory lock) then closes a cycle, and PostgreSQL aborts one side with
+DeadlockDetected (SQLSTATE 40P01) after deadlock_timeout. The loser writes
+neither its row change nor a ledger entry and the chain stays valid; 40P01 is
+a class-40 transaction_rollback error and is the caller's to retry. This is
+the KER-107 "business write, then ledger" shape every ledgered service in
+this codebase shares; the locking read did not create it (the UPDATE already
+took the same row lock at the same point) and this service does not
+re-design it. Read-only getters take no locks. The row lock lives until the
+caller commits or rolls back — the service still owns no transaction.
 
 Identifier and role writes still check-then-insert. The UNIQUE constraints
 are the guarantee: two concurrent inserts of the same identifier or role
 cannot both succeed, but the loser surfaces as the driver's UniqueViolation,
 not as this service's ValueError. Consistent domain-level conflict handling
 for that case is a gate before any API or import ticket exposes these
-functions, not something to bolt on here (tests/integration/
-test_dora_v2_001_update_concurrency.py records the decision).
+functions, not something to bolt on here; NOW.md records the gate.
 """
 
 from __future__ import annotations
