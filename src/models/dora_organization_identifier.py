@@ -24,10 +24,13 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     ForeignKeyConstraint,
+    Index,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -68,26 +71,36 @@ class DORAOrganizationIdentifier(Base):
             "identifier_value = btrim(identifier_value) AND identifier_value <> ''",
             name="ck_dora_organization_identifiers_value_canonical",
         ),
+        # The UNIQUE above does not contain organization_id, so it cannot serve
+        # the (tenant_id, organization_id) pair that the composite FK check and
+        # "list one organisation's identifiers" both need (migration 025).
+        Index("ix_dora_organization_identifiers_tenant_org", "tenant_id", "organization_id"),
     )
 
     organization_identifier_id: Mapped[uuid.UUID] = mapped_column(
-        PostgresUUID(as_uuid=True), primary_key=True
+        PostgresUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
-        PostgresUUID(as_uuid=True), nullable=False
+        PostgresUUID(as_uuid=True),
+        ForeignKey("tenants.tenant_id", name="dora_organization_identifiers_tenant_id_fkey"),
+        nullable=False,
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True), nullable=False
     )
     identifier_type: Mapped[str] = mapped_column(String(64), nullable=False)
     identifier_value: Mapped[str] = mapped_column(Text, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # No database trigger maintains updated_at (migration 025 creates none);
+    # the writer sets it explicitly. An ORM-side onupdate hook would document
+    # behaviour the database does not provide, so none is declared.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
