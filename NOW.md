@@ -151,12 +151,13 @@ work is authorised.
 |---|---|---|
 | **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (this commit) |
 | **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (this commit) |
-| **DORA-V2-002** | Contracts, ICT services, functions/designations | not started — needs explicit approval |
+| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | implemented on branch `dora-v2-002a/contracts-and-parties`, pending review |
+| **DORA-V2-002 (remaining slices)** | Contract hierarchy, ICT services, functions/designations | not started — each slice needs explicit approval |
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 **V2-001 review follow-ups (21 September 2026, branch
-`dora-v2-001/concurrent-audit-before-state`, pushed for independent diff
-review — not merged):** the three V2-001 models now match migration 025
+`dora-v2-001/concurrent-audit-before-state`, reviewed and merged to main
+via PR #7, `bec2959`):** the three V2-001 models now match migration 025
 exactly (tenants FKs, `gen_random_uuid()` and `true` server defaults, the
 identifier index, no ORM-only `onupdate`), pinned by a scoped Alembic
 comparison with server-default comparison on plus catalog checks of every
