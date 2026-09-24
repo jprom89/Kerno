@@ -22,6 +22,7 @@ import re
 import pytest
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
+from config.constants import CONTRACT_REFERENCE_MAX_CHARACTERS
 from src.models import Base
 from src.models.dora_contract import CONTRACT_TEXT_TRIM_CHARACTERS, DORAContract
 from src.models.dora_contract_party import (
@@ -34,10 +35,8 @@ from src.models.dora_contract_party import (
 )
 
 _TIMESTAMPS = {"created_at", "updated_at"}
-_MIGRATION_026 = (
-    pathlib.Path(__file__).resolve().parents[3]
-    / "migrations" / "versions" / "026_create_dora_contract_foundation.py"
-)
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_MIGRATION_026 = _REPO_ROOT / "migrations" / "versions" / "026_create_dora_contract_foundation.py"
 _ESCAPED_LITERAL = re.compile(r"E'((?:\\u[0-9a-f]{4})+)'")
 
 
@@ -98,6 +97,13 @@ def test_party_columns_and_nullability_match_migration_026() -> None:
     assert table.c.party_role.type.length == 32
 
 
+@pytest.mark.parametrize(
+    "model, key", [(DORAContract, "contract_id"), (DORAContractParty, "contract_party_id")]
+)
+def test_each_primary_key_is_the_single_id_column(model, key) -> None:
+    assert [column.name for column in model.__table__.primary_key.columns] == [key]
+
+
 @pytest.mark.parametrize("model", [DORAContract, DORAContractParty])
 def test_server_defaults_match_migration_026(model) -> None:
     primary_key = list(model.__table__.primary_key.columns)[0]
@@ -117,6 +123,7 @@ def test_contract_constraints_are_named_as_migration_026_names_them() -> None:
     }
     assert _constraint_names(DORAContract, CheckConstraint) == {
         "ck_dora_contracts_reference_canonical",
+        "ck_dora_contracts_reference_length",
         "ck_dora_contracts_display_name_canonical",
         "ck_dora_contracts_date_order",
     }
@@ -207,6 +214,32 @@ def test_migration_026_trims_exactly_the_service_set() -> None:
     assert migration.revision == "a2b3c4d5"
     assert migration.down_revision == "z1a2b3c4"
     assert set(migration._INITIAL_PARTY_ROLES) == ALLOWED_PARTY_ROLES
+
+
+def test_the_reference_length_bound_is_one_number_in_constant_model_and_migration() -> None:
+    check = next(
+        c for c in DORAContract.__table__.constraints
+        if isinstance(c, CheckConstraint) and c.name == "ck_dora_contracts_reference_length"
+    )
+    assert str(check.sqltext) == f"char_length(contract_reference) <= {CONTRACT_REFERENCE_MAX_CHARACTERS}"
+    assert _load_migration_026()._REFERENCE_MAX_CHARACTERS == CONTRACT_REFERENCE_MAX_CHARACTERS
+
+
+def test_the_trim_constant_is_written_with_escapes_not_invisible_characters() -> None:
+    # Most of the 29 characters are invisible or render as a plain space, so
+    # the source must spell them as escapes an auditor can read.
+    text = (_REPO_ROOT / "src" / "models" / "dora_contract.py").read_text(encoding="utf-8")
+    non_ascii_whitespace = {ch for ch in text if ord(ch) > 127 and ch.isspace()}
+    assert non_ascii_whitespace == set()
+
+
+def test_env_py_registers_both_contract_models_for_autogenerate() -> None:
+    # The parity test imports the models itself, so it would still pass if
+    # env.py stopped importing them — while autogenerate proposed dropping
+    # both tables. This pins the registration autogenerate actually uses.
+    env_py = (_REPO_ROOT / "migrations" / "env.py").read_text(encoding="utf-8")
+    registered = set(re.findall(r"^import (src\.models\.\w+)", env_py, re.MULTILINE))
+    assert {"src.models.dora_contract", "src.models.dora_contract_party"} <= registered
 
 
 # ── What this slice must not contain ────────────────────────────────────────

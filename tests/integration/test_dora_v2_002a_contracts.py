@@ -24,6 +24,7 @@ from datetime import date
 import psycopg2
 import pytest
 
+from config.constants import CONTRACT_REFERENCE_MAX_CHARACTERS
 from src.exceptions import DORAContractConflictError
 from src.models.dora_contract import CONTRACT_TEXT_TRIM_CHARACTERS
 from src.services import dora_contract_service
@@ -123,7 +124,7 @@ def _stored_references(conn, tenant_id) -> list[str]:
 @pytest.mark.integration
 def test_create_persists_canonical_values_and_ledgers_in_one_transaction(db_connection, tenant_a_id):
     created = _contract(
-        db_connection, tenant_a_id, " \tMSA-2024/01 v2\n",
+        db_connection, tenant_a_id, "\u00a0\tMSA-2024/01 v2\n",
         display_name=" Cloud hosting ", contract_start_date=date(2024, 1, 1),
     )
     with db_connection.transaction():
@@ -181,7 +182,7 @@ def test_case_is_identity_and_a_shared_display_name_merges_nothing(db_connection
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("missing", ["", "   ", "\t\n", " "])
+@pytest.mark.parametrize("missing", ["", "   ", "\t\n", "\u2028"])
 def test_a_missing_reference_is_refused_and_nothing_is_written(db_connection, tenant_a_id, missing):
     with pytest.raises(ValueError, match="contract_reference is required"):
         with db_connection.transaction():
@@ -218,7 +219,7 @@ def test_the_service_stores_what_the_database_accepts_for_every_policy_character
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("reference", ["MSA 1", "MSA\t1", "-MSA-1.", "(MSA/1)", "​MSA"])
+@pytest.mark.parametrize("reference", ["MSA 1", "MSA\t1", "-MSA-1.", "(MSA/1)", "\u200bMSA"])
 def test_interior_whitespace_and_boundary_punctuation_are_accepted_by_the_database(
     db_connection, tenant_a_id, reference
 ):
@@ -227,6 +228,52 @@ def test_interior_whitespace_and_boundary_punctuation_are_accepted_by_the_databa
     with db_connection.transaction():
         _raw_contract(db_connection, tenant_a_id, reference)
     assert _stored_references(db_connection, tenant_a_id) == [reference]
+
+
+@pytest.mark.integration
+def test_the_longest_reference_is_stored_even_in_four_byte_characters(db_connection, tenant_a_id):
+    # 255 characters of four-byte UTF-8 (1020 bytes) must fit the unique
+    # index; the bound exists so no accepted reference can overflow it.
+    longest = chr(0x1F4C4) * CONTRACT_REFERENCE_MAX_CHARACTERS
+    created = _contract(db_connection, tenant_a_id, longest)
+    assert _stored_references(db_connection, tenant_a_id) == [created.contract_reference]
+    assert len(created.contract_reference) == CONTRACT_REFERENCE_MAX_CHARACTERS
+
+
+@pytest.mark.integration
+def test_an_over_long_reference_is_refused_and_leaves_the_transaction_usable(db_connection, tenant_a_id):
+    # Before the bound, 4000 characters reached the INSERT and failed as
+    # ProgramLimitExceeded on the unique index, aborting the transaction.
+    with db_connection.transaction():
+        with pytest.raises(ValueError, match="at most"):
+            create_contract(
+                db_connection, tenant_a_id, ContractInput(contract_reference="R" * 4000),
+                actor_id=_ACTOR, actor_role=_ROLE,
+            )
+        create_contract(
+            db_connection, tenant_a_id, ContractInput(contract_reference="MSA-AFTER"),
+            actor_id=_ACTOR, actor_role=_ROLE,
+        )
+    assert _stored_references(db_connection, tenant_a_id) == ["MSA-AFTER"]
+    with pytest.raises(psycopg2.errors.CheckViolation, match="ck_dora_contracts_reference_length"):
+        with db_connection.transaction():
+            _raw_contract(db_connection, tenant_a_id, "R" * (CONTRACT_REFERENCE_MAX_CHARACTERS + 1))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("actor_id, actor_role", [(None, _ROLE), ("not-a-uuid", _ROLE), (_ACTOR, "")])
+def test_a_bad_actor_writes_nothing_and_the_transaction_commits_nothing(
+    db_connection, tenant_a_id, actor_id, actor_role
+):
+    # The actor is checked before the INSERT, so even a caller that catches
+    # the error and commits cannot persist an unledgered contract.
+    with db_connection.transaction():
+        with pytest.raises(ValueError, match="actor_"):
+            create_contract(
+                db_connection, tenant_a_id, ContractInput(contract_reference="MSA-UNLEDGERED"),
+                actor_id=actor_id, actor_role=actor_role,
+            )
+    assert _stored_references(db_connection, tenant_a_id) == []
 
 
 @pytest.mark.integration
@@ -282,6 +329,8 @@ def test_update_changes_only_the_amendable_fields_and_ledgers_before_and_after(d
         "After", date(2026, 12, 31), False,
     )
     assert updated.created_at == created.created_at
+    # No trigger maintains updated_at; the writer must, and did.
+    assert updated.updated_at > created.updated_at
     with db_connection.transaction():
         assert get_contract(db_connection, tenant_a_id, created.contract_id) == updated
 
@@ -350,10 +399,13 @@ def test_one_contract_has_several_signatories_and_one_organisation_signs_several
         hosting_parties = list_contract_parties(db_connection, tenant_a_id, hosting.contract_id)
         bank_contracts = list_contracts_for_organization(db_connection, tenant_a_id, bank)
         group_contracts = list_contracts_for_organization(db_connection, tenant_a_id, group_it)
-    assert {(p.organization_id, p.party_role) for p in hosting_parties} == {
-        (bank, "recipient_signatory"), (cloud, "provider_signatory"),
-        (group_it, "intragroup_provider_signatory"),
-    }
+    # A list, not a set: MSA-SUPPORT repeats two of these pairs, so a listing
+    # that leaked the other contract's parties would collapse to the same set.
+    assert sorted((p.party_role, p.organization_id) for p in hosting_parties) == sorted([
+        ("recipient_signatory", bank), ("provider_signatory", cloud),
+        ("intragroup_provider_signatory", group_it),
+    ])
+    assert {p.contract_id for p in hosting_parties} == {hosting.contract_id}
     assert [c.contract_reference for c in bank_contracts] == ["MSA-HOSTING", "MSA-SUPPORT"]
     assert [c.contract_reference for c in group_contracts] == ["MSA-HOSTING"]
     assert len(_entries(db_connection, tenant_a_id, ACTION_CONTRACT_PARTY_ADDED)) == 5
@@ -402,6 +454,10 @@ def test_a_recipient_signatory_needs_no_financial_entity_role(db_connection, ten
 def test_a_provider_signatory_needs_the_ict_provider_role_and_it_is_never_assigned(
     db_connection, tenant_a_id, party_role
 ):
+    # Another organisation in the SAME tenant does hold ict_provider, so a
+    # check that asked "does anyone here hold it?" would wrongly let the
+    # vendor through. The role must be the signing organisation's own.
+    _organization(db_connection, tenant_a_id, "Cloud Provider SARL", "ict_provider")
     vendor = _organization(db_connection, tenant_a_id, "Unclassified Vendor Ltd", "financial_entity")
     contract = _contract(db_connection, tenant_a_id, "MSA-VENDOR")
     with pytest.raises(ValueError, match="ict_provider"):

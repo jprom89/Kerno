@@ -29,6 +29,12 @@ the caller makes, not an authentication. CONTRACT_CAPABLE_ROLES is the
 allow-list a future router must apply. No router exists; nothing outside
 tests reaches these functions.
 
+Every write needs a named actor: actor_id must be a UUID (never None — these
+mutations are human decisions, not system events) and actor_role must be
+non-blank. Both are checked before any SQL runs, so a bad actor can never
+leave a written but unledgered row in a transaction the caller could still
+commit.
+
 Identifiers and indistinguishability
 ------------------------------------
 Every tenant, contract and organisation id is canonicalised (lower-case,
@@ -53,6 +59,14 @@ statement is retried inside it.
 
 Concurrency and lock order — recorded decision
 -----------------------------------------------
+Everything in this section, and the duplicate semantics above, assumes READ
+COMMITTED — the level the application runs at; nothing in src/ changes it.
+The caller owns the transaction and so its isolation level: at REPEATABLE
+READ or SERIALIZABLE a concurrent committed duplicate, or a concurrent
+committed amendment, surfaces as SerializationFailure (40001) rather than as
+a controlled conflict or a fresh row. The audit before_state is never wrong
+at any level; only the outcome's shape differs.
+
 update_contract reads the row with SELECT ... FOR NO KEY UPDATE before
 capturing before_state, the pattern DORA-V2-001 established: a concurrent
 amendment waits for the earlier one to commit and is then handed the
@@ -83,7 +97,7 @@ import dataclasses
 import uuid
 from datetime import date, datetime, timezone
 
-from config.constants import RbacRole
+from config.constants import CONTRACT_REFERENCE_MAX_CHARACTERS, RbacRole
 from src.db.rls import require_valid_tenant_uuid, set_tenant_context
 from src.exceptions import DORAContractConflictError, EntryNotFoundError
 from src.models.dora_contract import CONTRACT_TEXT_TRIM_CHARACTERS
@@ -283,6 +297,7 @@ def create_contract(
     already has that reference — in which case nothing is written or ledgered.
     """
     tenant = _canonical_tenant(tenant_id)
+    actor, role = _canonical_actor(actor_id, actor_role)
     normalized = _normalize_contract_input(contract_input)
     set_tenant_context(conn, tenant)
     now = datetime.now(timezone.utc)
@@ -302,7 +317,7 @@ def create_contract(
             f"contract reference {created.contract_reference!r} already exists in this tenant."
         )
     _ledger(
-        conn, tenant, actor_id=actor_id, actor_role=actor_role,
+        conn, tenant, actor_id=actor, actor_role=role,
         action_type=ACTION_CONTRACT_CREATED, object_type=OBJECT_TYPE_CONTRACT,
         object_id=created.contract_id, before_state=None, after_state=_to_ledger_state(created),
     )
@@ -340,6 +355,7 @@ def update_contract(
     input. Nothing is written or ledgered for a contract this tenant lacks.
     """
     tenant = _canonical_tenant(tenant_id)
+    actor, role = _canonical_actor(actor_id, actor_role)
     normalized = _normalize_contract_update(contract_update)
     contract = _canonical_record_id(contract_id)
     if contract is None:
@@ -358,7 +374,7 @@ def update_contract(
     )
     conn.execute(_UPDATE_CONTRACT, dataclasses.asdict(updated))
     _ledger(
-        conn, tenant, actor_id=actor_id, actor_role=actor_role,
+        conn, tenant, actor_id=actor, actor_role=role,
         action_type=ACTION_CONTRACT_UPDATED, object_type=OBJECT_TYPE_CONTRACT,
         object_id=updated.contract_id,
         before_state=_to_ledger_state(previous), after_state=_to_ledger_state(updated),
@@ -385,28 +401,19 @@ def add_contract_party(
     already recorded, in which case nothing is written or ledgered.
     """
     tenant = _canonical_tenant(tenant_id)
+    actor, role = _canonical_actor(actor_id, actor_role)
     _validate_party_role(party_role)
     contract = _require_id(contract_id, "contract")
     organization = _require_id(organization_id, "organisation")
     set_tenant_context(conn, tenant)
     _require_party_references(conn, tenant, contract, organization, party_role)
-    now = datetime.now(timezone.utc)
-    added = ContractPartyOutput(
-        contract_party_id=str(uuid.uuid4()),
-        tenant_id=tenant,
-        contract_id=contract,
-        organization_id=organization,
-        party_role=party_role,
-        is_active=True,
-        created_at=now,
-        updated_at=now,
-    )
+    added = _new_party(tenant, contract, organization, party_role)
     if conn.execute(_INSERT_PARTY, dataclasses.asdict(added)).fetchone() is None:
         raise DORAContractConflictError(
             f"organisation {organization} is already recorded as {party_role} on contract {contract}."
         )
     _ledger(
-        conn, tenant, actor_id=actor_id, actor_role=actor_role,
+        conn, tenant, actor_id=actor, actor_role=role,
         action_type=ACTION_CONTRACT_PARTY_ADDED, object_type=OBJECT_TYPE_CONTRACT_PARTY,
         object_id=added.contract_party_id, before_state=None, after_state=_to_ledger_state(added),
     )
@@ -462,6 +469,21 @@ def _canonical_record_id(record_id) -> str | None:
         return None
 
 
+def _canonical_actor(actor_id, actor_role) -> tuple[str, str]:
+    """Return (actor_id, actor_role) in the form the ledger stores, or raise ValueError before any SQL.
+
+    actor_id must name a person: a UUID, never None. actor_role must be
+    non-blank text. append_audit_entry would refuse either later — after the
+    business write — so they are checked here, first.
+    """
+    actor = _canonical_record_id(actor_id) if actor_id is not None else None
+    if actor is None:
+        raise ValueError(f"actor_id must be the UUID of the person making the change; received {actor_id!r}.")
+    if not isinstance(actor_role, str) or not actor_role.strip():
+        raise ValueError(f"actor_role must be non-blank text; received {actor_role!r}.")
+    return actor, actor_role
+
+
 def _require_id(record_id, noun: str) -> str:
     """Return a canonical record id, or raise EntryNotFoundError — a malformed id names nothing."""
     canonical = _canonical_record_id(record_id)
@@ -508,6 +530,11 @@ def _normalize_contract_input(contract_input: ContractInput) -> ContractInput:
     reference = _canonical_text(contract_input.contract_reference, "contract_reference")
     if not reference:
         raise ValueError("contract_reference is required and must not be blank.")
+    if len(reference) > CONTRACT_REFERENCE_MAX_CHARACTERS:
+        raise ValueError(
+            f"contract_reference must be at most {CONTRACT_REFERENCE_MAX_CHARACTERS} characters; "
+            f"received {len(reference)}."
+        )
     _validate_dates(contract_input.contract_start_date, contract_input.contract_end_date)
     _validate_is_active(contract_input.is_active)
     return ContractInput(
@@ -530,8 +557,8 @@ def _normalize_contract_update(contract_update: ContractUpdate) -> ContractUpdat
 
 
 def _validate_party_role(party_role: str) -> None:
-    """Reject anything outside the initial party-role vocabulary."""
-    if party_role not in ALLOWED_PARTY_ROLES:
+    """Reject anything outside the initial party-role vocabulary, a non-string included."""
+    if not isinstance(party_role, str) or party_role not in ALLOWED_PARTY_ROLES:
         raise ValueError(
             f"party_role must be one of {sorted(ALLOWED_PARTY_ROLES)}; received {party_role!r}."
         )
@@ -564,9 +591,12 @@ def _lock_contract_for_update(conn, tenant: str, contract: str) -> ContractOutpu
 def _require_party_references(conn, tenant: str, contract: str, organization: str, party_role: str) -> None:
     """Refuse a party whose contract or organisation this tenant lacks, or a provider without the role.
 
-    Plain reads: nothing in this slice deletes a contract, an organisation or
-    an organisation role, so what is found here still holds at the INSERT,
-    and the composite foreign keys back it regardless.
+    Plain reads. The composite foreign keys back the contract and organisation
+    checks in the database. Nothing in the database backs the ict_provider
+    requirement: it rests on this unlocked read, which holds only because no
+    code path deactivates or deletes an organisation role. Whichever slice
+    adds that path must lock the role row here or guard it in the database
+    (recorded in NOW.md).
     """
     if _fetch_contract(conn, tenant, contract) is None:
         raise EntryNotFoundError(f"contract {contract!r} not found")
@@ -586,6 +616,21 @@ def _require_party_references(conn, tenant: str, contract: str, organization: st
 # ---------------------------------------------------------------------------
 # Row mapping and ledger
 # ---------------------------------------------------------------------------
+
+
+def _new_party(tenant: str, contract: str, organization: str, party_role: str) -> ContractPartyOutput:
+    """Return the party row add_contract_party will insert: a fresh id, active, timestamped now in UTC."""
+    now = datetime.now(timezone.utc)
+    return ContractPartyOutput(
+        contract_party_id=str(uuid.uuid4()),
+        tenant_id=tenant,
+        contract_id=contract,
+        organization_id=organization,
+        party_role=party_role,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def _contract_row_to_output(row) -> ContractOutput:

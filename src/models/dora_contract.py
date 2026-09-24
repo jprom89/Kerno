@@ -33,6 +33,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
+from config.constants import CONTRACT_REFERENCE_MAX_CHARACTERS
 from src.models import Base
 
 # ---------------------------------------------------------------------------
@@ -45,12 +46,12 @@ from src.models import Base
 # disagree. It is the set Python's str.isspace() accepts: tab, LF, VT, FF,
 # CR, the four information separators, space, NEL, NBSP, OGHAM SPACE MARK,
 # U+2000–U+200A, LINE and PARAGRAPH SEPARATOR, NARROW NBSP, MEDIUM
-# MATHEMATICAL SPACE and IDEOGRAPHIC SPACE. Interior characters are never
-# touched.
+# MATHEMATICAL SPACE and IDEOGRAPHIC SPACE. Written as escapes because most
+# of them are invisible in source. Interior characters are never touched.
 CONTRACT_TEXT_TRIM_CHARACTERS: str = (
-    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0 "
-    "           "
-    "    　"
+    "\u0009\u000a\u000b\u000c\u000d\u001c\u001d\u001e\u001f\u0020\u0085\u00a0"
+    "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
 )
 
 # The same set as the PostgreSQL escape-string literal migration 026 wrote
@@ -83,6 +84,10 @@ class DORAContract(Base):
             f"contract_reference = btrim(contract_reference, {_TRIM_CHARACTERS_SQL}) "
             "AND contract_reference <> ''",
             name="ck_dora_contracts_reference_canonical",
+        ),
+        CheckConstraint(
+            f"char_length(contract_reference) <= {CONTRACT_REFERENCE_MAX_CHARACTERS}",
+            name="ck_dora_contracts_reference_length",
         ),
         CheckConstraint(
             f"display_name IS NULL OR (display_name = btrim(display_name, {_TRIM_CHARACTERS_SQL}) "

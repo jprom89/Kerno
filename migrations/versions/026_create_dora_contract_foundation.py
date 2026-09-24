@@ -39,6 +39,21 @@ interior whitespace are preserved exactly. display_name follows the same rule
 and is NULL rather than empty when not supplied, so there is one way to say
 "no name", not two.
 
+What the policy does not do, stated so it is not assumed. It trims; it does
+not normalise. "Café" in NFC and in NFD, a reference with a trailing zero-width
+space (U+200B) or a leading byte-order mark (U+FEFF), and full-width
+"ＭＳＡ-1" beside "MSA-1" are distinct references, and a reference made only of
+invisible non-whitespace characters is not blank. Unicode normalisation would
+itself rewrite punctuation the ticket requires to be preserved (NFC maps
+U+037E GREEK QUESTION MARK to ";"), so it is not applied here; spotting
+look-alike references belongs to import staging and reconciliation
+(DORA-V2-004), not to the identity constraint.
+
+The reference is bounded at 255 characters (ck_dora_contracts_reference_length)
+so an over-long value is a refusal, not a btree "index row size exceeds
+maximum" error that aborts the caller's transaction. A Kerno engineering bound,
+not a regulatory one.
+
 Dates are contract-level and optional. NULL means not supplied, never a
 derived conclusion; the only rule is that an end date may not precede a start
 date when both exist.
@@ -81,6 +96,12 @@ _INITIAL_PARTY_ROLES = (
     "provider_signatory",
     "intragroup_provider_signatory",
 )
+
+# The longest contract_reference, in characters. Hardcoded for the same
+# reason as the trim set below; must equal
+# config.constants.CONTRACT_REFERENCE_MAX_CHARACTERS (drift fails
+# tests/unit/models/test_dora_contract_models.py).
+_REFERENCE_MAX_CHARACTERS = 255
 
 # The whitespace set trimmed from both ends of contract text, as a PostgreSQL
 # escape-string literal. Hardcoded here on purpose — a migration is history
@@ -139,6 +160,8 @@ def _create_contracts_table() -> None:
             CONSTRAINT ck_dora_contracts_reference_canonical
                 CHECK (contract_reference = btrim(contract_reference, {_TRIM_CHARACTERS_SQL})
                        AND contract_reference <> ''),
+            CONSTRAINT ck_dora_contracts_reference_length
+                CHECK (char_length(contract_reference) <= {_REFERENCE_MAX_CHARACTERS}),
             CONSTRAINT ck_dora_contracts_display_name_canonical
                 CHECK (display_name IS NULL
                        OR (display_name = btrim(display_name, {_TRIM_CHARACTERS_SQL})

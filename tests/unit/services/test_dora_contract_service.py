@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from config.constants import CONTRACT_REFERENCE_MAX_CHARACTERS
 from src.exceptions import DORAContractConflictError, EntryNotFoundError, TenantContextMissingError
 from src.models.dora_contract import CONTRACT_TEXT_TRIM_CHARACTERS
 from src.services.dora_contract_service import (
@@ -166,7 +167,7 @@ def test_the_reference_is_persisted_in_its_canonical_form():
     assert _calls_matching(spy, _INSERT_CONTRACT)[0][1]["contract_reference"] == "MSA-1"
 
 
-@pytest.mark.parametrize("missing", [None, "", " ", "\t\n", " 　"])
+@pytest.mark.parametrize("missing", [None, "", " ", "\t\n", "\u00a0\u3000"])
 def test_a_missing_reference_is_refused_before_any_sql_and_never_invented(missing):
     spy = _SpyConn()
     with pytest.raises(ValueError, match="contract_reference is required"):
@@ -182,9 +183,19 @@ def test_a_non_text_reference_is_refused_rather_than_coerced(not_text):
     assert spy.calls == []
 
 
+def test_a_reference_of_the_maximum_length_is_accepted_and_one_longer_is_refused_before_any_sql():
+    spy = _SpyConn([(_INSERT_CONTRACT, _inserted())])
+    longest = "R" * CONTRACT_REFERENCE_MAX_CHARACTERS
+    assert _create(spy, contract_reference=f"  {longest}\t").contract_reference == longest
+    refused = _SpyConn()
+    with pytest.raises(ValueError, match=f"at most {CONTRACT_REFERENCE_MAX_CHARACTERS} characters"):
+        _create(refused, contract_reference=longest + "R")
+    assert refused.calls == []
+
+
 def test_display_name_is_trimmed_and_blank_becomes_none():
     spy = _SpyConn([(_INSERT_CONTRACT, _inserted())])
-    assert _create(spy, display_name="  Cloud hosting \n").display_name == "Cloud hosting"
+    assert _create(spy, display_name="\u2003 Cloud hosting \n").display_name == "Cloud hosting"
     assert _create(spy, display_name=" \t ").display_name is None
     assert _create(spy).display_name is None
 
@@ -288,7 +299,9 @@ def test_the_conflict_error_is_not_a_value_error():
 # ── Parties: references and provider roles ──────────────────────────────────
 
 
-@pytest.mark.parametrize("bad", ["signatory", "consumer", "Recipient_Signatory", "", None])
+@pytest.mark.parametrize(
+    "bad", ["signatory", "consumer", "Recipient_Signatory", "", None, ["provider_signatory"], 7]
+)
 def test_an_unsupported_party_role_is_refused_before_any_sql(bad):
     spy = _SpyConn()
     with pytest.raises(ValueError, match="party_role must be one of"):
@@ -320,6 +333,9 @@ def test_a_provider_signatory_holding_the_ict_provider_role_is_recorded(role):
     role_query = _calls_matching(spy, _ICT_PROVIDER_ROLE)[0]
     assert role_query[1]["role_type"] == "ict_provider"
     assert "is_active = TRUE" in str(role_query[0])
+    # The role must be the SIGNING organisation's own, not any in the tenant.
+    assert "organization_id = :organization_id" in str(role_query[0])
+    assert role_query[1]["organization_id"] == _ORG_ID
 
 
 def test_adding_a_party_writes_only_the_party_row_and_its_ledger_entry():
@@ -424,6 +440,56 @@ def test_every_tenant_read_and_update_carries_an_explicit_tenant_predicate(call)
         if "dora_" in text and text.lstrip().startswith(("SELECT", "UPDATE")):
             assert "tenant_id = :tenant_id" in text, text
             assert params["tenant_id"] == _TENANT_ID
+
+
+def test_the_reverse_lookup_filters_the_party_subquery_by_tenant_too():
+    # The generic predicate test above is satisfied by the outer WHERE alone;
+    # the EXISTS subquery on dora_contract_parties carries its own.
+    spy = _SpyConn()
+    list_contracts_for_organization(spy, _TENANT_ID, _ORG_ID)
+    sql = str(_calls_matching(spy, "EXISTS")[0][0])
+    subquery = sql.split("EXISTS", 1)[1]
+    assert "dora_contract_parties.tenant_id = :tenant_id" in subquery
+    assert "dora_contract_parties.organization_id = :organization_id" in subquery
+
+
+# ── Actor: named, and checked before any write ──────────────────────────────
+
+_BAD_ACTORS = [
+    (None, "compliance_lead"),
+    ("not-a-uuid", "compliance_lead"),
+    ("", "compliance_lead"),
+    (_ACTOR_ID, ""),
+    (_ACTOR_ID, "   "),
+    (_ACTOR_ID, None),
+]
+
+
+@pytest.mark.parametrize("actor_id, actor_role", _BAD_ACTORS)
+@pytest.mark.parametrize("operation", ["create", "update", "add_party"])
+def test_a_missing_or_malformed_actor_is_refused_before_any_sql(operation, actor_id, actor_role):
+    spy = _SpyConn(_party_world(provider_role=False) + [(_INSERT_CONTRACT, _inserted())])
+    calls = {
+        "create": lambda: create_contract(
+            spy, _TENANT_ID, ContractInput(contract_reference="MSA-1"), actor_id=actor_id, actor_role=actor_role),
+        "update": lambda: update_contract(
+            spy, _TENANT_ID, _CONTRACT_ID, ContractUpdate(None, None, None, True),
+            actor_id=actor_id, actor_role=actor_role),
+        "add_party": lambda: add_contract_party(
+            spy, _TENANT_ID, _CONTRACT_ID, _ORG_ID, "recipient_signatory", actor_id=actor_id, actor_role=actor_role),
+    }
+    with pytest.raises(ValueError, match="actor_"):
+        calls[operation]()
+    assert spy.calls == []
+
+
+def test_the_actor_id_is_ledgered_in_canonical_form():
+    spy = _SpyConn([(_INSERT_CONTRACT, _inserted())])
+    create_contract(
+        spy, _TENANT_ID, ContractInput(contract_reference="MSA-1"),
+        actor_id=str(_ACTOR_ID).upper(), actor_role="vciso",
+    )
+    assert _ledger_calls(spy)[0][1]["actor_id"] == str(_ACTOR_ID)
 
 
 # ── Update: immutable identity, locking read, provenance ────────────────────
