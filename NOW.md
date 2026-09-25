@@ -151,7 +151,7 @@ work is authorised.
 |---|---|---|
 | **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (`0ae3df4`) |
 | **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (`3a8ca8e`; review follow-ups merged via PR #7) |
-| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | implemented on branch `dora-v2-002a/contracts-and-parties`, pending review |
+| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | ✅ merged via PR #8 (`649fb69`); live-DB verification was run on `kerno_dev` before TEST-SAFETY-001 and must be repeated on `kerno_test` |
 | **DORA-V2-002 (remaining slices)** | Contract hierarchy (§7.3), contract costs (§7.4), ICT services, functions/designations | not started — each slice needs explicit approval |
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
@@ -189,6 +189,28 @@ role:** `add_contract_party` requires `provider_signatory` and
 role, checked with an unlocked read that no database constraint backs. It is
 sound only while nothing removes a role. The slice that adds removal must lock
 the role row in that check or guard the rule in the database.
+
+## Test-database safety — TEST-SAFETY-001 (prerequisite for every live-DB test)
+
+**Status: implemented on branch `test-safety/explicit-disposable-database`,
+pending review. Live acceptance PENDING — `kerno_test` is not provisioned and
+not approved.** Approval record: none yet. When the owner approves, record it
+here as *"`kerno_test@127.0.0.1:5432/kerno_test` approved as a disposable test
+database by <owner> on <date>"* (`docs/test_database_runbook.md` §6).
+
+- Live-database tests and test migrations run only against the owner-approved
+  disposable `kerno_test`, owned by a restricted `kerno_test` role — never
+  `kerno_dev`, never via `DATABASE_URL`, `.env` or libpq defaults. Settings:
+  `KERNO_TEST_DATABASE_URL` + `KERNO_TEST_DATABASE_APPROVAL` (environment or the
+  gitignored `.env.test`).
+- Until `kerno_test` exists, every live-database test skips with its reason,
+  and CLAUDE.md §11's live-database rule cannot be met by new work. Do not
+  describe any later DORA slice as live-verified until it has run on
+  `kerno_test` with `python -m pytest --require-live-database`.
+- One workflow at a time: pytest and `scripts/migrate_test_database.py` share one
+  session-level advisory lock on `kerno_test`; parallel workers are refused.
+- `kerno_dev` is the development database only. It is at `a2b3c4d5`, the same
+  head as `main`; nothing in this ticket changed it.
 
 ## Honest claim (demo, deck, outreach)
 

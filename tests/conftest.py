@@ -18,14 +18,20 @@ in the service layer). Both styles reach psycopg2 correctly through the wrapper'
 
 How to run or test
 ------------------
-Requires DATABASE_URL environment variable pointing to a live PostgreSQL instance
-with all migrations applied:
+Live-database tests run ONLY against the owner-approved disposable database
+kerno_test (TEST-SAFETY-001, docs/test_database_runbook.md), configured with
+KERNO_TEST_DATABASE_URL and KERNO_TEST_DATABASE_APPROVAL in the environment or
+in the gitignored .env.test. DATABASE_URL and the ordinary .env are never test
+authorisation:
 
-    DATABASE_URL=postgresql://user:pass@host/db \\
-        pytest tests/security/test_tenant_isolation.py -m integration -v
+    python -m pytest                            # unit tests; live tests skip, named
+    python -m pytest --require-live-database    # live validation; fails if not configured
 
-Tests are skipped automatically if DATABASE_URL is not set or if the required
-Python packages (psycopg2) are not installed.
+The first thing this file does, before any repository import, is establish
+that boundary (tests/_database_safety.py). Every psycopg2 connection in the
+process — fixtures, the tests' own sessions, SQLAlchemy engines, the app's
+pool — is refused unless it is to the approved target inside the exclusive,
+lock-holding session this file opens before its first write.
 """
 
 from __future__ import annotations
@@ -37,13 +43,22 @@ import uuid
 
 import pytest
 
-from config.constants import EMBEDDING_DIMENSION
+# ── Test-database boundary — must precede every repository import ──────────
+from tests import _database_safety as test_database_safety
+
+_TEST_DATABASE = test_database_safety.bootstrap_test_process()
+
+from config.constants import EMBEDDING_DIMENSION  # noqa: E402 — after the boundary on purpose
 
 try:
-    import psycopg2
+    import psycopg2  # noqa: E402
     _PSYCOPG2_AVAILABLE = True
 except ImportError:
     _PSYCOPG2_AVAILABLE = False
+
+# Integration-marked tests that skipped in a --require-live-database run.
+_LIVE_TEST_SKIPS: list[str] = []
+_REQUIRE_LIVE = {"enabled": False}
 
 # Fixed deterministic UUIDv4 identifiers for the two test tenants.
 # Using constants (not uuid4()) makes test failure messages readable:
@@ -207,29 +222,26 @@ def tenant_b_id() -> uuid.UUID:
 
 
 @pytest.fixture
-def db_connection() -> _DbConnection:
-    """Yield a live database connection with Tenant A and Tenant B rows seeded.
+def db_connection(request) -> _DbConnection:
+    """Yield a live connection to the approved test database with Tenant A and Tenant B rows seeded.
 
-    Requires ``DATABASE_URL`` in the environment; skips the test automatically
-    if absent. Seeds both tenant rows, one embedding per tenant, one Tenant B
-    override, and one Tenant B retrieval_bias row before the test runs. Deletes
-    all seeded rows after the test completes, in foreign-key-safe order.
+    Skips, naming the reason, when no test database is configured (fails
+    instead under --require-live-database). Before the first write in the run
+    it verifies the live target read-only and takes the exclusive lock; before
+    every seeding and every cleanup it re-proves the lock is still held, and
+    stops the whole run if it is not. Seeds both tenant rows, one embedding
+    per tenant, one Tenant B override, and one Tenant B retrieval_bias row;
+    deletes all seeded rows afterwards, in foreign-key-safe order.
 
     The seeded Tenant B data is intentionally detectable: the control_id contains
     the string "tenant_b" so assertions like ``assert "tenant_b" not in results``
     are non-vacuous — they prove RLS blocked a real row, not an empty table.
     """
-    if not _PSYCOPG2_AVAILABLE:
-        pytest.skip("psycopg2 not installed — skipping integration test")
-
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        pytest.skip("DATABASE_URL not set — skipping integration test")
-
-    raw_conn = psycopg2.connect(database_url)
+    raw_conn = open_guarded_fixture_connection(request.config)
     raw_conn.autocommit = False
     conn = _DbConnection(raw_conn)
 
+    require_exclusive_session()
     _teardown_seed_data(conn)
     conn.commit()
     _seed_integration_data(conn)
@@ -238,9 +250,122 @@ def db_connection() -> _DbConnection:
     yield conn
 
     conn.rollback()
+    require_exclusive_session()
     _teardown_seed_data(conn)
     conn.commit()
     raw_conn.close()
+
+
+def open_guarded_fixture_connection(config, state=None):
+    """Return a raw connection to the approved test database, or skip/fail/stop — never fall back.
+
+    No target configured: skip with the reason, or fail under
+    --require-live-database. Target rejected or busy: stop the whole run
+    before any write, because every later test would meet the same refusal.
+    """
+    state = state or _TEST_DATABASE
+    if not _PSYCOPG2_AVAILABLE:
+        _skip_or_fail(config, "psycopg2 is not installed")
+    if state.target is None:
+        _skip_or_fail(config, "no approved test database is configured (docs/test_database_runbook.md)")
+    try:
+        test_database_safety.ensure_exclusive_session("pytest", state=state)
+    except test_database_safety.DatabaseTargetBusy as exc:
+        pytest.exit(f"test database busy: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
+    except test_database_safety.KernoTestDatabaseError as exc:
+        pytest.exit(f"test database refused: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
+    return psycopg2.connect(state.target.url)
+
+
+def require_exclusive_session(state=None) -> None:
+    """Stop the whole run unless the exclusive lock is provably still held."""
+    session = (state or _TEST_DATABASE).session
+    try:
+        if session is None:
+            raise test_database_safety.DatabaseExclusivityLost("the exclusive session was never opened.")
+        session.assert_held()
+    except test_database_safety.DatabaseExclusivityLost as exc:
+        pytest.exit(f"test database exclusivity lost: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
+
+
+def _skip_or_fail(config, reason: str) -> None:
+    """Skip a live-database test with its reason, or fail it when live validation was required."""
+    if config.getoption("require_live_database"):
+        pytest.fail(f"live database required but unavailable: {reason}")
+    pytest.skip(f"live database test skipped: {reason}")
+
+
+# ---------------------------------------------------------------------------
+# Test-database boundary hooks
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser) -> None:
+    """Register --require-live-database: the explicit request for live validation."""
+    parser.addoption(
+        "--require-live-database",
+        action="store_true",
+        default=False,
+        help="fail, rather than skip, when the approved kerno_test database is not configured, "
+        "and fail the run if any integration-marked test is skipped",
+    )
+
+
+def pytest_configure(config) -> None:
+    """Fail the run on invalid test settings, missing required settings, or parallel workers."""
+    _REQUIRE_LIVE["enabled"] = bool(config.getoption("require_live_database"))
+    if _TEST_DATABASE.problem:
+        raise pytest.UsageError(f"test database configuration refused: {_TEST_DATABASE.problem}")
+    if _REQUIRE_LIVE["enabled"] and _TEST_DATABASE.target is None:
+        raise pytest.UsageError(
+            "--require-live-database was given but no approved test database is configured: set "
+            f"{test_database_safety.TEST_DATABASE_URL_VARIABLE} and "
+            f"{test_database_safety.TEST_DATABASE_APPROVAL_VARIABLE} (docs/test_database_runbook.md)."
+        )
+    if _TEST_DATABASE.target is not None and _parallel_workers_requested(config):
+        raise pytest.UsageError(
+            "parallel test workers are not supported against the test database: the fixture "
+            "tenants are fixed, so concurrent workers would collide."
+        )
+
+
+def _parallel_workers_requested(config) -> bool:
+    """True when pytest-xdist (or a worker environment) would run tests in parallel."""
+    workers = getattr(config.option, "numprocesses", None)
+    distribution = getattr(config.option, "dist", "no")
+    return bool(os.environ.get("PYTEST_XDIST_WORKER") or workers or distribution not in (None, "no"))
+
+
+def pytest_runtest_logreport(report) -> None:
+    """Remember integration-marked tests that skipped, so a required live run cannot hide them."""
+    if report.skipped and "integration" in report.keywords:
+        _LIVE_TEST_SKIPS.append(report.nodeid)
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """Fail a --require-live-database run in which any integration-marked test skipped."""
+    if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS and exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Say which database, if any, this run was allowed to touch — identity only, never credentials."""
+    target = _TEST_DATABASE.target
+    if target is None:
+        terminalreporter.write_line("test database: none configured - live-database tests were skipped")
+    else:
+        terminalreporter.write_line(f"test database: {target.identity} (settings from {_TEST_DATABASE.source})")
+    if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS:
+        terminalreporter.write_line(
+            f"FAILED: {len(_LIVE_TEST_SKIPS)} integration test(s) skipped in a required live run:", red=True
+        )
+        for nodeid in _LIVE_TEST_SKIPS:
+            terminalreporter.write_line(f"  {nodeid}", red=True)
+
+
+def pytest_unconfigure(config) -> None:
+    """Release the exclusive lock and its connection after every fixture cleanup has run."""
+    test_database_safety.release_exclusive_session()
 
 
 def _seed_integration_data(conn: _DbConnection) -> None:
