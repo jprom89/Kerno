@@ -14,7 +14,7 @@ Why:   Schema inspection tests catch silent migration failures where the Alembic
 
 How to run or test:
     pytest tests/integration/test_013_migration.py -m integration -v
-    (Requires DATABASE_URL environment variable pointing to a migrated DB.)
+    (Requires the approved kerno_test database, migrated: docs/test_database_runbook.md.)
 """
 
 import pytest

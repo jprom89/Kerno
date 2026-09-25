@@ -6,7 +6,7 @@ same transaction as the recommendation; the row is queryable through
 query_decision_logs with filters; the input_snapshot_hash matches a SHA-256
 re-derivation from the stored recommendation snapshot; and prune_old_logs
 deletes rows outside the retention window while retaining rows inside it.
-Requires DATABASE_URL with migration 020 applied; seeded rows for tenants A/B
+Requires the approved kerno_test database with migration 020 applied; seeded rows for tenants A/B
 are removed by the shared conftest teardown, and this file's fixture clears
 its own ai_decision_log rows.
 

@@ -95,14 +95,19 @@ alembic upgrade head
 
 ## Tests
 
-Run unit tests from the repo root:
+Run from the repo root:
 
 ```powershell
 cd J:\Kerno
-pytest
+python -m pytest                            # unit tests; every live-database test skips, with its reason
+python -m pytest --require-live-database    # live validation; fails unless kerno_test is configured and approved
 ```
 
-Expected: `180 passed, 0 failed` on `main` at commit `632b170`.
+Live-database tests run only against the owner-approved disposable database
+`kerno_test` (TEST-SAFETY-001). They never touch `kerno_dev`: the test process
+removes `DATABASE_URL`, turns off `.env` loading, and refuses every connection
+except the approved target. Setup, approval and the test-migration wrapper are
+in `docs/test_database_runbook.md`. Never point a test run at `kerno_dev`.
 
 ## Notes
 - Port `8000` was unavailable on this machine, so local dev was validated on `8001`.

@@ -5,7 +5,7 @@ the actual nightly batch through the same connection factory the cron entrypoint
 then assert that (1) the retrieval_bias vector moved in the direction of the human's
 correction, (2) get_similar_controls now ranks the corrected control above the AI's
 original recommendation, and (3) the run appended a "bias_recalculated" entry to the
-KER-107 audit ledger. Requires DATABASE_URL with all migrations applied; seeded rows
+KER-107 audit ledger. Requires the approved kerno_test database, fully migrated; seeded rows
 are removed by the shared conftest teardown.
 
 Run: pytest tests/integration/test_ker201_bias_recalculation.py -m integration -v
