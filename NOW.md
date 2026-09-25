@@ -149,14 +149,15 @@ work is authorised.
 
 | Ticket | What | Status |
 |---|---|---|
-| **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (this commit) |
-| **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (this commit) |
-| **DORA-V2-002** | Contracts, ICT services, functions/designations | not started — needs explicit approval |
+| **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (`0ae3df4`) |
+| **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (`3a8ca8e`; review follow-ups merged via PR #7) |
+| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | implemented on branch `dora-v2-002a/contracts-and-parties`, pending review |
+| **DORA-V2-002 (remaining slices)** | Contract hierarchy (§7.3), contract costs (§7.4), ICT services, functions/designations | not started — each slice needs explicit approval |
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 **V2-001 review follow-ups (21 September 2026, branch
-`dora-v2-001/concurrent-audit-before-state`, pushed for independent diff
-review — not merged):** the three V2-001 models now match migration 025
+`dora-v2-001/concurrent-audit-before-state`, reviewed and merged to main
+via PR #7, `bec2959`):** the three V2-001 models now match migration 025
 exactly (tenants FKs, `gen_random_uuid()` and `true` server defaults, the
 identifier index, no ORM-only `onupdate`), pinned by a scoped Alembic
 comparison with server-default comparison on plus catalog checks of every
@@ -177,7 +178,17 @@ check-then-insert. The UNIQUE constraints already prevent duplicates; the
 outstanding issue is that a concurrent loser surfaces as the driver's
 `UniqueViolation` rather than the service's `ValueError`. Decide and implement
 one domain-level conflict outcome (one exception, one HTTP mapping) before
-those functions are reachable from outside tests. Not started.
+those functions are reachable from outside tests. Not started. DORA-V2-002A
+added `DORAContractConflictError`, deliberately contract-scoped (the ticket
+kept organisation remediation out of scope); whether organisations reuse it or
+a DORA-wide type replaces both is part of this decision.
+
+**Gate before any slice adds a way to deactivate or delete an organisation
+role:** `add_contract_party` requires `provider_signatory` and
+`intragroup_provider_signatory` organisations to hold an active `ict_provider`
+role, checked with an unlocked read that no database constraint backs. It is
+sound only while nothing removes a role. The slice that adds removal must lock
+the role row in that check or guard the rule in the database.
 
 ## Honest claim (demo, deck, outreach)
 

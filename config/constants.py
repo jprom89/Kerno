@@ -433,3 +433,17 @@ SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN: str = "https://your-vercel-app.vercel.app"
 EXAMPLE_ALLOWED_ORIGINS: frozenset[str] = frozenset(
     {EXAMPLE_ALLOWED_ORIGIN, SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN}
 )
+
+# ---------------------------------------------------------------------------
+# DORA v2 contracts (DORA-V2-002A)
+# ---------------------------------------------------------------------------
+
+# The longest contract_reference accepted, in characters. A Kerno engineering
+# bound, not a regulatory one: the reference sits in the btree index behind
+# uq_dora_contracts_tenant_reference, whose entries cannot exceed 2704 bytes,
+# and 255 characters of four-byte UTF-8 stays well inside that. Without a bound
+# an over-long reference fails inside the INSERT as a driver error that aborts
+# the caller's transaction instead of a refusal the caller can act on.
+# Migration 026 writes the same number into ck_dora_contracts_reference_length;
+# tests/unit/models/test_dora_contract_models.py fails on drift.
+CONTRACT_REFERENCE_MAX_CHARACTERS: int = 255

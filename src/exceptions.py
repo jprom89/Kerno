@@ -54,3 +54,17 @@ class UnsupportedEventTypeError(ValueError):
     """Raised when an authenticated webhook delivery carries an event_type outside
     the supported set (KER-205). The router maps this to 422 — only ever AFTER the
     signature has verified, so event types cannot be probed without a valid secret."""
+
+
+class DORAContractConflictError(Exception):
+    """Raised when a DORA contract write would duplicate a row its unique constraint protects.
+
+    Raised by dora_contract_service.create_contract when the tenant already has
+    the contract_reference, and by add_contract_party when the exact
+    (contract, organisation, party_role) tuple is already recorded. The
+    database constraint decides, via INSERT ... ON CONFLICT ON CONSTRAINT ...
+    DO NOTHING, so a concurrent duplicate lands here too. Nothing was written
+    and no ledger entry was appended; the caller's transaction is still usable.
+    Deliberately not a ValueError, so a handler for bad input cannot absorb a
+    conflict, and never raised for foreign-key or other integrity failures.
+    """
