@@ -3,9 +3,10 @@
 What:  Applies or reverts migrations on kerno_test one revision at a time.
        Before any migration code runs it proves, read-only, that the live
        connection is the owner-approved disposable target, then takes the same
-       exclusive advisory lock the live test suite takes, and re-proves the
-       lock is held before every revision. It reports the target by identity
-       only (role@host:port/database) and never prints a credential.
+       exclusive advisory lock the live test suite takes, re-proves the lock
+       before every revision and once more after the last, and releases it on
+       every exit path. It reports the target by identity only
+       (role@host:port/database) and never prints a credential.
 Why:   TEST-SAFETY-001. Plain `alembic` reads DATABASE_URL, and
        migrations/env.py loads the ordinary .env when it is unset — so a
        mistyped command reaches the development database. This wrapper reads
@@ -16,8 +17,9 @@ Why:   TEST-SAFETY-001. Plain `alembic` reads DATABASE_URL, and
 How:   python scripts/migrate_test_database.py current
        python scripts/migrate_test_database.py upgrade head
        python scripts/migrate_test_database.py downgrade <revision|base>
-       Exit codes: 0 done; 1 a migration failed; 2 configuration missing or
-       refused; 3 target refused, busy, or exclusivity lost.
+       Exit codes: 0 done; 1 a migration failed; 2 bad command, bad
+       destination, or configuration missing or refused; 3 target refused,
+       busy, or exclusivity lost.
        Offline tests: pytest tests/unit/test_database_safety.py -v
 """
 
@@ -66,11 +68,10 @@ def main(argv: list[str], safety=test_database_safety) -> int:
     say(f"test database: {target.identity}")
     try:
         session = safety.ensure_exclusive_session("migrate")
+        return run_command(command, destination, session, target, safety)
     except safety.KernoTestDatabaseError as exc:
         say(f"refused: {exc}")
         return EXIT_TARGET_REFUSED
-    try:
-        return run_command(command, destination, session, target, safety)
     finally:
         safety.release_exclusive_session()
 
@@ -85,25 +86,45 @@ def parse_arguments(argv: list[str]) -> tuple[str, str | None] | None:
 
 
 def run_command(command: str, destination: str | None, session, target, safety) -> int:
-    """Report the current revision, or apply the planned steps one at a time under the held lock."""
+    """Report the current revision, or apply the planned steps one at a time under the held lock.
+
+    The lock is re-proved before every step and after the last one, so a loss
+    during the final revision is not reported as success.
+    """
     try:
         config = alembic_config()
         current = current_revision(target)
         if command == "current":
             say(f"current revision: {current or 'base'}")
             return EXIT_DONE
-        for step in plan_steps(config, command, current, destination):
+        steps = _planned_steps(config, command, current, destination, target, safety)
+        if steps is None:
+            return EXIT_CONFIGURATION_REFUSED
+        for step in steps:
             session.assert_held()
             apply_step(config, command, step)
             say(f"{command} -> {step}")
+        session.assert_held()
         say(f"done: {command} {destination}")
         return EXIT_DONE
     except safety.DatabaseExclusivityLost as exc:
         say(f"stopped: {exc}")
         return EXIT_TARGET_REFUSED
+    except safety.KernoTestDatabaseError as exc:
+        say(f"refused: {exc}")
+        return EXIT_TARGET_REFUSED
     except Exception as exc:  # noqa: BLE001 — reported without credentials, then a non-zero exit
         say(f"migration failed: {type(exc).__name__}: {safety.redact(str(exc), target)}")
         return EXIT_MIGRATION_FAILED
+
+
+def _planned_steps(config, command: str, current: str | None, destination: str, target, safety) -> list[str] | None:
+    """Return the plan, or None after reporting a destination the history cannot reach from here."""
+    try:
+        return plan_steps(config, command, current, destination)
+    except Exception as exc:  # noqa: BLE001 — Alembic raises several types for an unusable destination
+        say(f"cannot {command} to {destination!r} from {current or 'base'}: {safety.redact(str(exc), target)}")
+        return None
 
 
 def alembic_config():

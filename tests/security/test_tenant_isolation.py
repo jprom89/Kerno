@@ -46,7 +46,7 @@ Running the tests
 Unit tests (no database required):
   pytest tests/security/test_tenant_isolation.py -m "not integration" -v
 
-Integration tests (requires DATABASE_URL environment variable):
+Integration tests (require the approved kerno_test database — docs/test_database_runbook.md):
   pytest tests/security/test_tenant_isolation.py -m integration -v
 
 See conftest.py for the ``db_connection``, ``tenant_a_id``, and ``tenant_b_id``

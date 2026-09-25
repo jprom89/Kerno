@@ -28,10 +28,12 @@ authorisation:
     python -m pytest --require-live-database    # live validation; fails if not configured
 
 The first thing this file does, before any repository import, is establish
-that boundary (tests/_database_safety.py). Every psycopg2 connection in the
+that boundary (tests/_database_safety.py). Every psycopg2.connect in the
 process — fixtures, the tests' own sessions, SQLAlchemy engines, the app's
-pool — is refused unless it is to the approved target inside the exclusive,
-lock-holding session this file opens before its first write.
+pool — is refused unless it is to the approved target while this process
+provably holds the exclusive lock it takes before its first write. The lock
+is re-proved for every new connection, before db_connection's own seeding
+and cleanup, and once more at the end of the session.
 """
 
 from __future__ import annotations
@@ -59,6 +61,8 @@ except ImportError:
 # Integration-marked tests that skipped in a --require-live-database run.
 _LIVE_TEST_SKIPS: list[str] = []
 _REQUIRE_LIVE = {"enabled": False}
+# Set when the lock could not be re-proved at the end of the session.
+_FINAL_EXCLUSIVITY_PROBLEMS: list[str] = []
 
 # Fixed deterministic UUIDv4 identifiers for the two test tenants.
 # Using constants (not uuid4()) makes test failure messages readable:
@@ -272,6 +276,8 @@ def open_guarded_fixture_connection(config, state=None):
         test_database_safety.ensure_exclusive_session("pytest", state=state)
     except test_database_safety.DatabaseTargetBusy as exc:
         pytest.exit(f"test database busy: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
+    except test_database_safety.DatabaseExclusivityLost as exc:
+        pytest.exit(f"test database exclusivity lost: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
     except test_database_safety.KernoTestDatabaseError as exc:
         pytest.exit(f"test database refused: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
     return psycopg2.connect(state.target.url)
@@ -343,7 +349,19 @@ def pytest_runtest_logreport(report) -> None:
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:
-    """Fail a --require-live-database run in which any integration-marked test skipped."""
+    """Re-prove the lock one last time, and fail a required live run in which an integration test skipped.
+
+    Every fixture cleanup has run by now. If exclusivity cannot be proved,
+    the last cleanups ran without it, so the run is not reported as a success.
+    """
+    exclusive = _TEST_DATABASE.session
+    if exclusive is not None:
+        try:
+            exclusive.assert_held()
+        except test_database_safety.DatabaseExclusivityLost as exc:
+            _FINAL_EXCLUSIVITY_PROBLEMS.append(str(exc))
+            session.exitstatus = pytest.ExitCode.INTERRUPTED
+            return
     if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS and exitstatus == pytest.ExitCode.OK:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
@@ -355,6 +373,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
         terminalreporter.write_line("test database: none configured - live-database tests were skipped")
     else:
         terminalreporter.write_line(f"test database: {target.identity} (settings from {_TEST_DATABASE.source})")
+    for problem in _FINAL_EXCLUSIVITY_PROBLEMS:
+        terminalreporter.write_line(f"FAILED: test database exclusivity lost at the end of the run: {problem}", red=True)
     if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS:
         terminalreporter.write_line(
             f"FAILED: {len(_LIVE_TEST_SKIPS)} integration test(s) skipped in a required live run:", red=True

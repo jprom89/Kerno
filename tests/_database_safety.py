@@ -9,6 +9,13 @@ What:  Decides whether a test or test-migration process may touch a database
        refuses every other target, verifies the real connection read-only
        before anything is written, and holds one session-level advisory lock
        so exactly one destructive workflow owns the database at a time.
+       The guard covers psycopg2.connect, which is how every connection path
+       in this repository opens a connection (fixtures, tests' own sessions,
+       SQLAlchemy, psycopg2's and the application's pools). The lower-level
+       entry points — psycopg2._connect, constructing
+       psycopg2.extensions.connection directly, SQLAlchemy creator=, other
+       PostgreSQL drivers — are not wrapped; tests/unit/test_database_safety.py
+       forbids them anywhere in src/, tests/, scripts/ and migrations/.
 Why:   Integration fixtures delete rows and disable audit triggers. Until
        TEST-SAFETY-001 they ran against whatever DATABASE_URL happened to be
        set, and src/api/app.py loads .env at import time, so an ordinary pytest
@@ -68,7 +75,10 @@ TEST_ROLE_NAME = "kerno_test"
 # connection, so approval is a property of the database, not only of a file.
 DISPOSABLE_DATABASE_COMMENT = "kerno:disposable-test-database"
 
-LOOPBACK_HOST_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+# Literal loopback addresses only. The name "localhost" is refused: libpq may
+# resolve it to ::1 or 127.0.0.1 per connection, so the verified guard session
+# and a later working connection could reach different listeners.
+LOOPBACK_ADDRESSES = frozenset({"127.0.0.1", "::1"})
 
 # Connection-string keys a test URL may carry. Anything else — hostaddr,
 # service, options, target_session_attrs, passfile, … — can change what a
@@ -113,6 +123,7 @@ SELECT activity.pid, activity.application_name
 FROM pg_locks AS locks JOIN pg_stat_activity AS activity ON activity.pid = locks.pid
 WHERE locks.locktype = 'advisory' AND locks.classid = %s::oid AND locks.objid = %s::oid
   AND locks.objsubid = %s AND locks.granted
+  AND locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
 """
 
 # What the live connection really is — read-only, no tenant context needed.
@@ -235,10 +246,24 @@ def read_settings(environ, env_file: pathlib.Path) -> tuple[str, str, str] | Non
     unexpected = sorted(set(values) - set(_SETTINGS_VARIABLES))
     if unexpected:
         raise DatabaseTargetInvalid(
-            f"{env_file.name} may define only {', '.join(_SETTINGS_VARIABLES)}; it also defines "
-            f"{', '.join(repr(name) for name in unexpected)}."
+            f"{env_file.name} may define only {', '.join(_SETTINGS_VARIABLES)}; it also contains "
+            f"{_describe_unexpected_entries(unexpected)}."
         )
     return _settings_pair(values, env_file.name)
+
+
+def _describe_unexpected_entries(names: list[str]) -> str:
+    """Name unexpected keys only when they are plain variable names; count the rest without echoing them.
+
+    A line without "=" (a pasted URL, say) is parsed as a key whose name is the
+    whole line, so printing it could print a password.
+    """
+    plain = [name for name in names if name.isidentifier()]
+    others = len(names) - len(plain)
+    parts = [repr(name) for name in plain]
+    if others:
+        parts.append(f"{others} line(s) that are not NAME=value assignments (not shown)")
+    return ", ".join(parts)
 
 
 def _settings_pair(values, source: str) -> tuple[str, str, str]:
@@ -304,33 +329,44 @@ def _reject_unsupported_keys(parameters: dict[str, str]) -> None:
 
 
 def _loopback_host(host: str) -> str:
-    """Return the single loopback host name, or raise DatabaseTargetInvalid."""
+    """Return the single loopback address, or raise DatabaseTargetInvalid.
+
+    The refused value is not echoed: an unencoded "@" in a password makes
+    libpq read the password's tail as the host.
+    """
     if "," in host:
         raise DatabaseTargetInvalid("the test database URL must name exactly one host.")
-    if host.lower() not in LOOPBACK_HOST_NAMES:
+    if host not in LOOPBACK_ADDRESSES:
         raise DatabaseTargetInvalid(
-            f"the test database must be on this machine ({', '.join(sorted(LOOPBACK_HOST_NAMES))}); "
-            f"the URL names host {host!r}."
+            f"the test database host must be a literal loopback address ({', '.join(sorted(LOOPBACK_ADDRESSES))}); "
+            "the URL names another host (not shown)."
         )
-    return host.lower()
+    return host
 
 
 def _single_port(port: str) -> int:
-    """Return the one explicit TCP port as an int, or raise DatabaseTargetInvalid."""
-    if not port.isdigit() or not 0 < int(port) <= _HIGHEST_TCP_PORT:
-        raise DatabaseTargetInvalid("the test database URL must name exactly one numeric port.")
+    """Return the one explicit TCP port as an int, or raise DatabaseTargetInvalid.
+
+    The port must be written canonically (5432, not 05432): the connection
+    guard compares requested ports as text.
+    """
+    if not port.isdigit() or port != str(int(port)) or not 0 < int(port) <= _HIGHEST_TCP_PORT:
+        raise DatabaseTargetInvalid("the test database URL must name exactly one port, written as a plain number.")
     return int(port)
 
 
 def _require_the_test_database(target: DatabaseTarget) -> None:
-    """Refuse any database or role other than kerno_test — by name, before any connection."""
+    """Refuse any database or role other than kerno_test — by name, before any connection.
+
+    The refused names are not echoed, for the same reason as hosts.
+    """
     if target.dbname != TEST_DATABASE_NAME:
         raise DatabaseTargetInvalid(
-            f"the test database must be exactly {TEST_DATABASE_NAME!r}; the URL selects {target.dbname!r}."
+            f"the test database must be exactly {TEST_DATABASE_NAME!r}; the URL selects a different database."
         )
     if target.user != TEST_ROLE_NAME:
         raise DatabaseTargetInvalid(
-            f"the test role must be exactly {TEST_ROLE_NAME!r}; the URL logs in as {target.user!r}."
+            f"the test role must be exactly {TEST_ROLE_NAME!r}; the URL logs in as a different role."
         )
 
 
@@ -430,11 +466,12 @@ class ExclusiveSession:
         self.purpose = purpose
         self._connect = connect or _ORIGINAL_CONNECT
         self._connection = None
+        self._lost = False
 
     @property
     def active(self) -> bool:
-        """True while this session holds an open guard connection."""
-        return self._connection is not None
+        """True while this session holds its guard connection and has not seen the lock lost."""
+        return self._connection is not None and not self._lost
 
     def acquire(self) -> None:
         """Connect, verify the live target read-only, then take the lock without waiting.
@@ -445,19 +482,29 @@ class ExclusiveSession:
         """
         connection = self._open()
         try:
-            verify_live_connection(connection, self.target)
-            connection.autocommit = True
-            cursor = connection.cursor()
-            cursor.execute(_TRY_LOCK_SQL, (EXCLUSIVE_LOCK_CLASS_KEY, EXCLUSIVE_LOCK_OBJECT_KEY))
-            if not cursor.fetchone()[0]:
-                raise DatabaseTargetBusy(
-                    f"another workflow holds the exclusive lock on {self.target.identity} "
-                    f"({_describe_holders(cursor)}); run one test workflow at a time."
-                )
+            self._verify_and_lock(connection)
+        except psycopg2.Error as exc:
+            connection.close()
+            raise DatabaseTargetRejected(
+                f"could not verify or lock {self.target.identity}: {redact(str(exc).strip(), self.target)}"
+            ) from None
         except BaseException:
             connection.close()
             raise
         self._connection = connection
+        self._lost = False
+
+    def _verify_and_lock(self, connection) -> None:
+        """Verify the live target read-only, then try the lock once; raise DatabaseTargetBusy if taken."""
+        verify_live_connection(connection, self.target)
+        connection.autocommit = True
+        cursor = connection.cursor()
+        cursor.execute(_TRY_LOCK_SQL, (EXCLUSIVE_LOCK_CLASS_KEY, EXCLUSIVE_LOCK_OBJECT_KEY))
+        if not cursor.fetchone()[0]:
+            raise DatabaseTargetBusy(
+                f"another workflow holds the exclusive lock on {self.target.identity} "
+                f"({_describe_holders(cursor)}); run one test workflow at a time."
+            )
 
     def _open(self):
         """Open the guard connection, turning a driver failure into a credential-free refusal."""
@@ -483,6 +530,7 @@ class ExclusiveSession:
         except psycopg2.Error:
             held = False
         if not held:
+            self._lost = True
             raise DatabaseExclusivityLost(
                 f"the exclusive lock on {self.target.identity} is no longer held; stopping before any "
                 "further destructive work."
@@ -504,11 +552,14 @@ class ExclusiveSession:
 
 def _describe_holders(cursor) -> str:
     """Name the backend(s) holding the lock by pid and application name — nothing secret."""
-    cursor.execute(
-        _LOCK_HOLDERS_SQL,
-        (EXCLUSIVE_LOCK_CLASS_KEY, EXCLUSIVE_LOCK_OBJECT_KEY, _TWO_INTEGER_ADVISORY_LOCK_SUBID),
-    )
-    holders = [f"pid {pid} {name or '(unnamed)'}" for pid, name in cursor.fetchall()]
+    try:
+        cursor.execute(
+            _LOCK_HOLDERS_SQL,
+            (EXCLUSIVE_LOCK_CLASS_KEY, EXCLUSIVE_LOCK_OBJECT_KEY, _TWO_INTEGER_ADVISORY_LOCK_SUBID),
+        )
+        holders = [f"pid {pid} {name or '(unnamed)'}" for pid, name in cursor.fetchall()]
+    except psycopg2.Error:
+        holders = []
     return ", ".join(holders) or "holder not visible"
 
 
@@ -555,12 +606,13 @@ def _not_configured_message() -> str:
 
 
 def authorize_connection(dsn, keyword_arguments: dict, state: ProcessState | None = None) -> None:
-    """Refuse any connection that is not to the approved target inside the held exclusive session.
+    """Refuse any connection that is not to the approved target while the exclusive lock is provably held.
 
     Covers the fixtures, the tests' own psycopg2 sessions, SQLAlchemy engines
     and the application's connection pool, because all of them end in
-    psycopg2.connect. Raises before libpq sees the request, so a refused
-    target is never contacted.
+    psycopg2.connect. Every new connection re-proves the lock (one pg_locks
+    query), so nothing new is opened after exclusivity is lost. Raises before
+    libpq sees the request, so a refused target is never contacted.
     """
     state = state or _STATE
     if state.problem:
@@ -572,6 +624,7 @@ def authorize_connection(dsn, keyword_arguments: dict, state: ProcessState | Non
             "a test-database connection was requested outside the exclusive session; "
             "use the db_connection fixture or the test-migration wrapper."
         )
+    state.session.assert_held()
     reject_target_changing_environment(os.environ)
     try:
         requested_dsn = psycopg2.extensions.make_dsn(dsn or "", **keyword_arguments)

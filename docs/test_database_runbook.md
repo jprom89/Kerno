@@ -19,37 +19,45 @@ repairs a database, and neither uses administrator credentials.
 
 ## 1. Pre-checks — stop if anything already exists
 
-Connect as the PostgreSQL administrator to the maintenance database on this
-machine's server:
+Run every command in steps 1–3 **one at a time**, from a shell, as the
+PostgreSQL administrator on this machine's server. Read each result before
+running the next command. Each command is a separate `psql -c` call with
+`ON_ERROR_STOP`, so a failure ends that command and nothing after it runs by
+itself. (Don't paste the steps as one block into an interactive `psql`
+session: there, an error only returns you to the prompt, and the rest of the
+paste keeps running.)
 
 ```text
-psql -h 127.0.0.1 -p 5432 -U postgres -d postgres
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "SELECT rolname FROM pg_roles WHERE rolname = 'kerno_test'"
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "SELECT datname FROM pg_database WHERE datname = 'kerno_test'"
 ```
 
-```sql
-\set ON_ERROR_STOP on
-SELECT rolname FROM pg_roles    WHERE rolname = 'kerno_test';   -- must return 0 rows
-SELECT datname FROM pg_database WHERE datname = 'kerno_test';   -- must return 0 rows
-```
+Both must return `(0 rows)`. If either returns a row, **stop**. Do not drop,
+rename or reuse the object; report it for review.
 
-If either query returns a row, **stop**. Do not drop, rename or reuse the
-object; report it for review. None of the statements below uses `IF NOT
-EXISTS`, `OR REPLACE` or `DROP`, so an existing object makes them fail rather
-than be overwritten.
+`CREATE ROLE` and `CREATE DATABASE` below fail on an existing object instead
+of replacing it. The commands after them do not have that protection:
+`\password`, `REVOKE`, `CREATE EXTENSION` and `COMMENT` act on whatever
+`kerno_test` exists. That is why each of them runs only after the `CREATE`
+before it has succeeded.
 
 A read-only check on 25 September 2026 found neither object.
 
 ## 2. Create the restricted login role
 
-```sql
-CREATE ROLE kerno_test LOGIN
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-\password kerno_test
+```text
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "CREATE ROLE kerno_test LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
 ```
 
-`\password` prompts for the password twice and sends only a hash, so the
-password doesn't end up in the shell or psql history. Use only letters,
-digits, `-` and `_`, so it can go into a URL unencoded. `migrations/env.py`
+Only if that printed `CREATE ROLE`:
+
+```text
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "\password kerno_test"
+```
+
+`\password` asks for the new password twice and sends only a hash, so the
+password stays out of the shell and psql history. Use only letters, digits,
+`-` and `_`, so it can go into a URL without encoding. `migrations/env.py`
 passes the URL through Python's `ConfigParser`, which misreads `%`.
 
 Do not grant this role anything else. In particular, do not give it
@@ -59,12 +67,16 @@ and refuses a role that has any of them.
 
 ## 3. Create the database, install the extension, mark it disposable
 
-```sql
-CREATE DATABASE kerno_test OWNER kerno_test;
-REVOKE ALL ON DATABASE kerno_test FROM PUBLIC;
-\connect kerno_test
-CREATE EXTENSION vector;
-COMMENT ON DATABASE kerno_test IS 'kerno:disposable-test-database';
+```text
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "CREATE DATABASE kerno_test OWNER kerno_test"
+```
+
+Only if that printed `CREATE DATABASE`, run these three, one at a time:
+
+```text
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "REVOKE ALL ON DATABASE kerno_test FROM PUBLIC"
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d kerno_test -c "CREATE EXTENSION vector"
+psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "COMMENT ON DATABASE kerno_test IS 'kerno:disposable-test-database'"
 ```
 
 - **Ownership:** `kerno_test` owns the database. It will also own every table
@@ -77,10 +89,14 @@ COMMENT ON DATABASE kerno_test IS 'kerno:disposable-test-database';
   Migration 002's `CREATE EXTENSION IF NOT EXISTS vector` then does nothing.
   No migration needs any other extension or any superuser privilege
   (checked 25 September 2026).
-- **The comment:** this is the database-side half of the owner's approval.
-  The test process reads it on every live connection and refuses a database
-  that lacks it. To withdraw approval later, run
-  `COMMENT ON DATABASE kerno_test IS NULL;`.
+- **The comment:** the test process reads it on every live connection and
+  refuses a database that lacks it. It marks the database as the one the
+  owner provisioned as disposable. It is **not** a tamper-proof
+  administrator signature: `kerno_test` owns the database, so the role
+  itself could also set or clear the comment.
+  To withdraw approval in a way `kerno_test` cannot undo, the administrator
+  runs `ALTER ROLE kerno_test NOLOGIN`. Clearing the comment
+  (`COMMENT ON DATABASE kerno_test IS NULL`) also makes every run refuse.
 - **The `public` schema:** on PostgreSQL 15 and later it belongs to
   `pg_database_owner`, so the database owner can create tables in it without
   any extra grant.
@@ -142,7 +158,8 @@ KERNO_TEST_DATABASE_APPROVAL=kerno_test@127.0.0.1:5432/kerno_test
 ```
 
 - **It stays out of git.** `.gitignore` already covers `.env.*`, and
-  `git check-ignore .env.test` must print a rule. The safety tests check this.
+  `git check-ignore -v .env.test` must print the matching rule
+  (`.gitignore:31:.env.*`). The safety tests check this.
 - **Only these two keys.** Any other key fails every run, even a harmless one.
   Never copy lines from `.env`.
 - **Keeping the password out of the file (optional).** Omit the password from
@@ -158,6 +175,7 @@ KERNO_TEST_DATABASE_APPROVAL=kerno_test@127.0.0.1:5432/kerno_test
 | Neither is set, and `.env.test` exists | Both are read from `.env.test` (a byte-order mark is tolerated) |
 | Neither is set, and there is no `.env.test` | No test database. Live tests skip, and every connection attempt is refused |
 | Anything is set but invalid (empty, unparseable, wrong target, extra keys) | The run fails. It never skips and never falls back to anything else |
+| `KERNO_TEST_ENV_FILE` is set | That path is read instead of `.env.test`, under exactly the same rules. It exists so the safety tests can point child processes at a missing file. The gitignore check covers only the default `.env.test`, so don't point it at a tracked file |
 
 The following never authorise a test database:
 
@@ -166,17 +184,26 @@ The following never authorise a test database:
   `PYTHON_DOTENV_DISABLED=1` before any application import;
 - libpq defaults.
 
-The URL must state host, port, database and user explicitly. The host must
-be a single loopback address. Any setting that could redirect the connection
-is refused, whether it appears as a URL parameter (`hostaddr`, `service`,
-`options`, …) or as an environment variable (`PGHOSTADDR`, `PGSERVICE`,
-`PGOPTIONS`, …).
+The URL must state host, port, database and user explicitly.
+
+- **Host:** exactly `127.0.0.1` or `::1`. The name `localhost` is refused:
+  libpq may resolve it to either address on each connection, so the verified
+  guard session and a later working connection could reach different
+  listeners.
+- **Port:** written as a plain number, such as `5432`.
+- **Redirecting settings:** anything that could redirect the connection is
+  refused, whether it is a URL parameter (`hostaddr`, `service`, `options`, …)
+  or an environment variable (`PGHOSTADDR`, `PGSERVICE`, `PGOPTIONS`, …).
+- **Refusal messages:** these never repeat a value taken from the URL, so a
+  mistyped URL can't print its password.
 
 ## 6. Recording approval
 
 Approval has three parts, and all three are required.
 
-1. **The database comment** from step 3, set by the administrator.
+1. **The database comment** from step 3, set by the administrator. As noted
+   there, the `kerno_test` role could also set it. Withdraw approval with
+   `ALTER ROLE kerno_test NOLOGIN`.
 2. **`KERNO_TEST_DATABASE_APPROVAL`**, which must equal the exact identity
    `kerno_test@127.0.0.1:5432/kerno_test`. If the URL points anywhere else,
    the two no longer match and every run refuses.
@@ -213,12 +240,33 @@ pytest run or one migration run, never both, and never two of either.
 
 - **A second workflow** fails immediately. Its message names the holder's pid
   and application name.
-- **During a workflow,** the lock is checked again before every fixture seed
-  or cleanup and before every migration step. If it is lost, the run stops.
-- **The lock is released** when the workflow finishes, and PostgreSQL releases
-  it anyway if the process dies.
+- **During a workflow,** the lock is proved again at each of these points:
+  - every new database connection the process opens;
+  - before `db_connection` seeds and before it cleans up;
+  - before every migration step and after the last one;
+  - at the end of the pytest session.
+
+  If a check fails, the process stops. A pytest run then ends as interrupted
+  (exit 2), and the migration wrapper exits 3. A loss at the final check is
+  never reported as success.
+- **Where there are no checks:** between two checks, work runs on connections
+  that are already open. That includes the cleanup of fixtures layered on top
+  of `db_connection`, which runs on `db_connection`'s connection just before
+  its own final check. A lock lost in that window is caught at the next
+  check, not the moment it happens.
+- **The lock is released** when the workflow ends, on every exit path, and
+  PostgreSQL releases it anyway if the process dies.
 - **Parallel pytest workers** (for example `-n` with pytest-xdist) are refused
   against the test database.
+
+The migration wrapper's exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | a migration failed |
+| 2 | bad command or destination, or configuration missing or refused |
+| 3 | target refused, busy, or exclusivity lost |
 
 ## What never happens
 
@@ -227,5 +275,12 @@ pytest run or one migration run, never both, and never two of either.
 - Nothing connects to `kerno_dev` from a test or test-migration process.
 - Plain `alembic` and the application are unchanged. Only
   `scripts/migrate_test_database.py` targets `kerno_test`.
-- `pytest --noconftest` is unsupported. It skips the boundary's normal
-  bootstrap, and every database test then errors on its missing fixture.
+- **Unsupported pytest options:** `pytest --noconftest`, and `--confcutdir`
+  set below `tests/`, both skip the boundary's bootstrap. Every database test
+  then errors on its missing fixture.
+- **What the guard covers:** it wraps `psycopg2.connect`, which is how every
+  connection in this repository is opened. The lower-level entry points are
+  not wrapped: `psycopg2._connect`, constructing
+  `psycopg2.extensions.connection` directly, SQLAlchemy `creator=`, and other
+  PostgreSQL drivers. A safety test fails if any of them appears in `src/`,
+  `tests/`, `scripts/` or `migrations/`.

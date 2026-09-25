@@ -6,7 +6,9 @@ What:  Reports, as one JSON line on stdout, whether DATABASE_URL survived the
        psycopg2 directly, an empty DSN, SQLAlchemy, psycopg2's pool and the
        application's own pool — responds to a development URL. A second test
        asks for the db_connection fixture, so a run can show whether that
-       fixture skipped, failed or stopped.
+       fixture skipped, failed or stopped, and a third skips itself so a
+       --require-live-database run can show that a skipped live test fails
+       the run.
 Why:   TEST-SAFETY-001 must prove the boundary holds in a genuine pytest
        process, with conftest loading in its real order, not only in unit
        tests of the helper. The development URL used here is fake and points
@@ -75,3 +77,10 @@ def test_probe_reports_the_boundary():
 @pytest.mark.integration
 def test_probe_needs_the_database(db_connection):
     assert db_connection is not None
+
+
+@pytest.mark.integration
+def test_probe_skips_itself():
+    # Selected only by the required-live accounting check, which must turn
+    # this skip into a failed run.
+    pytest.skip("probe integration test skipping on purpose")
