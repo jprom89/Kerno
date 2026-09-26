@@ -192,11 +192,20 @@ the role row in that check or guard the rule in the database.
 
 ## Test-database safety — TEST-SAFETY-001 (prerequisite for every live-DB test)
 
-**Status: implemented on branch `test-safety/explicit-disposable-database`,
-pending review. Live acceptance PENDING — `kerno_test` is not provisioned and
-not approved.** Approval record: none yet. When the owner approves, record it
-here as *"`kerno_test@127.0.0.1:5432/kerno_test` approved as a disposable test
-database by <owner> on <date>"* (`docs/test_database_runbook.md` §6).
+**Status: implemented on branch `test-safety/explicit-disposable-database`
+(draft PR #9), pending review. Live acceptance PENDING — `kerno_test` is
+approved but not yet provisioned.**
+
+- **Approval record (26 September 2026):**
+  `kerno_test@127.0.0.1:5432/kerno_test` was approved as a disposable test
+  database by the owner, in writing, on 26 September 2026. On the same date
+  the owner delegated its one-time provisioning to Claude Code: the
+  inspectable `scripts/provision_test_database.py`, run by the owner in
+  their own PowerShell window, with the administrator password typed only at
+  its hidden prompt.
+- **Provisioning result:** not yet performed.
+- **Verification result:** not yet performed. (Recorded separately from the
+  approval above; these two lines are updated only with actual results.)
 
 - Live-database tests and test migrations run only against the owner-approved
   disposable `kerno_test`, owned by a restricted `kerno_test` role — never

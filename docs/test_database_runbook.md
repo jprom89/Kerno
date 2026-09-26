@@ -6,14 +6,91 @@ migrations may run against this target and nothing else. They never run
 against `kerno_dev` and never fall back to `DATABASE_URL`, `.env` or libpq
 defaults.
 
-**Status on 25 September 2026: NOT provisioned, NOT approved.** Until the
-owner completes the steps below and records approval, every live-database test
-is skipped with an explicit reason. `python -m pytest --require-live-database`
-and `scripts/migrate_test_database.py` refuse to run.
+**Status on 26 September 2026: approved by the owner, NOT yet provisioned.**
+The owner approved `kerno_test@127.0.0.1:5432/kerno_test` as a disposable
+test database and delegated its setup (see *Assisted provisioning*). Until it
+is provisioned and verified, every live-database test is skipped with an
+explicit reason, and `python -m pytest --require-live-database` and
+`scripts/migrate_test_database.py` refuse to run.
 
-Everything in steps 1–4 is a one-time **owner/administrator action**. Neither
-Claude Code nor any script in this repository provisions, drops, recreates or
-repairs a database, and neither uses administrator credentials.
+Steps 1–4 are a one-time **owner/administrator action**, either by hand or
+with the assisted script below. The only thing in this repository that
+creates anything is that script, and only the owner runs it. Nothing in the
+repository drops, recreates, resets or repairs a database, and nothing else
+uses administrator credentials.
+
+## Assisted provisioning (owner-delegated, 26 September 2026)
+
+The owner delegated steps 1–4 to Claude Code so they would not have to type
+each statement. The administrator password must stay private, so the setup
+is a single inspectable script that **the owner runs in their own PowerShell
+window**:
+
+```text
+cd J:\Kerno
+python scripts\provision_test_database.py
+```
+
+`scripts/provision_test_database.py` does steps 1–4 and step 5's settings
+file.
+
+**Before connecting,** it refuses and changes nothing when:
+
+- `.env.test` already exists;
+- `.env.test` is not gitignored;
+- a redirecting libpq variable is set;
+- `KERNO_TEST_*` is set in the shell.
+
+**The administrator password:**
+
+- It is asked for once, at a hidden prompt.
+- It is never shown, stored or logged.
+- An empty password is refused, so saved passwords are never used silently.
+
+**Before any change,** it connects as `postgres` to `127.0.0.1:5432` and:
+
+- confirms the server;
+- stops, reporting their state, if a `kerno_test` role or database already
+  exists (it never drops, renames, resets or reuses one);
+- shows what it will create and requires the owner to type `yes`.
+
+**What it creates:**
+
+- **`.env.test`:** written first, before any object, so the generated
+  password can never be lost.
+- **The role:** a restricted `kerno_test` role. Its password is generated and
+  only its SCRAM-SHA-256 verifier is sent to the server, so the plaintext
+  exists only in `.env.test`.
+- **The database:** `kerno_test`, owned by that role, with PUBLIC access
+  revoked.
+- **The extension:** `vector`, installed through a separate short
+  administrator connection to `kerno_test`.
+- **The marker:** the disposable-database comment.
+
+It checks every statement's result before running the next one.
+
+**Afterwards,** it verifies everything step 4 lists, including that
+`kerno_dev`'s access list is unchanged. It closes the administrator
+connections, then logs in as the restricted `kerno_test` role to check the
+target identity, the extension and the schema rights.
+
+**If anything fails partway through,** it prints exactly what was created and
+stops. It never deletes anything and never reruns over half-created objects.
+Report the output instead of running it again.
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | created and verified |
+| 1 | stopped after starting (the output lists what exists) |
+| 2 | refused before changing anything |
+
+It is a separate process from the tests. It never installs, changes or
+disables the test connection guard, and never reads `.env`. Every later
+migration and test runs as the restricted `kerno_test` role, never as
+`postgres`. The manual steps below remain valid and are what the script
+automates.
 
 ---
 
@@ -225,6 +302,11 @@ Approval has three parts, and all three are required.
 The code checks part 2 whenever a process starts, and part 1 once per
 workflow, when it acquires its guard connection. Part 3 is the human record.
 
+With assisted provisioning, the script writes parts 1 and 2 on the owner's
+behalf, and only when the owner runs it and types `yes`. The owner's approval
+itself was given in writing on 26 September 2026 and is recorded in
+`NOW.md`, separately from the provisioning and verification results.
+
 ## 7. First use
 
 ```text
@@ -298,9 +380,11 @@ The migration wrapper's exit codes:
 
 ## What never happens
 
-- **Nothing in the repository creates, drops, recreates or resets
-  `kerno_test`.** Rebuilding it is an owner action: the owner drops it and
-  repeats steps 1–4 under the same name, `kerno_test`.
+- **Nothing in the repository drops, recreates or resets `kerno_test`.**
+  The only thing that creates it is `scripts/provision_test_database.py`, run
+  by the owner, and it refuses if the role or database already exists.
+  Rebuilding is an owner action: the owner drops it and repeats steps 1–4 (or
+  the script) under the same name, `kerno_test`.
 - **The name is fixed.** The test process accepts no other database or role
   name, so moving to a different name needs a separately approved code
   change. Renaming the database, or setting up a copy under another name,
