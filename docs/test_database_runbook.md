@@ -89,14 +89,23 @@ psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "COMMENT
   Migration 002's `CREATE EXTENSION IF NOT EXISTS vector` then does nothing.
   No migration needs any other extension or any superuser privilege
   (checked 25 September 2026).
-- **The comment:** the test process reads it on every live connection and
-  refuses a database that lacks it. It marks the database as the one the
-  owner provisioned as disposable. It is **not** a tamper-proof
-  administrator signature: `kerno_test` owns the database, so the role
-  itself could also set or clear the comment.
-  To withdraw approval in a way `kerno_test` cannot undo, the administrator
-  runs `ALTER ROLE kerno_test NOLOGIN`. Clearing the comment
-  (`COMMENT ON DATABASE kerno_test IS NULL`) also makes every run refuse.
+- **The comment:** each workflow reads it once, as part of the identity
+  check on its guard connection (see step 7), and refuses a database that
+  lacks it. It marks the database as the one the owner provisioned as
+  disposable. It is **not** a tamper-proof administrator signature:
+  `kerno_test` owns the database, so the role itself could also set or clear
+  the comment.
+- **Withdrawing approval:** to do it in a way `kerno_test` cannot undo, the
+  administrator runs `ALTER ROLE kerno_test NOLOGIN`.
+  - `NOLOGIN` only blocks new logins. It does not end sessions that are
+    already connected.
+  - A workflow that is already running keeps going until it finishes, unless
+    the administrator also ends its sessions. The workflow's guard connection
+    shows as `kerno-test-guard:pytest` or `kerno-test-guard:migrate` in
+    `pg_stat_activity`.
+  - Clearing the comment (`COMMENT ON DATABASE kerno_test IS NULL`) makes
+    every later workflow refuse at its identity check. It does not stop one
+    that has already passed that check.
 - **The `public` schema:** on PostgreSQL 15 and later it belongs to
   `pg_database_owner`, so the database owner can create tables in it without
   any extra grant.
@@ -203,7 +212,8 @@ Approval has three parts, and all three are required.
 
 1. **The database comment** from step 3, set by the administrator. As noted
    there, the `kerno_test` role could also set it. Withdraw approval with
-   `ALTER ROLE kerno_test NOLOGIN`.
+   `ALTER ROLE kerno_test NOLOGIN`. That blocks new logins but does not end
+   sessions already connected (step 3 explains how to handle those).
 2. **`KERNO_TEST_DATABASE_APPROVAL`**, which must equal the exact identity
    `kerno_test@127.0.0.1:5432/kerno_test`. If the URL points anywhere else,
    the two no longer match and every run refuses.
@@ -212,7 +222,8 @@ Approval has three parts, and all three are required.
    *"`kerno_test@127.0.0.1:5432/kerno_test` approved as a disposable test
    database by <owner> on <date>."*
 
-The code checks parts 1 and 2 on every run. Part 3 is the human record.
+The code checks part 2 whenever a process starts, and part 1 once per
+workflow, when it acquires its guard connection. Part 3 is the human record.
 
 ## 7. First use
 
@@ -223,8 +234,9 @@ python scripts/migrate_test_database.py downgrade z1a2b3c4
 python scripts/migrate_test_database.py upgrade head      # migration round trip on the disposable target
 ```
 
-Every run first checks, read-only, that the live connection is what was
-approved:
+Each workflow first opens one dedicated **guard connection**. On that
+connection it checks, read-only against the catalogs, that the live database
+is what was approved:
 
 - the database name;
 - `session_user` and `current_user`;
@@ -233,15 +245,31 @@ approved:
 - database ownership;
 - the disposable-target comment.
 
-It then takes one session-level advisory lock,
+This catalog check runs once per workflow, on the guard connection only.
+
+The guard connection then takes one session-level advisory lock,
 `pg_try_advisory_lock(1262834254, 1413829460)` (the ASCII codes of `KERN` and
-`TEST`), without waiting. That lock allows only one workflow at a time: one
-pytest run or one migration run, never both, and never two of either.
+`TEST`), without waiting, and holds it until the workflow ends. That lock
+allows only one workflow at a time: one pytest run or one migration run,
+never both, and never two of either.
+
+After that, every **working connection** the process opens (the fixtures,
+the tests' own sessions, SQLAlchemy, the pools) gets two cheaper checks:
+
+- **Parameters:** its effective connection parameters are compared with the
+  approved target (host, port, database, role, and no redirecting
+  parameters).
+- **Lock:** the guard connection re-checks that the lock is still held.
+
+The catalog query is **not** rerun for each working connection. Pinning the
+host to a literal loopback address and refusing redirecting parameters and
+environment variables is what makes the parameter comparison sufficient.
 
 - **A second workflow** fails immediately. Its message names the holder's pid
   and application name.
 - **During a workflow,** the lock is proved again at each of these points:
-  - every new database connection the process opens;
+  - every new working connection the process opens (a lock re-check on
+    the guard connection, not a new catalog check);
   - before `db_connection` seeds and before it cleans up;
   - before every migration step and after the last one;
   - at the end of the pytest session.
@@ -270,8 +298,13 @@ The migration wrapper's exit codes:
 
 ## What never happens
 
-- Nothing creates, drops, recreates or resets `kerno_test`. Rebuilding it is
-  an owner action. Repeat steps 1–4 on a new name, or drop it yourself.
+- **Nothing in the repository creates, drops, recreates or resets
+  `kerno_test`.** Rebuilding it is an owner action: the owner drops it and
+  repeats steps 1–4 under the same name, `kerno_test`.
+- **The name is fixed.** The test process accepts no other database or role
+  name, so moving to a different name needs a separately approved code
+  change. Renaming the database, or setting up a copy under another name,
+  just makes every run refuse.
 - Nothing connects to `kerno_dev` from a test or test-migration process.
 - Plain `alembic` and the application are unchanged. Only
   `scripts/migrate_test_database.py` targets `kerno_test`.

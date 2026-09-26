@@ -28,12 +28,15 @@ authorisation:
     python -m pytest --require-live-database    # live validation; fails if not configured
 
 The first thing this file does, before any repository import, is establish
-that boundary (tests/_database_safety.py). Every psycopg2.connect in the
-process — fixtures, the tests' own sessions, SQLAlchemy engines, the app's
-pool — is refused unless it is to the approved target while this process
-provably holds the exclusive lock it takes before its first write. The lock
-is re-proved for every new connection, before db_connection's own seeding
-and cleanup, and once more at the end of the session.
+that boundary (tests/_database_safety.py). Before its first write the run
+opens one guard connection, verifies the live database's identity and
+approval from the catalogs on it, and takes the exclusive lock. After that,
+every psycopg2.connect in the process — fixtures, the tests' own sessions,
+SQLAlchemy engines, the app's pool — is refused unless its effective
+parameters match the approved target and the guard connection re-proves the
+lock; the catalog check is not repeated per connection. The lock is also
+re-proved before db_connection's own seeding and cleanup, and once more at
+the end of the session.
 """
 
 from __future__ import annotations

@@ -610,9 +610,12 @@ def authorize_connection(dsn, keyword_arguments: dict, state: ProcessState | Non
 
     Covers the fixtures, the tests' own psycopg2 sessions, SQLAlchemy engines
     and the application's connection pool, because all of them end in
-    psycopg2.connect. Every new connection re-proves the lock (one pg_locks
-    query), so nothing new is opened after exclusivity is lost. Raises before
-    libpq sees the request, so a refused target is never contacted.
+    psycopg2.connect. Each request's effective parameters are compared with
+    the approved target, and the guard connection re-proves the lock (one
+    pg_locks query), so nothing new is opened after exclusivity is lost. The
+    catalog identity check is not repeated here; it ran once, on the guard
+    connection, when the session was acquired. Raises before libpq sees the
+    request, so a refused target is never contacted.
     """
     state = state or _STATE
     if state.problem:
