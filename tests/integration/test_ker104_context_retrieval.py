@@ -2,7 +2,7 @@
 
 Three tests verify that retrieve_similar_records returns context_records ordered by cosine
 distance, respects the limit parameter, and does not return records belonging to another tenant.
-Requires DATABASE_URL pointing to a database with migration 015 applied.
+Requires the approved kerno_test database with migration 015 applied.
 
 Run with:
     pytest tests/integration/test_ker104_context_retrieval.py -m integration -v

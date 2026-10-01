@@ -6,7 +6,7 @@ decision-log row, and its KER-107 ledger entry together; a failure after the
 recommendation INSERT rolls all of them back together. Also proves the
 template fallback works end-to-end on a live connection. The LLM client is
 mocked at the service module (network-free); every database write is real.
-Requires DATABASE_URL with migration 020 applied. The fixture cleans up its
+Requires the approved kerno_test database with migration 020 applied. The fixture cleans up its
 own rows — recommendations and control_evidence_links are not covered by the
 shared conftest teardown.
 

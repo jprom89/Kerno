@@ -151,7 +151,7 @@ work is authorised.
 |---|---|---|
 | **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (`0ae3df4`) |
 | **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (`3a8ca8e`; review follow-ups merged via PR #7) |
-| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | implemented on branch `dora-v2-002a/contracts-and-parties`, pending review |
+| **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | ✅ merged via PR #8 (`649fb69`); live-DB verification first ran on `kerno_dev` before TEST-SAFETY-001, and was repeated on `kerno_test` on 1 October 2026 (TEST-SAFETY-001 acceptance below: full suite and post-round-trip rerun passed, no skips) |
 | **DORA-V2-002 (remaining slices)** | Contract hierarchy (§7.3), contract costs (§7.4), ICT services, functions/designations | not started — each slice needs explicit approval |
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
@@ -189,6 +189,84 @@ role:** `add_contract_party` requires `provider_signatory` and
 role, checked with an unlocked read that no database constraint backs. It is
 sound only while nothing removes a role. The slice that adds removal must lock
 the role row in that check or guard the rule in the database.
+
+## Test-database safety — TEST-SAFETY-001 (prerequisite for every live-DB test)
+
+**Status: implemented on branch `test-safety/explicit-disposable-database`
+(draft PR #9), pending independent review. Live acceptance on `kerno_test`
+completed on 1 October 2026; the results are below.**
+
+- **Approval record (26 September 2026):**
+  `kerno_test@127.0.0.1:5432/kerno_test` was approved as a disposable test
+  database by the owner, in writing, on 26 September 2026. On the same date
+  the owner delegated its one-time provisioning to Claude Code: the
+  inspectable `scripts/provision_test_database.py`, run by the owner in
+  their own PowerShell window, with the administrator password typed only at
+  its hidden prompt.
+- **Provisioning result (owner-reported, 1 October 2026):** the owner ran
+  `scripts/provision_test_database.py` on MSI and reported
+  `DONE: kerno_test@127.0.0.1:5432/kerno_test provisioned and verified.`
+  with exit code 0. The output the owner reported confirmed:
+  - a restricted login role with no elevated attributes or memberships;
+  - the database owned by that role, with PUBLIC access revoked;
+  - `vector` installed and the disposable marker present;
+  - `.env.test` created and gitignored;
+  - a login as `kerno_test`;
+  - `kerno_dev`'s access list unchanged.
+
+  Claude Code did not see that run; this entry records the owner's report.
+- **Target verification (Claude Code, 1 October 2026):** read-only, through
+  the safety module's guard connection, as `kerno_test` with the settings
+  from `.env.test`:
+  - database `kerno_test`; session and current user `kerno_test`;
+  - server 127.0.0.1:5432, PostgreSQL 18.4;
+  - no superuser, BYPASSRLS, CREATEDB, CREATEROLE or REPLICATION, and no
+    role memberships;
+  - owner `kerno_test`, comment `kerno:disposable-test-database`, access
+    list `{kerno_test=CTc/kerno_test}`;
+  - extensions `plpgsql` and `vector` 0.8.3, and an empty `public` schema
+    before migration.
+- **Live acceptance results (1 October 2026, code at `cb0fed1`):**
+  - **Schema build:** `python scripts/migrate_test_database.py upgrade head`
+    exited 0 after 26 single-revision steps, from base to `a2b3c4d5`.
+  - **Full suite:** `python -m pytest --require-live-database` exited 0 with
+    **1340 passed, 0 failed, 0 skipped**. Its 225 warnings were
+    `DeprecationWarning`, `StarletteDeprecationWarning` and
+    `InsecureKeyLengthWarning`.
+  - **Exclusion, in both directions, without bypassing the lock:**
+    - While the migration held it, a pytest run was refused (exit 2) and a
+      second migration run was refused (exit 3).
+    - While the full pytest run held it, `downgrade z1a2b3c4` was refused
+      (exit 3) and a second pytest run was refused (exit 2).
+
+    Every refusal came before any change and named the holder
+    (`kerno-test-guard:migrate` or `kerno-test-guard:pytest`). After each
+    release the next workflow ran (exit 0). The refused downgrade left the
+    revision at `a2b3c4d5`.
+  - **Round trip:**
+    - `downgrade z1a2b3c4` exited 0. The revision went from `a2b3c4d5` to
+      `z1a2b3c4` and both contract tables were removed.
+    - `upgrade head` exited 0. The revision returned to `a2b3c4d5` and both
+      tables came back with RLS enabled and forced.
+  - **After the round trip:** the DORA-V2-001 and -002A live, isolation and
+    schema-parity tests, plus the migration test (9 files), exited 0 with
+    **224 passed, 0 skipped**.
+
+- Live-database tests and test migrations run only against the owner-approved
+  disposable `kerno_test`, owned by a restricted `kerno_test` role — never
+  `kerno_dev`, never via `DATABASE_URL`, `.env` or libpq defaults. Settings:
+  `KERNO_TEST_DATABASE_URL` + `KERNO_TEST_DATABASE_APPROVAL` (environment or the
+  gitignored `.env.test`).
+- `kerno_test` now exists and is verified. For new work, CLAUDE.md §11's
+  live-database rule is met only by a run of
+  `python -m pytest --require-live-database` on `kerno_test` with zero skips.
+  Do not describe any later DORA slice as live-verified without one. Without
+  valid settings, every live-database test skips with its reason.
+- One workflow at a time: pytest and `scripts/migrate_test_database.py` share one
+  session-level advisory lock on `kerno_test`; parallel workers are refused.
+- `kerno_dev` is the development database only. It is at `a2b3c4d5`, the same
+  head as `main`. Nothing in this ticket changed it, and the 1 October
+  acceptance runs did not connect to it.
 
 ## Honest claim (demo, deck, outreach)
 
