@@ -501,6 +501,9 @@ def _teardown_seed_data(conn: _DbConnection) -> None:
             # Runs go before entries: neither references the other, but both
             # must precede the tenants DELETE below.
             "dora_submission_runs", "dora_register_entries",
+            # DORA-V2-002B (migration 027) — relationships reference contracts
+            # at both ends, so they go before contracts.
+            "dora_contract_relationships",
             # DORA-V2-002A (migration 026) — parties reference both a contract
             # and an organisation, so they go first; contracts before the
             # organisation tables only by convention (no FK between them).

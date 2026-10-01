@@ -1,11 +1,12 @@
 """Unit tests for src/services/audit_log.py — the tamper-evident hash-chained ledger.
 
-Twenty-two tests cover genesis linking, hash computation (including an independent
+The tests cover genesis linking, hash computation (including an independent
 SHA-256 recomputation), identifier and timezone normalization of the hashed payload,
-per-tenant chain locking, append-only behaviour at the SQL level, canonical serialization
-determinism, chain verification against tampering / deletion / reordering, the
-system-event compatibility wrapper, and the three auditor query patterns.
-All tests use spy connections; no database is required.
+per-tenant chain locking and the public lock helpers that share it, append-only
+behaviour at the SQL level, canonical serialization determinism, chain verification
+against tampering / deletion / reordering, the system-event compatibility wrapper,
+and the three auditor query patterns. All tests use spy connections; no database
+is required.
 """
 
 from __future__ import annotations
@@ -20,12 +21,14 @@ import pytest
 from config.constants import AUDIT_GENESIS_HASH
 from src.exceptions import TenantContextMissingError
 from src.services.audit_log import (
+    acquire_tenant_ledger_lock,
     append_audit_entry,
     build_canonical_payload,
     compute_entry_hash,
     get_entries_between,
     get_entries_by_actor,
     get_entries_by_control,
+    tenant_ledger_lock_is_held,
     verify_audit_chain,
     write_audit_event,
 )
@@ -262,6 +265,66 @@ def test_append_and_verify_issue_no_update_or_delete():
         normalized = " ".join(sql.upper().split())
         assert "UPDATE AUDIT_LOG" not in normalized
         assert "DELETE FROM AUDIT_LOG" not in normalized
+
+
+# ── The public lock helpers share append's lock (DORA-V2-002B) ────────────────
+
+
+def _statement_kinds(spy) -> list[str]:
+    kinds = []
+    for sql, _ in spy.calls:
+        if "SET LOCAL" in sql:
+            kinds.append("tenant_context")
+        elif "pg_advisory_xact_lock" in sql:
+            kinds.append("chain_lock")
+        elif "SELECT entry_hash" in sql:
+            kinds.append("latest_hash")
+        elif "INSERT INTO audit_log" in sql:
+            kinds.append("insert")
+        else:
+            kinds.append(sql)
+    return kinds
+
+
+def test_append_still_issues_context_lock_head_read_and_insert_in_that_order_and_nothing_else():
+    spy = _LedgerSpyConn(latest_hash="b" * 64)
+    entry = _append_valid_entry(spy)
+    assert _statement_kinds(spy) == ["tenant_context", "chain_lock", "latest_hash", "insert"]
+    assert entry.previous_hash == "b" * 64
+
+
+def test_the_lock_helper_issues_exactly_the_statement_and_key_append_uses():
+    appended = _LedgerSpyConn()
+    _append_valid_entry(appended)
+    append_lock = next((sql, params) for sql, params in appended.calls if "pg_advisory_xact_lock" in sql)
+    helper = _LedgerSpyConn()
+    returned = acquire_tenant_ledger_lock(helper, str(_TENANT_ID).upper())
+    assert helper.calls == [append_lock]
+    assert returned == str(_TENANT_ID)
+
+
+def test_the_lock_helper_refuses_an_invalid_tenant_before_any_sql():
+    spy = _LedgerSpyConn()
+    with pytest.raises(TenantContextMissingError):
+        acquire_tenant_ledger_lock(spy, "not-a-uuid")
+    assert spy.calls == []
+
+
+def test_the_held_check_reads_pg_locks_for_the_same_key_split_into_its_two_halves():
+    spy = _LedgerSpyConn()
+    assert tenant_ledger_lock_is_held(spy, str(_TENANT_ID).upper()) is False
+    [(sql, params)] = spy.calls
+    assert "FROM pg_locks" in sql and sql.count("hashtextextended(:lock_key, 0)") == 2
+    assert params == {"lock_key": str(_TENANT_ID), "bigint_key_subid": 1, "half_bits": 32, "half_mask": 0xFFFFFFFF}
+
+
+def test_the_held_check_reports_what_the_catalog_returns():
+    class _Held(_LedgerSpyConn):
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params))
+            return _RowsResult([(True,)])
+
+    assert tenant_ledger_lock_is_held(_Held(), _TENANT_ID) is True
 
 
 def test_append_rejects_blank_action_type():

@@ -21,12 +21,14 @@ from src.exceptions import TenantContextMissingError  # noqa: F401  re-exported
 __all__ = [
     "AuditEntry",
     "ChainVerificationResult",
+    "acquire_tenant_ledger_lock",
     "append_audit_entry",
     "build_canonical_payload",
     "compute_entry_hash",
     "get_entries_between",
     "get_entries_by_actor",
     "get_entries_by_control",
+    "tenant_ledger_lock_is_held",
     "verify_audit_chain",
     "write_audit_event",
 ]
@@ -103,6 +105,25 @@ ORDER BY sequence_number ASC
 _ACQUIRE_CHAIN_LOCK = """
 SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))
 """
+
+# Whether this session holds that same lock. pg_locks shows a single-bigint
+# advisory key as two unsigned 32-bit halves — classid the high half, objid
+# the low half — with objsubid 1, so the key is split the same way here.
+_CHAIN_LOCK_HELD = """
+SELECT EXISTS (
+    SELECT 1
+    FROM pg_locks
+    WHERE locktype = 'advisory'
+      AND granted
+      AND pid = pg_backend_pid()
+      AND objsubid = :bigint_key_subid
+      AND classid = ((hashtextextended(:lock_key, 0) >> :half_bits) & :half_mask)::oid
+      AND objid = (hashtextextended(:lock_key, 0) & :half_mask)::oid
+)
+"""
+_BIGINT_ADVISORY_KEY_SUBID = 1
+_ADVISORY_KEY_HALF_BITS = 32
+_ADVISORY_KEY_HALF_MASK = 0xFFFFFFFF
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +251,7 @@ def append_audit_entry(
     canonical_tenant_id = str(require_valid_tenant_uuid(tenant_id))
     canonical_actor_id = _normalize_actor_id(actor_id)
     set_tenant_context(conn, canonical_tenant_id)
-    conn.execute(_ACQUIRE_CHAIN_LOCK, {"lock_key": canonical_tenant_id})
+    acquire_tenant_ledger_lock(conn, canonical_tenant_id)
     previous_hash = _fetch_latest_entry_hash(conn, canonical_tenant_id)
     entry = _build_entry(
         canonical_tenant_id, canonical_actor_id, actor_role, action_type,
@@ -238,6 +259,43 @@ def append_audit_entry(
     )
     conn.execute(_INSERT_ENTRY, _entry_to_insert_params(entry))
     return entry
+
+
+def acquire_tenant_ledger_lock(conn, tenant_id) -> str:
+    """Take the tenant's ledger lock for the rest of the caller's transaction and return the canonical tenant id.
+
+    The same transaction-scoped advisory lock, with the same key, that
+    append_audit_entry takes before reading the chain head, so a writer that
+    takes it first is serialised against every ledgered write in the tenant
+    until it commits or rolls back. Waits without a timeout of its own. It is
+    one statement on purpose: under READ COMMITTED a later statement in the
+    same transaction reads with a snapshot taken after the wait. Taking it
+    again in the same transaction is harmless. Raises TenantContextMissingError
+    on an invalid tenant before any SQL runs.
+    """
+    canonical_tenant_id = str(require_valid_tenant_uuid(tenant_id))
+    conn.execute(_ACQUIRE_CHAIN_LOCK, {"lock_key": canonical_tenant_id})
+    return canonical_tenant_id
+
+
+def tenant_ledger_lock_is_held(conn, tenant_id) -> bool:
+    """Return whether this session currently holds the tenant's ledger lock.
+
+    False straight after acquire_tenant_ledger_lock means the lock did not
+    outlive its own statement — the connection is in autocommit, not inside a
+    transaction the caller owns — so nothing is being serialised.
+    """
+    canonical_tenant_id = str(require_valid_tenant_uuid(tenant_id))
+    row = conn.execute(
+        _CHAIN_LOCK_HELD,
+        {
+            "lock_key": canonical_tenant_id,
+            "bigint_key_subid": _BIGINT_ADVISORY_KEY_SUBID,
+            "half_bits": _ADVISORY_KEY_HALF_BITS,
+            "half_mask": _ADVISORY_KEY_HALF_MASK,
+        },
+    ).fetchone()
+    return bool(row is not None and row[0])
 
 
 def write_audit_event(conn, tenant_id, event_type: str, event_data: dict) -> AuditEntry:
