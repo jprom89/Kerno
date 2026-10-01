@@ -6,11 +6,17 @@ migrations may run against this target and nothing else. They never run
 against `kerno_dev` and never fall back to `DATABASE_URL`, `.env` or libpq
 defaults.
 
-**Status on 26 September 2026: approved by the owner, NOT yet provisioned.**
-The owner approved `kerno_test@127.0.0.1:5432/kerno_test` as a disposable
-test database and delegated its setup (see *Assisted provisioning*). Until it
-is provisioned and verified, every live-database test is skipped with an
-explicit reason, and `python -m pytest --require-live-database` and
+**Status on 1 October 2026: provisioned, verified, live acceptance passed.**
+- **Approval:** the owner approved `kerno_test@127.0.0.1:5432/kerno_test` as
+  a disposable test database on 26 September 2026.
+- **Provisioning:** the owner ran the assisted provisioning script and
+  reported success.
+- **Verification and first use:** Claude Code then verified the target
+  through the safety controls and ran the first-use sequence.
+
+The three are recorded separately in *First-use record* (step 7) and in
+`NOW.md`. Without valid settings, every live-database test is still skipped
+with an explicit reason, and `python -m pytest --require-live-database` and
 `scripts/migrate_test_database.py` refuse to run.
 
 Steps 1–4 are a one-time **owner/administrator action**, either by hand or
@@ -377,6 +383,23 @@ The migration wrapper's exit codes:
 | 1 | a migration failed |
 | 2 | bad command or destination, or configuration missing or refused |
 | 3 | target refused, busy, or exclusivity lost |
+
+### First-use record (1 October 2026)
+
+| What | Who | Result |
+|---|---|---|
+| Provisioning | the owner (reported, not observed by Claude Code) | `DONE: kerno_test@127.0.0.1:5432/kerno_test provisioned and verified.`, exit 0 |
+| Target verification | Claude Code, read-only through the guard connection as `kerno_test` | every step 7 identity condition held; extensions `plpgsql` and `vector` 0.8.3; empty `public` schema |
+| `migrate_test_database.py upgrade head` | Claude Code | exit 0; base to `a2b3c4d5` in 26 steps |
+| `pytest --require-live-database` | Claude Code | exit 0; 1340 passed, 0 failed, 0 skipped |
+| Exclusion (migration holding) | Claude Code | a pytest run refused (exit 2), a second migration refused (exit 3) |
+| Exclusion (pytest holding) | Claude Code | `downgrade z1a2b3c4` refused (exit 3), a second pytest refused (exit 2) |
+| `downgrade z1a2b3c4`, then `upgrade head` | Claude Code | exit 0, then exit 0; `a2b3c4d5` to `z1a2b3c4` and back |
+| Affected live and schema-parity tests after the round trip | Claude Code | exit 0; 224 passed, 0 skipped (9 files) |
+
+In both exclusion directions, every refusal named the holder and came before
+any change. After each release, the next workflow ran. `NOW.md` records the
+details.
 
 ## What never happens
 

@@ -99,7 +99,7 @@ Run from the repo root:
 
 ```powershell
 cd J:\Kerno
-python -m pytest                            # unit tests; every live-database test skips, with its reason
+python -m pytest                            # live tests run if kerno_test is configured; otherwise they skip, with their reason
 python -m pytest --require-live-database    # live validation; fails unless kerno_test is configured and approved
 ```
 
