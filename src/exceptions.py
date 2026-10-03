@@ -57,14 +57,27 @@ class UnsupportedEventTypeError(ValueError):
 
 
 class DORAContractConflictError(Exception):
-    """Raised when a DORA contract write would duplicate a row its unique constraint protects.
+    """Raised when a DORA contract write conflicts with what the tenant has already recorded.
 
     Raised by dora_contract_service.create_contract when the tenant already has
     the contract_reference, and by add_contract_party when the exact
     (contract, organisation, party_role) tuple is already recorded. The
-    database constraint decides, via INSERT ... ON CONFLICT ON CONSTRAINT ...
-    DO NOTHING, so a concurrent duplicate lands here too. Nothing was written
-    and no ledger entry was appended; the caller's transaction is still usable.
-    Deliberately not a ValueError, so a handler for bad input cannot absorb a
-    conflict, and never raised for foreign-key or other integrity failures.
+    database constraint decides, via INSERT ... ON CONFLICT ... DO NOTHING, so
+    a concurrent duplicate lands here too. Also raised by
+    dora_contract_hierarchy_service.add_contract_relationship for a duplicate
+    active link, a second active parent, or a link that would close a cycle.
+    Nothing was written and no ledger entry was appended; the caller's
+    transaction is still usable. Deliberately not a ValueError, so a handler
+    for bad input cannot absorb a conflict, and never raised for foreign-key
+    or other integrity failures.
+    """
+
+
+class UnsupportedTransactionIsolationError(Exception):
+    """Raised when a write path that serialises on a transaction-scoped lock runs where that lock cannot work.
+
+    Raised by dora_contract_hierarchy_service before it reads or writes
+    anything, when the caller's transaction is not READ COMMITTED or the
+    connection is not inside a caller-owned transaction at all. The service
+    never changes the caller's isolation level to make the call succeed.
     """

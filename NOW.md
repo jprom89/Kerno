@@ -152,7 +152,8 @@ work is authorised.
 | **DORA-V2-000** | Place `DORA_MODEL_V2.md` and establish the authority hierarchy. Documentation only. | ✅ done (`0ae3df4`) |
 | **DORA-V2-001** | Organizations, identifiers, roles — `dora_organizations`, `dora_organization_identifiers`, `dora_organization_roles`; ENABLE + FORCE RLS; composite `(tenant_id, organization_id)` FKs; ledger via the existing `audit_log`. No API, no UI. | ✅ done (`3a8ca8e`; review follow-ups merged via PR #7) |
 | **DORA-V2-002A** | Contract records and signing parties — `dora_contracts`, `dora_contract_parties`; ENABLE + FORCE RLS; composite `(tenant_id, …)` FKs to contracts and organisations; duplicates decided by the unique constraints (controlled conflict); locking-read updates; ledger via the existing `audit_log`. No API, no UI, no hierarchy, costs, services or functions. Not a regulator-ready Register. | ✅ merged via PR #8 (`649fb69`); live-DB verification first ran on `kerno_dev` before TEST-SAFETY-001, and was repeated on `kerno_test` on 1 October 2026 (TEST-SAFETY-001 acceptance below: full suite and post-round-trip rerun passed, no skips) |
-| **DORA-V2-002 (remaining slices)** | Contract hierarchy (§7.3), contract costs (§7.4), ICT services, functions/designations | not started — each slice needs explicit approval |
+| **DORA-V2-002B** | Contract hierarchy (§7.3) — `dora_contract_relationships` (child → overarching parent); ENABLE + FORCE RLS; composite `(tenant_id, contract)` FKs at both ends; self-link and type CHECKs; a partial unique index allowing one active parent per child; append-and-deactivate history; cycles refused by the service, serialised per tenant on the existing ledger lock, READ COMMITTED only; ledger via the existing `audit_log`. Records links only — does not produce B_02.01.0020/0030, classify contracts, or infer "standalone". No API, no UI. Not customer-ready or regulator-ready. | implemented on branch `dora-v2-002b/contract-hierarchy`, pending independent review |
+| **DORA-V2-002 (remaining slices)** | Contract costs (§7.4), ICT services, functions/designations | not started — each slice needs explicit approval |
 | **DORA-V2-003 … 011** | Per `DORA_MODEL_V2.md` §36 | not started |
 
 **V2-001 review follow-ups (21 September 2026, branch
@@ -183,6 +184,21 @@ added `DORAContractConflictError`, deliberately contract-scoped (the ticket
 kept organisation remediation out of scope); whether organisations reuse it or
 a DORA-wide type replaces both is part of this decision.
 
+**Gate before any router or import exposes contract-hierarchy writes:**
+`add_contract_relationship` and `deactivate_contract_relationship` refuse to
+run outside a READ COMMITTED transaction the caller owns
+(`UnsupportedTransactionIsolationError`, before anything is read or written)
+and hold the tenant ledger lock until that transaction ends. The caller must
+open such a transaction, map `DORAContractConflictError` (duplicate, second
+parent, cycle) to one controlled conflict outcome, and keep the transaction
+short. Cycle prevention covers writers that use the service; raw SQL by the
+table owner can still write a cycle. Deadlocks remain possible over a whole
+caller transaction (the KER-107 per-transaction limitation, unchanged): once
+a hierarchy write has run, a later call in the same transaction that waits
+on a row lock — e.g. `update_contract` on a contract another transaction has
+already locked while it queues for the tenant lock — can deadlock, and so can
+locks taken earlier without ledgering. The service docstring records both.
+
 **Gate before any slice adds a way to deactivate or delete an organisation
 role:** `add_contract_party` requires `provider_signatory` and
 `intragroup_provider_signatory` organisations to hold an active `ict_provider`
@@ -192,9 +208,8 @@ the role row in that check or guard the rule in the database.
 
 ## Test-database safety — TEST-SAFETY-001 (prerequisite for every live-DB test)
 
-**Status: implemented on branch `test-safety/explicit-disposable-database`
-(draft PR #9), pending independent review. Live acceptance on `kerno_test`
-completed on 1 October 2026; the results are below.**
+**Status: merged to main via PR #9 (`a3a313e`). Live acceptance on
+`kerno_test` completed on 1 October 2026; the results are below.**
 
 - **Approval record (26 September 2026):**
   `kerno_test@127.0.0.1:5432/kerno_test` was approved as a disposable test
