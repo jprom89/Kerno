@@ -9,14 +9,18 @@ Five things happen to a webhook over its life, and all five live here:
      once (the service returns it; only the 201 response ever shows it).
   2. ``rotate_secret`` — replaces a registration's secret with a fresh one,
      returned once.
-  3. ``verify_and_resolve_tenant`` — the security gate for every inbound
-     delivery: loads the one registration named by X-Kerno-Webhook-Id,
-     recomputes HMAC-SHA256 over the raw body with that registration's
-     secret, compares in constant time, and returns the registration's
-     tenant. The tenant is NEVER taken from the request; tenant_id_hint is
-     diagnostics only. Unknown id, inactive registration, malformed header,
-     and wrong signature all raise the same error, so a caller cannot tell
-     which part failed.
+  3. ``parse_webhook_credentials`` and ``verify_and_resolve_tenant`` — the
+     security gate for every inbound delivery. The first is the one grammar
+     for the two authentication headers; the ingest route applies it before
+     reading the body (SEC-REMED-001), and it proves only that the headers
+     could authenticate something. The second applies the same grammar,
+     loads the one registration named by X-Kerno-Webhook-Id, recomputes
+     HMAC-SHA256 over the raw body with that registration's secret, compares
+     in constant time, and returns the registration's tenant. The tenant is
+     NEVER taken from the request; tenant_id_hint is diagnostics only.
+     Unknown id, inactive registration, malformed header, and wrong
+     signature all raise the same error, so a caller cannot tell which part
+     failed.
   4. ``is_duplicate`` / ``record_dedup`` — the idempotency memory: a
      (source_system, external_ref) pair seen inside
      WEBHOOK_DEDUP_WINDOW_HOURS is acknowledged without re-processing;
@@ -48,6 +52,7 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -62,6 +67,14 @@ _SIGNING_SECRET_BYTES = 32
 
 # The scheme prefix every X-Kerno-Signature value must carry.
 _SIGNATURE_PREFIX = "sha256="
+
+# The only X-Kerno-Signature value that can ever verify: the prefix followed
+# by exactly the 64 lower-case hex digits hmac.hexdigest() produces. Anything
+# else — another scheme, the wrong length, upper case, non-hex or non-ASCII
+# characters — is refused without a database read, with the same error as a
+# wrong signature. Upper case could never have matched the lower-case digest,
+# and non-ASCII would have made hmac.compare_digest raise TypeError.
+_SIGNATURE_PATTERN = re.compile(r"sha256=[0-9a-f]{64}")
 
 
 _INSERT_REGISTRATION = """
@@ -99,6 +112,14 @@ VALUES (:tenant_id, :source_system, :external_ref)
 ON CONFLICT ON CONSTRAINT uq_webhook_dedup_tenant_source_ref
 DO UPDATE SET received_at = now()
 """
+
+
+@dataclasses.dataclass(frozen=True)
+class WebhookCredentials:
+    """A delivery's two authentication headers in canonical form — plausible, NOT authenticated."""
+
+    webhook_id: str
+    signature_hex: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -165,27 +186,45 @@ def rotate_secret(conn, registration_id, tenant_id) -> str:
     return new_secret
 
 
+def parse_webhook_credentials(webhook_id, signature) -> WebhookCredentials:
+    """Return the delivery's authentication headers in canonical form, or raise WebhookAuthenticationError.
+
+    The single grammar for X-Kerno-Webhook-Id (a UUID) and X-Kerno-Signature
+    ('sha256=' plus 64 lower-case hex digits). Pure — no database, no body.
+    The ingest route calls it before receiving the body and
+    verify_and_resolve_tenant calls it again, so the two cannot disagree.
+    Passing it proves only that the headers COULD authenticate a delivery;
+    nothing is authenticated until the HMAC matches. One error for every
+    failure, so the format is not probeable.
+    """
+    return WebhookCredentials(
+        webhook_id=_canonical_webhook_id(webhook_id),
+        signature_hex=_extract_signature_hex(signature),
+    )
+
+
 def verify_and_resolve_tenant(conn, webhook_id: str, signature: str | None, body_bytes: bytes) -> str:
     """Authenticate a delivery and return the tenant it belongs to.
 
-    Loads the registration named by the X-Kerno-Webhook-Id header — a
-    deliberate PRE-CONTEXT read (the signature IS the authentication, so no
-    tenant context exists yet; the registrations table is RLS-without-FORCE
-    for exactly this). Recomputes HMAC-SHA256 over the raw request body with
-    the stored secret and compares constant-time. Raises
-    WebhookAuthenticationError for unknown/malformed id, inactive
-    registration, missing/malformed signature header, or HMAC mismatch —
-    one indistinguishable error for all causes.
+    Applies parse_webhook_credentials first, so a malformed header never
+    reaches the database. Then loads the registration named by the
+    X-Kerno-Webhook-Id header — a deliberate PRE-CONTEXT read (the signature
+    IS the authentication, so no tenant context exists yet; the
+    registrations table is RLS-without-FORCE for exactly this). Recomputes
+    HMAC-SHA256 over the exact raw body bytes with the stored secret and
+    compares constant-time. Raises WebhookAuthenticationError for
+    unknown/malformed id, inactive registration, missing/malformed signature
+    header, or HMAC mismatch — one indistinguishable error for all causes.
     """
-    provided_hex = _extract_signature_hex(signature)
-    row = _load_registration_for_verify(conn, webhook_id)
+    credentials = parse_webhook_credentials(webhook_id, signature)
+    row = _load_registration_for_verify(conn, credentials.webhook_id)
     tenant_id, signing_secret, is_active = str(row[0]), row[1], row[2]
     if not is_active:
         raise WebhookAuthenticationError("registration is inactive")
     expected_hex = hmac.new(
         signing_secret.encode("utf-8"), body_bytes, hashlib.sha256
     ).hexdigest()
-    if not hmac.compare_digest(expected_hex, provided_hex):
+    if not hmac.compare_digest(expected_hex, credentials.signature_hex):
         raise WebhookAuthenticationError("signature mismatch")
     return tenant_id
 
@@ -294,27 +333,32 @@ def normalise_event(event_type: str, external_ref: str, payload: dict) -> dict:
     return WebhookNormaliser().normalise(event_type, external_ref, payload)
 
 
-def _extract_signature_hex(signature: str | None) -> str:
-    """Return the hex digest from an 'sha256=<hex>' header value, or fail closed.
+def _extract_signature_hex(signature) -> str:
+    """Return the 64 hex digits from an 'sha256=<hex>' header value, or fail closed.
 
-    A missing header or any other scheme raises WebhookAuthenticationError —
-    the same error as a wrong signature, so the header format is not probeable.
+    Anything _SIGNATURE_PATTERN does not match in full — a missing header
+    included — raises WebhookAuthenticationError, the same error as a wrong
+    signature, so the header format is not probeable.
     """
-    if not signature or not signature.startswith(_SIGNATURE_PREFIX):
+    if not isinstance(signature, str) or _SIGNATURE_PATTERN.fullmatch(signature) is None:
         raise WebhookAuthenticationError("missing or malformed signature header")
     return signature[len(_SIGNATURE_PREFIX):]
 
 
-def _load_registration_for_verify(conn, webhook_id: str):
-    """Return the registration row for the ingest gate, or fail closed.
+def _canonical_webhook_id(webhook_id) -> str:
+    """Return the X-Kerno-Webhook-Id value as a canonical UUID string, or fail closed.
 
-    A non-UUID id and an unknown id raise the same WebhookAuthenticationError,
-    keeping unknown-id responses indistinguishable from bad signatures.
+    A non-UUID id raises the same WebhookAuthenticationError as an unknown
+    one, keeping it indistinguishable from a bad signature.
     """
     try:
-        canonical_id = str(uuid.UUID(str(webhook_id)))
+        return str(uuid.UUID(str(webhook_id)))
     except (ValueError, AttributeError, TypeError):
         raise WebhookAuthenticationError("unknown webhook id")
+
+
+def _load_registration_for_verify(conn, canonical_id: str):
+    """Return the registration row for an already canonical id, or fail closed with the unknown-id error."""
     row = conn.execute(_SELECT_REGISTRATION_FOR_VERIFY, {"id": canonical_id}).fetchone()
     if row is None:
         raise WebhookAuthenticationError("unknown webhook id")

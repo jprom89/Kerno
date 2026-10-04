@@ -8,10 +8,11 @@ How:   pytest tests/unit/api/test_dependencies.py -v
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterator
 
 import jwt
 import psycopg2
@@ -199,3 +200,29 @@ def get_conn() -> Generator:
         raise
     finally:
         pool.putconn(raw_conn)
+
+
+@contextlib.contextmanager
+def pooled_transaction() -> Iterator[_ExecutableConn]:
+    """Lease one pooled connection for one transaction: commit on success, roll back on any exception, return it once.
+
+    Unlike get_conn, nothing is leased until the caller enters the block, so a
+    route can finish slow, unauthenticated work first. Blocking: enter it from
+    a worker thread (run_in_threadpool), never on the event loop. The lease is
+    returned in the same thread that used it, after commit or rollback.
+    """
+    pool = _get_pool()
+    raw_conn = pool.getconn()
+    try:
+        yield _ExecutableConn(raw_conn)
+        raw_conn.commit()
+    except BaseException:
+        raw_conn.rollback()
+        raise
+    finally:
+        pool.putconn(raw_conn)
+
+
+def get_transaction_factory() -> Callable[[], contextlib.AbstractContextManager[_ExecutableConn]]:
+    """Return pooled_transaction itself, uncalled — a dependency that leases nothing (SEC-REMED-001)."""
+    return pooled_transaction

@@ -16,6 +16,7 @@ platform_engineer role.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -24,7 +25,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn, get_role, get_tenant_id
+from src.api.dependencies import get_conn, get_role, get_tenant_id, get_transaction_factory
 
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _OTHER_TENANT_ID = "b0000000-0000-4000-b000-000000000002"
@@ -82,10 +83,15 @@ class _SpyConn:
 
 
 def _ingest_app(spy: _SpyConn):
+    # Ingest opens its own transaction after bounded intake (SEC-REMED-001),
+    # so the spy is injected through the transaction factory, not get_conn.
     app = create_app()
-    def _conn():
+
+    @contextlib.contextmanager
+    def _transaction():
         yield spy
-    app.dependency_overrides[get_conn] = _conn
+
+    app.dependency_overrides[get_transaction_factory] = lambda: _transaction
     return TestClient(app)
 
 

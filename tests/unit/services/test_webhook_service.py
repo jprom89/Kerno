@@ -5,8 +5,10 @@ column binding), rotation (new secret, tenant scoping, unknown id), the HMAC
 verification gate (valid signature, tampered signature, missing/malformed
 header, unknown id, inactive registration — all failing with ONE
 indistinguishable error, and the registration lookup proven to be a
-pre-context read), the dedup window check and upsert, and the normaliser's
-four supported event types plus its unknown-type rejection.
+pre-context read), the one header grammar both the route and the gate apply
+(SEC-REMED-001: malformed headers never reach the database), the dedup
+window check and upsert, and the normaliser's four supported event types
+plus its unknown-type rejection.
 """
 
 from __future__ import annotations
@@ -25,9 +27,11 @@ from src.exceptions import (
     WebhookAuthenticationError,
 )
 from src.services.webhook_service import (
+    WebhookCredentials,
     WebhookNormaliser,
     is_duplicate,
     normalise_event,
+    parse_webhook_credentials,
     record_dedup,
     register_webhook,
     rotate_secret,
@@ -177,6 +181,63 @@ def test_verify_rejects_inactive_registration():
     spy = _SpyConn(row=(str(_TENANT_ID), _SECRET, False))
     with pytest.raises(WebhookAuthenticationError):
         verify_and_resolve_tenant(spy, _REGISTRATION_ID, _signature(_SECRET, _BODY), _BODY)
+
+
+# ── The one header grammar (SEC-REMED-001) ────────────────────────────────────
+
+_MALFORMED_SIGNATURES = (
+    None, "", "sha256", "sha256=", "sha1=" + "a" * 40, "SHA256=" + "a" * 64,
+    "sha256=" + "a" * 63, "sha256=" + "a" * 65, "sha256=" + "A" * 64, "sha256=" + "g" * 64,
+    " sha256=" + "a" * 64, "sha256=" + "a" * 64 + " ", "sha256=" + "é" * 64,
+)
+
+
+def test_parse_accepts_a_uuid_and_a_full_lowercase_digest_and_canonicalises_the_id():
+    digest = "0123456789abcdef" * 4
+    parsed = parse_webhook_credentials(_REGISTRATION_ID.upper(), f"sha256={digest}")
+    assert parsed == WebhookCredentials(webhook_id=_REGISTRATION_ID, signature_hex=digest)
+
+
+@pytest.mark.parametrize("bad_signature", _MALFORMED_SIGNATURES)
+def test_parse_refuses_every_signature_that_could_never_verify(bad_signature):
+    with pytest.raises(WebhookAuthenticationError):
+        parse_webhook_credentials(_REGISTRATION_ID, bad_signature)
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "not-a-uuid", "1234", 42])
+def test_parse_refuses_an_id_that_is_not_a_uuid(bad_id):
+    with pytest.raises(WebhookAuthenticationError):
+        parse_webhook_credentials(bad_id, _signature(_SECRET, _BODY))
+
+
+def test_parse_failures_are_one_indistinguishable_error_type():
+    failures = []
+    for webhook_id, signature in ((None, None), ("not-a-uuid", _signature(_SECRET, _BODY)), (_REGISTRATION_ID, "md5=x")):
+        with pytest.raises(WebhookAuthenticationError) as caught:
+            parse_webhook_credentials(webhook_id, signature)
+        failures.append(type(caught.value))
+    assert set(failures) == {WebhookAuthenticationError}
+
+
+@pytest.mark.parametrize("bad_signature", _MALFORMED_SIGNATURES)
+def test_verify_refuses_a_malformed_signature_without_touching_the_database(bad_signature):
+    spy = _SpyConn(row=(str(_TENANT_ID), _SECRET, True))
+    with pytest.raises(WebhookAuthenticationError):
+        verify_and_resolve_tenant(spy, _REGISTRATION_ID, bad_signature, _BODY)
+    assert spy.statements() == []
+
+
+def test_verify_refuses_a_malformed_id_without_touching_the_database():
+    spy = _SpyConn(row=(str(_TENANT_ID), _SECRET, True))
+    with pytest.raises(WebhookAuthenticationError):
+        verify_and_resolve_tenant(spy, "not-a-uuid", _signature(_SECRET, _BODY), _BODY)
+    assert spy.statements() == []
+
+
+def test_verify_still_accepts_every_value_the_parser_accepts():
+    spy = _SpyConn(row=(str(_TENANT_ID), _SECRET, True))
+    assert verify_and_resolve_tenant(spy, _REGISTRATION_ID.upper(), _signature(_SECRET, _BODY), _BODY) == str(_TENANT_ID)
+    assert spy.calls[0][1] == {"id": _REGISTRATION_ID}
 
 
 # ── dedup ─────────────────────────────────────────────────────────────────────

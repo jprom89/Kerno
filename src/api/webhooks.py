@@ -10,41 +10,70 @@ systems — Jira, CMDBs, anything — deliver events to the public ingest
 endpoint, authenticated not by JWT but by an HMAC-SHA256 signature over the
 raw request body.
 
-Ingest order of operations is security-critical and fixed:
-  1. Verify the signature FIRST, against the registration named by
-     X-Kerno-Webhook-Id. Any failure — unknown id, inactive registration,
-     missing/malformed header, wrong signature — is the same 401. The raw
-     body is read before any parsing so a signature failure can never
-     surface as a 422.
-  2. Only then parse and validate the body (bad JSON/shape -> 422).
-  3. Check the event type (unsupported -> 422).
-  4. Check the dedup window (repeat delivery -> 200, nothing written).
-  5. Normalise into context_records, record the dedup row, and append the
-     KER-107 ledger entry — all on one connection, so the record, the
-     dedup memory, and the audit entry commit or roll back together.
+Ingest order of operations is security-critical and fixed (SEC-REMED-001
+reordered the first three steps so an anonymous sender cannot hold a database
+connection):
+  1. Header plausibility, before the body is read and before any database
+     work: X-Kerno-Webhook-Id must be a UUID and X-Kerno-Signature must be
+     'sha256=' plus 64 lower-case hex digits (webhook_service's one grammar).
+     Missing or malformed -> 401, worded exactly like a bad signature.
+     Plausible headers are NOT authentication.
+  2. Bounded intake, still without a database connection: the raw body must
+     arrive in full within WEBHOOK_MAX_BODY_BYTES and within
+     WEBHOOK_BODY_DEADLINE_SECONDS in total. Over the size -> 413, too slow
+     -> 408, malformed Content-Length or a client that disconnects -> 400.
+     These limits apply BEFORE authentication: a delivery can be refused for
+     size or time without its signature ever being checked.
+  3. Only then, in a worker thread, lease one connection and verify the HMAC
+     over the exact bytes received, against the registration named by
+     X-Kerno-Webhook-Id. Unknown id, inactive registration, wrong signature
+     -> the same 401. A signature failure can never surface as a 422.
+  4. Parse and validate the body (bad JSON/shape -> 422), the event type
+     (unsupported -> 422) and any control_ref (unknown -> 422).
+  5. Check the dedup window (repeat delivery -> 200, nothing written).
+  6. Normalise into context_records, link the control if named, record the
+     dedup row, and append the KER-107 ledger entry — all in that one
+     transaction, so they commit or roll back together. Any failure rolls
+     back and returns the connection to the pool, once, from the thread that
+     used it.
 
 The tenant every accepted event lands under comes from the verified
 registration ONLY. The body's tenant_id_hint is logged for diagnostics and
 influences nothing (§13 KER-205 AC-3). Rate limiting for this public surface
-is the deferred gateway-level SEC-05 item (§9).
+is the deferred gateway-level SEC-05 item (§9). Two concurrent deliveries of
+the same (source_system, external_ref) can still both pass the dedup check —
+the separately reported dedup race, not addressed here.
 
 How to run or test
 ------------------
 Unit tests (no database required):
 
     pytest tests/unit/api/test_webhooks.py -v
+    pytest tests/unit/api/test_webhook_intake_bounds.py -v
+
+Live database (approved test database only):
+
+    pytest tests/integration/test_sec_remed_001_webhook_intake.py -m integration -v
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 
+import anyio
 import pydantic
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
-from config.constants import RbacRole
-from src.api.dependencies import get_conn, get_tenant_id, require_role
+from config.constants import (
+    WEBHOOK_BODY_DEADLINE_SECONDS,
+    WEBHOOK_MAX_BODY_BYTES,
+    RbacRole,
+)
+from src.api.dependencies import get_conn, get_tenant_id, get_transaction_factory, require_role
 from src.api.schemas.webhooks import (
     WebhookIngestRequest,
     WebhookIngestResponse,
@@ -60,6 +89,7 @@ from src.services.evidence_service import link_evidence
 from src.services.webhook_service import (
     is_duplicate,
     normalise_event,
+    parse_webhook_credentials,
     record_dedup,
     register_webhook,
     rotate_secret,
@@ -87,6 +117,14 @@ VALUES
 
 _STATUS_INGESTED = "ingested"
 _STATUS_DUPLICATE = "duplicate"
+
+# Response details for the ingest refusals. None names a registration or says
+# whether one exists; the 401 wording is identical for every cause.
+_INVALID_SIGNATURE = "invalid webhook signature"
+_INVALID_CONTENT_LENGTH = "invalid Content-Length"
+_BODY_TOO_LARGE = "webhook body exceeds the size limit"
+_BODY_TOO_SLOW = "webhook body was not received within the time limit"
+_BODY_INCOMPLETE = "webhook body was not received completely"
 
 # Resolves a delivery's human-readable control_ref to the catalogue UUID.
 # compliance_controls is global platform data (no tenant column), so this
@@ -171,27 +209,99 @@ def rotate_registration_secret(
 async def ingest_webhook(
     request: Request,
     response: Response,
-    conn=Depends(get_conn),
+    open_transaction=Depends(get_transaction_factory),
 ) -> WebhookIngestResponse:
     """Accept one signed webhook delivery (public — the signature is the auth).
 
-    Verifies HMAC-SHA256 over the RAW body before anything else, so a
-    signature failure is always 401 and never 422. Resolves the tenant from
-    the verified registration only, ignores tenant_id_hint for routing,
-    deduplicates within the window (repeat -> 200, no writes), then writes
-    the context record, the dedup row, and the KER-107 ledger entry on one
-    connection.
+    Checks the authentication headers' form, then receives the complete body
+    under the size and time limits, and only then leases a database
+    connection — in a worker thread — to verify the HMAC over the exact
+    bytes received and write the delivery in one transaction. Responses:
+    401 malformed headers or failed authentication (same detail); 400
+    malformed Content-Length or an incomplete body; 413 over the size limit;
+    408 over the time limit; 422 an authenticated but malformed or
+    unsupported delivery; 200 a duplicate; 201 ingested.
     """
-    body_bytes = await request.body()
+    webhook_id = request.headers.get("X-Kerno-Webhook-Id", "")
+    signature = request.headers.get("X-Kerno-Signature")
     try:
-        tenant_id = verify_and_resolve_tenant(
-            conn,
-            request.headers.get("X-Kerno-Webhook-Id", ""),
-            request.headers.get("X-Kerno-Signature"),
-            body_bytes,
-        )
+        credentials = parse_webhook_credentials(webhook_id, signature)
     except WebhookAuthenticationError:
-        raise HTTPException(status_code=401, detail="invalid webhook signature")
+        raise HTTPException(status_code=401, detail=_INVALID_SIGNATURE)
+    body_bytes = await _receive_bounded_body(request)
+    outcome = await run_in_threadpool(
+        _ingest_in_one_transaction, open_transaction, webhook_id, signature,
+        credentials.webhook_id, body_bytes,
+    )
+    if outcome.status == _STATUS_DUPLICATE:
+        response.status_code = status.HTTP_200_OK
+    return outcome
+
+
+async def _receive_bounded_body(request: Request) -> bytes:
+    """Return the complete raw body exactly as received, or refuse — never holding a database connection.
+
+    A declared Content-Length over WEBHOOK_MAX_BODY_BYTES is refused before
+    anything is read, but the cap is enforced on the bytes that actually
+    arrive: intake stops at the first chunk that crosses it and the rest is
+    never consumed. WEBHOOK_BODY_DEADLINE_SECONDS bounds the whole reception,
+    not each chunk. 413 over the size, 408 over the time, 400 for a client
+    that disconnects first.
+    """
+    _refuse_declared_oversize(request.headers.get("content-length"))
+    chunks: list[bytes] = []
+    received = 0
+    try:
+        with anyio.fail_after(WEBHOOK_BODY_DEADLINE_SECONDS):
+            async with contextlib.aclosing(request.stream()) as stream:
+                async for chunk in stream:
+                    received += len(chunk)
+                    if received > WEBHOOK_MAX_BODY_BYTES:
+                        raise HTTPException(status_code=413, detail=_BODY_TOO_LARGE)
+                    chunks.append(chunk)
+    except TimeoutError:
+        raise HTTPException(status_code=408, detail=_BODY_TOO_SLOW)
+    except ClientDisconnect:
+        raise HTTPException(status_code=400, detail=_BODY_INCOMPLETE)
+    return b"".join(chunks)
+
+
+def _refuse_declared_oversize(declared: str | None) -> None:
+    """Refuse, before reading anything, a malformed Content-Length (400) or one above the cap (413).
+
+    Only ASCII digits are a Content-Length (RFC 9110): int() alone would also
+    accept a sign, surrounding spaces and underscores.
+    """
+    if declared is None:
+        return
+    if not (declared.isascii() and declared.isdigit()):
+        raise HTTPException(status_code=400, detail=_INVALID_CONTENT_LENGTH)
+    if int(declared) > WEBHOOK_MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=_BODY_TOO_LARGE)
+
+
+def _ingest_in_one_transaction(
+    open_transaction, webhook_id: str, signature: str | None, canonical_webhook_id: str, body_bytes: bytes,
+) -> WebhookIngestResponse:
+    """Authenticate the complete body and write the delivery, in one leased transaction (worker thread).
+
+    The connection is leased on entry and returned on exit — after commit,
+    or after rollback when anything raises, the 401 and 422 refusals
+    included. Blocking psycopg2 work therefore never runs on the event loop,
+    and the lease is returned by the thread that used it, exactly once.
+    """
+    with open_transaction() as conn:
+        try:
+            tenant_id = verify_and_resolve_tenant(conn, webhook_id, signature, body_bytes)
+        except WebhookAuthenticationError:
+            raise HTTPException(status_code=401, detail=_INVALID_SIGNATURE)
+        return _process_authenticated_delivery(conn, tenant_id, canonical_webhook_id, body_bytes)
+
+
+def _process_authenticated_delivery(
+    conn, tenant_id: str, canonical_webhook_id: str, body_bytes: bytes,
+) -> WebhookIngestResponse:
+    """Validate an authenticated delivery and write it, or acknowledge a duplicate, on the caller's transaction."""
     event = _parse_ingest_body(body_bytes)
     _log_hint_for_diagnostics(event, tenant_id)
     try:
@@ -204,14 +314,10 @@ async def ingest_webhook(
     control_id = _resolve_control_ref(conn, event.control_ref)
     if is_duplicate(conn, tenant_id, event.source_system, event.external_ref):
         # A repeat delivery is acknowledged, not re-created: 200, zero writes.
-        response.status_code = status.HTTP_200_OK
         return WebhookIngestResponse(status=_STATUS_DUPLICATE, correlation_id=None)
     record_id = _persist_context_record(conn, tenant_id, event.source_system, normalised)
     if control_id is not None:
-        _link_ingested_evidence(
-            conn, tenant_id, control_id, record_id,
-            request.headers.get("X-Kerno-Webhook-Id", ""),
-        )
+        _link_ingested_evidence(conn, tenant_id, control_id, record_id, canonical_webhook_id)
     record_dedup(conn, tenant_id, event.source_system, event.external_ref)
     _record_ingest_ledger_entry(conn, tenant_id, record_id, event)
     return WebhookIngestResponse(status=_STATUS_INGESTED, correlation_id=record_id)

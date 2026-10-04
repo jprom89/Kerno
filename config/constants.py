@@ -344,6 +344,27 @@ TRUST_CENTER_CACHE_TTL_SECONDS: int = 300
 # system may have changed the underlying record).
 WEBHOOK_DEDUP_WINDOW_HOURS: int = 24
 
+# Bounded intake for the anonymous ingest endpoint (SEC-REMED-001, finding
+# resource-exhaustion.webhook-pool-lease). The body is received in full, under
+# both limits below, BEFORE a database connection is leased; until then an
+# unauthenticated sender holds only a coroutine and at most this many bytes.
+#
+# Largest raw request body POST /api/v1/webhooks/ingest will receive, in
+# bytes, counted as the bytes actually arrive — a declared Content-Length above
+# it is refused early, but is never what enforces it. 1 MiB: a delivery is one
+# JSON event (Jira issue change, CMDB asset change, one evidence submission),
+# normally a small fraction of that, so the cap leaves generous headroom while
+# keeping ten concurrent senders to about 10 MiB of buffered input.
+WEBHOOK_MAX_BODY_BYTES: int = 1024 * 1024
+
+# Total time allowed to receive that body, in seconds, from the first read to
+# the last byte. It is NOT reset by each chunk, so a sender drip-feeding small
+# chunks still runs out at this deadline. 10 s: receiving a body at the full
+# cap in time needs only about 105 KB/s, far below what a server-side webhook
+# sender delivers, while capping how long one anonymous request can occupy
+# the endpoint before any authentication.
+WEBHOOK_BODY_DEADLINE_SECONDS: float = 10.0
+
 # ---------------------------------------------------------------------------
 # Unit conversions
 # ---------------------------------------------------------------------------
