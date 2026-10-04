@@ -283,6 +283,36 @@ the role row in that check or guard the rule in the database.
   head as `main`. Nothing in this ticket changed it, and the 1 October
   acceptance runs did not connect to it.
 
+## Security findings — remediation (source assessment at `75f2bf18`)
+
+A static source-analysis assessment of revision
+`75f2bf185781fb15112546e19f917a19a6c94a50` (not a penetration test; none of
+its findings was dynamically reproduced by it) reported five findings. Each
+is remediated by its own `SEC-REMED-*` ticket on its own branch, merged only
+after independent review. The statuses below are evidence states, not
+closures.
+
+| Finding | Severity / confidence | Status |
+|---|---|---|
+| `resource-exhaustion.webhook-pool-lease` (SEC-REMED-001) | medium / medium | Source-established at `75f2bf18`. Reproduced at route level on 4 October 2026 — real ASGI app, recording pool, scripted receive stream: a connection was leased while an anonymous body was pending, and a 1-byte drip got no response after 3 s. Fixed and tested on branch `security/sec-remed-001-webhook-intake`; **pending independent review**. Not a browser or deployment test. |
+| `csrf.login-session-replacement` | medium / medium | source-established; not started |
+| `resource-exhaustion.evidence-buffering` | medium / medium | source-established; not started |
+| `race.register-audit-before-state` | low / high | source-established; not started |
+| `integrity.stale-recommendation-approval` | low / high | source-established; not started |
+
+Still open after SEC-REMED-001, so they are not mistaken for fixed:
+
+- **Webhook dedup race.** Two concurrent deliveries of the same
+  (source_system, external_ref) can both pass `is_duplicate` before either
+  records its dedup row. The assessment recorded it as an open question; it
+  is unchanged.
+- **No rate limit or concurrency cap on the public ingest endpoint** (SEC-05,
+  deferred). Each anonymous request now holds no database connection, but
+  still holds a coroutine and up to `WEBHOOK_MAX_BODY_BYTES` for up to
+  `WEBHOOK_BODY_DEADLINE_SECONDS`.
+- **Slow request headers** are bounded by the ASGI server or a gateway, not by
+  the route; nothing about that changed.
+
 ## Honest claim (demo, deck, outreach)
 
 Use only this sentence (already verified in `CLAUDE.md` §15):

@@ -13,6 +13,7 @@ Run: pytest tests/integration/test_ker205_evidence_link.py -m integration -v
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -22,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.app import create_app
-from src.api.dependencies import get_conn
+from src.api.dependencies import get_transaction_factory
 
 _CONTROL_UUID = str(uuid.UUID("c2050000-0000-4000-c000-000000000001"))
 _CONTROL_REF = "KER205-LINK-TEST"
@@ -31,13 +32,18 @@ _SECRET = "a1b2" * 16  # 64 chars, same shape as a real signing secret
 
 
 def _client(db_connection) -> TestClient:
-    """App wired to the live test connection, so writes hit the real database."""
+    """App wired to the live test connection, so writes hit the real database.
+
+    Ingest opens its own transaction after bounded intake (SEC-REMED-001), so
+    the connection is injected through the transaction factory, not get_conn.
+    """
     app = create_app()
 
-    def _conn():
+    @contextlib.contextmanager
+    def _transaction():
         yield db_connection
 
-    app.dependency_overrides[get_conn] = _conn
+    app.dependency_overrides[get_transaction_factory] = lambda: _transaction
     return TestClient(app)
 
 

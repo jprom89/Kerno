@@ -1,18 +1,26 @@
-"""Unit tests for _ExecutableConn and _convert_named_params in src/api/dependencies.py.
+"""Unit tests for _ExecutableConn, _convert_named_params and pooled_transaction in src/api/dependencies.py.
 
-Six tests prove that vector parameters are serialized as [v1,...,vN] strings and wrapped
+Proves that vector parameters are serialized as [v1,...,vN] strings and wrapped
 in CAST(... AS vector), scalars use %(name)s, and _ExecutableConn routes converted SQL
-with all param types through to the psycopg2 cursor correctly.
+with all param types through to the psycopg2 cursor correctly; and that the
+SEC-REMED-001 transaction factory leases nothing until entered, then commits or
+rolls back and returns its one lease exactly once.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
+
+import src.api.dependencies as dependencies
 from config.constants import EMBEDDING_DIMENSION
 from src.api.dependencies import (
     _ExecutableConn,
     _convert_named_params,
+    get_transaction_factory,
+    pooled_transaction,
 )
 
 _FULL_VECTOR = [0.1] * EMBEDDING_DIMENSION
@@ -93,3 +101,80 @@ def test_full_similarity_query_with_all_param_types():
     assert call_params["tenant_id"] == "t-uuid"
     assert call_params["result_limit"] == 5
     assert result.fetchall() == rows
+
+
+# ── pooled_transaction (SEC-REMED-001) ────────────────────────────────────────
+
+
+class _RecordingRawConn:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def commit(self) -> None:
+        self.events.append("commit")
+
+    def rollback(self) -> None:
+        self.events.append("rollback")
+
+
+class _RecordingPool:
+    def __init__(self) -> None:
+        self.raw = _RecordingRawConn()
+        self.getconn_calls = 0
+        self.returned: list[object] = []
+
+    def getconn(self):
+        self.getconn_calls += 1
+        return self.raw
+
+    def putconn(self, conn) -> None:
+        self.returned.append(conn)
+
+
+class _Abort(BaseException):
+    pass
+
+
+@pytest.fixture
+def pool(monkeypatch) -> _RecordingPool:
+    recording = _RecordingPool()
+    monkeypatch.setattr(dependencies, "_pool", recording)
+    return recording
+
+
+def test_the_transaction_factory_dependency_leases_nothing(pool):
+    factory = get_transaction_factory()
+    assert factory is pooled_transaction
+    pending = factory()
+    assert pool.getconn_calls == 0, "creating the context manager must not lease"
+    with pending:
+        assert pool.getconn_calls == 1
+
+
+def test_a_clean_block_commits_then_returns_the_lease_once(pool):
+    with pooled_transaction() as conn:
+        assert isinstance(conn, _ExecutableConn)
+    assert pool.raw.events == ["commit"]
+    assert pool.returned == [pool.raw]
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("write failed"), HTTPException(status_code=422), _Abort()])
+def test_any_exception_rolls_back_then_returns_the_lease_once_and_propagates(pool, failure):
+    with pytest.raises(type(failure)):
+        with pooled_transaction():
+            raise failure
+    assert pool.raw.events == ["rollback"]
+    assert pool.returned == [pool.raw]
+
+
+def test_a_failed_commit_rolls_back_and_still_returns_the_lease_once(pool):
+    def failing_commit():
+        pool.raw.events.append("commit")
+        raise RuntimeError("commit failed")
+
+    pool.raw.commit = failing_commit
+    with pytest.raises(RuntimeError, match="commit failed"):
+        with pooled_transaction():
+            pass
+    assert pool.raw.events == ["commit", "rollback"]
+    assert pool.returned == [pool.raw]
