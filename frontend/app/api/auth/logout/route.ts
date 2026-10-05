@@ -8,11 +8,15 @@
  * How:   called by the logout button. Tests: npm test.
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { SESSION_COOKIE } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
-export async function POST(): Promise<NextResponse> {
+/** Enforce the browser origin policy before parsing input or changing state. */
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const response = NextResponse.json({ ok: true });
   // Max-Age 0 tells the browser to drop the cookie immediately.
   response.cookies.set(SESSION_COOKIE, "", {

@@ -13,7 +13,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
+/** Relay the existing read request with backend authentication unchanged. */
 export async function GET(): Promise<NextResponse> {
   const backendResponse = await apiFetch("/api/v1/submissions/runs");
   return NextResponse.json(await backendResponse.json(), {
@@ -21,7 +23,10 @@ export async function GET(): Promise<NextResponse> {
   });
 }
 
+/** Enforce the browser origin policy before parsing input or changing state. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const backendResponse = await apiFetch("/api/v1/submissions/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

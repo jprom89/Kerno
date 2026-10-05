@@ -9,11 +9,15 @@
 import { NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
+/** Enforce the browser origin policy before parsing input or changing state. */
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ recordId: string; controlId: string }> },
 ): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { recordId, controlId } = await params;
   const backendResponse = await apiFetch(
     `/api/v1/evidence/${recordId}/links/${controlId}`,

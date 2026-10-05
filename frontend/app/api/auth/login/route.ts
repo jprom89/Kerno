@@ -15,12 +15,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiBaseUrl, SESSION_COOKIE } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
 // Mirrors the backend's JWT_EXPIRY_SECONDS (config/constants.py, 24 hours) so
 // the cookie dies no later than the token inside it.
 const SESSION_COOKIE_MAX_AGE_SECONDS = 86400;
 
+/** Enforce the browser origin policy before parsing input or changing state. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request, true);
+  if (rejection) return rejection;
   const { email, password, tenant_slug: tenantSlug } = await request.json();
   const backendResponse = await fetch(`${apiBaseUrl()}/api/v1/auth/login`, {
     method: "POST",

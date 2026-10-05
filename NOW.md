@@ -295,7 +295,7 @@ closures.
 | Finding | Severity / confidence | Status |
 |---|---|---|
 | `resource-exhaustion.webhook-pool-lease` (SEC-REMED-001) | medium / medium | Source-established at `75f2bf18`. Reproduced at route level on 4 October 2026 — real ASGI app, recording pool, scripted receive stream: a connection was leased while an anonymous body was pending, and a 1-byte drip got no response after 3 s. Fixed and tested on branch `security/sec-remed-001-webhook-intake`; **pending independent review**. Not a browser or deployment test. |
-| `csrf.login-session-replacement` | medium / medium | source-established; not started |
+| `csrf.login-session-replacement` (SEC-REMED-002) | medium / medium | Implemented on `security/sec-remed-002-login-csrf` (5 October 2026): explicit server-configured origin guard before login or cookie-authenticated mutations; JSON required for login. Focused tests 126 passed; full Jest 182 passed; TypeScript and production build passed. **Browser acceptance PENDING** (installed browsers fail to start under the tool account); **real-backend regression BLOCKED** (pytest/backend dependencies unavailable). Not fully closed; pending independent review. See `docs/sec_remed_002_login_csrf.md`. |
 | `resource-exhaustion.evidence-buffering` | medium / medium | source-established; not started |
 | `race.register-audit-before-state` | low / high | source-established; not started |
 | `integrity.stale-recommendation-approval` | low / high | source-established; not started |
