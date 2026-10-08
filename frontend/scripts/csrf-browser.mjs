@@ -6,12 +6,12 @@
  *      database, personal profile, real credentials or public listeners are used.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertRunning, cleanupOwned, closeServer, runWithCleanup, spawnOwned } from "./csrf-browser-resources.mjs";
 
 const frontend = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -24,36 +24,34 @@ const NOT_FOUND = 404;
 const READY_TIMEOUT_MS = 30000;
 const POLL_INTERVAL_MS = 200;
 const CHECK_TIMEOUT_MS = 15000;
+const READINESS_REQUEST_TIMEOUT_MS = 1000;
 const SYNTHETIC_PASSWORD = "only-for-this-disposable-test";
 const COOKIE = "kerno_session";
 const state = { loginCalls: 0, mutationCalls: 0, lastIdentity: null };
 const results = [];
 
 /** Launch the installed browser with its normal security defaults, without Playwright flags. */
-async function launchBrowser(profile) {
+async function launchBrowser(profile, resources) {
   assert(process.env.KERNO_BROWSER_EXECUTABLE, "Set KERNO_BROWSER_EXECUTABLE to an installed Chromium browser");
-  const child = spawn(process.env.KERNO_BROWSER_EXECUTABLE, ["--headless=new",
+  const record = spawnOwned(resources, "browserProcess", process.env.KERNO_BROWSER_EXECUTABLE, ["--headless=new",
     "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1",
     "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
   { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
-  child.stderr.on("data", (data) => process.stderr.write(data));
+  assertRunning(record);
+  record.child.stderr.on("data", (data) => process.stderr.write(data));
   const deadline = Date.now() + READY_TIMEOUT_MS;
-  try {
-    while (Date.now() < deadline) {
-      if (child.exitCode !== null) throw new Error(`Browser exited ${child.exitCode}`);
-      const activePort = join(profile, "DevToolsActivePort");
-      if (existsSync(activePort)) {
-        const [port] = readFileSync(activePort, "utf8").split(/\r?\n/);
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: READY_TIMEOUT_MS });
-        return { browser, child, context: browser.contexts()[0] };
-      }
-      await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
+  while (Date.now() < deadline) {
+    assertRunning(record);
+    const activePort = join(profile, "DevToolsActivePort");
+    if (existsSync(activePort)) {
+      const [port] = readFileSync(activePort, "utf8").split(/\r?\n/);
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: READY_TIMEOUT_MS });
+      resources.session = { browser, context: browser.contexts()[0] };
+      return resources.session;
     }
-    throw new Error("Installed browser did not expose its local test connection");
-  } catch (error) {
-    await stopFrontend(child);
-    throw error;
+    await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
   }
+  throw new Error("Installed browser did not expose its local test connection");
 }
 
 /** Return one of two deliberately fake accounts; neither can authenticate to Kerno. */
@@ -108,7 +106,7 @@ async function listen(server) {
 async function unusedPort() {
   const server = createServer();
   const port = await listen(server);
-  await new Promise((done) => server.close(done));
+  await closeServer(server);
   return port;
 }
 
@@ -132,7 +130,7 @@ function attackPage(request, response, target) {
 }
 
 /** Start the production frontend with an allowlist of OS variables and synthetic config. */
-function startFrontend(port, backendPort, tempRoot) {
+function startFrontend(port, backendPort, tempRoot, resources) {
   for (const name of [".env", ".env.local", ".env.production", ".env.production.local"]) {
     assert(!existsSync(join(frontend, name)), `Refusing a frontend containing ${name}`);
   }
@@ -143,18 +141,20 @@ function startFrontend(port, backendPort, tempRoot) {
   Object.assign(env, { NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
     KERNO_API_URL: `http://127.0.0.1:${backendPort}`, KERNO_TRUSTED_ORIGINS: `http://localhost:${port}`,
     TEMP: tempRoot, TMP: tempRoot });
-  return spawn(process.execPath, [join(frontend, "node_modules/next/dist/bin/next"),
+  return spawnOwned(resources, "frontendProcess", process.execPath, [join(frontend, "node_modules/next/dist/bin/next"),
     "start", "--hostname", "127.0.0.1", "--port", String(port)],
   { cwd: frontend, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /** Wait for the local production login page without ever contacting a real backend. */
-async function waitReady(port, child) {
+async function waitReady(port, record) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error(`Next.js exited ${child.exitCode}`);
+    assertRunning(record);
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/login`);
+      const response = await fetch(`http://127.0.0.1:${port}/login`, {
+        signal: AbortSignal.timeout(READINESS_REQUEST_TIMEOUT_MS),
+      });
       if (response.ok) return;
     } catch { /* Startup may not have bound the listener yet. */ }
     await new Promise((done) => setTimeout(done, POLL_INTERVAL_MS));
@@ -235,29 +235,8 @@ async function otherBoundaries(page, context, origin, attacker) {
   results.push({ check: "trusted text/plain refused; cross-site logout refused; legitimate logout succeeds", passed: true });
 }
 
-/** Stop only the test process this script created, then await its exit. */
-async function stopFrontend(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise((done) => child.once("exit", done));
-  child.kill();
-  await exited;
-}
-
-/** Close only resources made by this run and remove its checked disposable profile. */
-async function cleanup(resources, profile, tempRoot) {
-  if (resources.session) {
-    await resources.session.browser.close();
-    await stopFrontend(resources.session.child);
-  }
-  await stopFrontend(resources.frontendProcess);
-  if (resources.attackerServer) await new Promise((done) => resources.attackerServer.close(done));
-  await new Promise((done) => resources.backend.close(done));
-  assert.equal(dirname(realpathSync(profile)), realpathSync(tempRoot));
-  rmSync(profile, { recursive: true });
-}
-
 /** Execute the browser acceptance sequence and return its non-secret evidence record. */
-async function runBrowserChecks(context, origin, attacker, version) {
+async function runBrowserChecks(context, origin, attacker) {
   context.setDefaultTimeout(CHECK_TIMEOUT_MS);
   const page = await context.newPage();
   await rejectedForm(page, context, origin, attacker, false, false);
@@ -265,8 +244,6 @@ async function runBrowserChecks(context, origin, attacker, version) {
   await rejectedForm(page, context, origin, attacker);
   await rejectedForm(page, context, origin, attacker, true);
   await otherBoundaries(page, context, origin, attacker);
-  console.log(JSON.stringify({ evidence: "browser/frontend validation with a stubbed backend; not full-stack authentication validation",
-    browser: version, listeners: "127.0.0.1 only", origin, attacker, results }, null, 2));
 }
 
 /** Run a fresh isolated profile against local synthetic servers and always clean them up. */
@@ -279,21 +256,27 @@ async function main() {
     backendRequest(request, response).catch(() => respond(response, UNAUTHORIZED, { detail: "stub failure" }));
   });
   const resources = { backend };
-  try {
+  const evidence = { evidence: "browser/frontend validation with a stubbed backend; not full-stack authentication validation",
+    sourceSha: process.env.KERNO_VALIDATION_SOURCE_SHA ?? "unrecorded", browser: null,
+    listeners: "127.0.0.1 only", profile, results };
+  await runWithCleanup(async () => {
     const backendPort = await listen(backend);
     const port = await unusedPort();
     const origin = `http://localhost:${port}`;
     resources.attackerServer = createServer((req, res) => attackPage(req, res, `${origin}/api/auth/login`));
     const attacker = `http://127.0.0.1:${await listen(resources.attackerServer)}`;
-    resources.frontendProcess = startFrontend(port, backendPort, tempRoot);
-    resources.frontendProcess.stdout.on("data", () => {});
-    resources.frontendProcess.stderr.on("data", (data) => process.stderr.write(data));
+    resources.frontendProcess = startFrontend(port, backendPort, tempRoot, resources);
+    assertRunning(resources.frontendProcess);
+    resources.frontendProcess.child.stdout.on("data", () => {});
+    resources.frontendProcess.child.stderr.on("data", (data) => process.stderr.write(data));
     await waitReady(port, resources.frontendProcess);
-    resources.session = await launchBrowser(profile);
-    await runBrowserChecks(resources.session.context, origin, attacker, resources.session.browser.version());
-  } finally {
-    await cleanup(resources, profile, tempRoot);
-  }
+    resources.session = await launchBrowser(profile, resources);
+    Object.assign(evidence, { origin, attacker, browser: resources.session.browser.version() });
+    await runBrowserChecks(resources.session.context, origin, attacker);
+  }, () => cleanupOwned(resources, profile, tempRoot), (outcome) => {
+    console.log(JSON.stringify({ ...evidence, ...outcome,
+      exitCode: outcome.originalFailure || outcome.cleanup.errors.length ? 1 : 0 }, null, 2));
+  });
 }
 
 main().catch((error) => { console.error(error.message); process.exitCode = 1; });
