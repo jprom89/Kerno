@@ -74,7 +74,141 @@ Explicit exceptions:
 - There is no exception among the current Next.js POST/PATCH/DELETE handlers,
   including login (which creates a cookie before a session exists) and logout.
 
-## Executed validation, 5 October 2026
+## Continuation and validation, 8 October 2026
+
+The accepted authentication correction is unchanged. This continuation changes
+only the browser harness and its resource helper/tests, plus this document and
+the SEC-REMED-002 status in `NOW.md`. No application routes, database guards,
+dependency manifests or lockfiles changed.
+
+The harness registers child ownership and error listeners at launch, attempts
+each cleanup independently, and bounds process/listener/connection cleanup to
+five seconds per resource. It reports the original test failure separately
+from cleanup failures. It only terminates handles it created; it never searches
+for processes by name. A profile used by a launched browser is **retained**, even
+after parent exit, because descendant release cannot be proven. A never-used
+profile may be removed only after checking its real parent path. Timed-out owned
+child handles/pipes are unreferenced so they cannot indefinitely hold the test
+runner open. Acceptance functions and browser security flags were compared
+against the reviewed commit and are unchanged.
+
+### Source and execution environment
+
+All new test results below ran against local validation commit
+`1ea531ef367321238808991883926e0c8ffac851`, tree
+`8750a65ac658104407bcc83cfd0fd185c55038d7`, based on the reviewed
+`0ba9940cea7c080754148c148ee02a4bcd2ea3df`. The published harness commit is
+`13ba3e02f1849216028c9c3f0dbbfa37aa636538` with that **identical Git tree**;
+the local validation commit is preserved on a local backup branch. Publication
+used the existing GitHub connection after CLI push failed before authentication
+(`cannot spawn sh`, exit 1). The later evidence commit changes only documentation.
+
+Execution was in the restricted Windows tool account, in the existing isolated
+`work/Kerno-sec-remed-002` checkout, with Node 24.14.1, npm 11.11.0 and the
+existing Next.js 16.2.10 frontend dependencies. The owner checkout `J:\Kerno`
+and its untracked `AGENTS.md` were preserved. No new browser was launched in
+this continuation.
+
+### Unit/route tests and frontend checks
+
+Commands ran from `frontend/`, using `C:\Program Files\nodejs\node.exe` and
+`C:\Program Files\nodejs\npm.cmd`. These are new runs, not reused October 5
+totals.
+
+| Exact command | Exit | Actual result |
+| --- | --- | --- |
+| `node --test scripts/csrf-browser-resources.test.mjs` | 0 | 11 passed; 0 failed, skipped or cancelled; harmless doubles only |
+| `node --check scripts/csrf-browser.mjs` | 0 | Syntax passed; no browser execution |
+| `npm test -- --runInBand` | 0 | 15 suites, 182 tests passed; 0 failed or skipped, including helper/route tests |
+| `node node_modules/typescript/bin/tsc --noEmit` | 0 | Passed |
+| `npm run build` with `NEXT_TELEMETRY_DISABLED=1` | 0 | Passed; existing middleware-to-proxy deprecation warning |
+
+The 11 resource tests cover synchronous/asynchronous launch errors, already
+closed and unrelated handles, hanging exit waits, close/kill/listener failures,
+continued cleanup after failures, profile retention, original-error identity,
+unexpected cleanup exceptions and cleanup-only failures. No real server or
+browser is started by these tests.
+
+### Real backend regression: PASSED in the recorded environment
+
+Read-only discovery checked the known Kerno checkout environment paths and
+Python launcher metadata. Neither checkout had a virtual environment. The
+owner's Python 3.14 user-package directory was **inaccessible by Windows ACL**,
+including after a read grant; it was not established to be empty. The registered
+WindowsApps Python 3.11 executable was also access-denied. This corrects the
+earlier inference that the machine had no usable project dependencies.
+
+With the owner's explicit approval, a new `.venv` was created **only in this
+isolated checkout**, using `C:\Python314\python.exe -m venv .venv` (exit 0).
+`<project python> -m pip install --no-cache-dir -e '.[dev]'` initially exited 1
+on Windows path length inside Mistral. Repeating it with the same interpreter's
+Windows extended path (`\\?\C:\...\.venv\Scripts\python.exe`) exited 0;
+no system path-limit setting or global package was changed. A metadata probe
+verified `src`, `config`, `tests` and `tests._database_safety` resolve from this
+checkout and the editable installation points here, not an older checkout.
+
+Python was 3.14.3, pytest 9.1.1, psycopg2-binary 2.9.13, python-dotenv 1.2.4,
+FastAPI 0.143.0, Mistral 3.1.0 and pypdf 6.19.0. Both runs below used the same
+source SHA above and the unchanged TEST-SAFETY-001 workflow, with
+`KERNO_TEST_ENV_FILE=J:\Kerno\.env.test`. The existing loader alone read that
+file; its contents were not copied or displayed.
+
+| Exact command from repository root | Exit | Actual result |
+| --- | --- | --- |
+| `<project python> -m pytest --require-live-database` | 1 | 1,464 passed, 13 failed, 49 setup errors, 0 skipped, 225 warnings; 141.43 s |
+| `<project python> -m pip install --no-cache-dir 'SQLAlchemy==2.0.51'` | 0 | Local environment aligned with the version already in `uv.lock`; no manifest/lock changes |
+| `<project python> -m pip check` | 0 | No broken requirements |
+| `<project python> -m pytest --require-live-database` | 0 | **1,526 passed, 0 failed, 0 errors, 0 skipped**, 225 warnings; 226.91 s |
+
+The first run's 13 failures were 12 schema-parity tests and one database-safety
+unit test: freshly resolved SQLAlchemy 2.1.4 tried to import `psycopg`, whereas
+the installed driver and safety guard are psycopg2. All 49 setup errors were
+Windows access denials on the shared pytest temporary directory. The second
+run used SQLAlchemy **2.0.51 from this repository's existing lockfile** and a
+fresh task-owned temporary directory, set through `TEMP`, `TMP` and `TMPDIR`.
+No test, assertion, skip condition, connection guard or approval was disabled.
+No alternative database driver was installed to evade the guard. The successful
+result applies to this recorded dependency environment; an unconstrained fresh
+install that selects SQLAlchemy 2.1.4 still has the recorded incompatibility.
+
+The terminal reported `kerno_test@127.0.0.1:5432/kerno_test`; the existing guard
+verified target identity and held/re-proved its exclusive lock. No migrations,
+provisioning, password recovery, administrator connection or application backend
+server was run. Existing offline safety/provisioning unit tests used their
+synthetic doubles and refusal probes. Warnings include Python/SlowAPI and
+Alembic deprecations and short synthetic test-HMAC keys; none were suppressed.
+
+Private supporting logs, package metadata, exact interpreter/temp paths and the
+one owner-run browser command are in the assessment workspace's
+`outputs/SEC-REMED-002/` directory, outside the checkout. Original assessment
+artifacts were not changed.
+
+### Browser/frontend acceptance: PENDING owner execution
+
+No browser attempt was repeated in the restricted tool context. The available
+permission tool grants filesystem/network access but cannot launch the exact
+harness command as the ordinary owner Windows user. The supplied private
+`run-browser-acceptance-owner.ps1` is therefore the requested owner-run fallback;
+its syntax was checked (exit 0), but it **has not been executed**.
+
+It pins the final published SHA and branch, refuses tracked changes or frontend
+`.env` files, checks existing required paths, builds the frontend and runs the
+harness exactly once. Run it in a normal, non-administrator PowerShell window.
+It installs nothing and changes no execution policy or browser security settings.
+It records installed browser version, actual browser version on connection,
+each completed assertion, the original failure, cleanup outcomes and exit code.
+Its fresh output directory retains any profile used by a launched browser.
+No PostgreSQL participates in this browser test.
+
+This remains **browser/frontend validation with a stubbed backend**, not
+full-stack authentication validation. There is no new browser version/result,
+assertion pass or browser exit code to report until owner execution. The
+ticket remains open for that acceptance and review; the branch stays unmerged.
+
+## Historical validation, 5 October 2026
+
+The following records the earlier implementation attempt retained in reviewed
+commit `0ba9940cea7c080754148c148ee02a4bcd2ea3df`. Current results are above.
 
 Commands below ran in `frontend/`, except the backend command at repository
 root. Node and npm were the installed `C:\Program Files\nodejs` executables.
@@ -130,14 +264,8 @@ legitimate logout. It checks that rejected logins do not reach the stub and
 that the synthetic victim cookie and dashboard identity remain unchanged.
 These assertions are supplied for execution, not reported as completed.
 
-Example PowerShell setup (use actual existing paths; nothing is installed):
-
-```powershell
-$env:KERNO_PLAYWRIGHT_MODULE = '<absolute path to an existing playwright module>'
-$env:KERNO_BROWSER_EXECUTABLE = '<absolute path to an installed Chromium browser>'
-$env:KERNO_BROWSER_WORK_DIR = '<absolute path to a disposable writable work directory>'
-node scripts/csrf-browser.mjs
-```
+Use the one inspected owner-run command in the current private handoff, rather
+than repeating the failed tool-account launch.
 
 Run from a clean isolated frontend checkout with dependencies installed and
 `npm run build` completed. The harness refuses frontend `.env` files, starts
@@ -149,15 +277,10 @@ their ports, provide the cross-site test; the harness asserts
 debugging connection, bind to loopback. Normal loopback secure-context behavior
 is used; this is not deployment HTTPS validation. No PostgreSQL is involved.
 
-### Real-backend acceptance: BLOCKED
+### Historical real-backend attempt: could not start
 
-The available Python interpreter lacks pytest, psycopg2, SQLAlchemy, dotenv
-and FastAPI. The test workflow did not start, read database credentials or
-connect to any database. No application migrations or provisioning were run.
-Once the already-provisioned environment is available, run the repository's
-unchanged `python -m pytest --require-live-database` workflow against only
-owner-approved `kerno_test`, preserving every TEST-SAFETY-001 guard. Do not
-substitute `kerno_dev`, administrator access or an unguarded regression run.
-
-Implementation and route/build checks are complete; the ticket is **not fully
-closed**. Browser acceptance and real-backend regression remain as above.
+At that time the tested interpreter could not import pytest or the backend
+dependencies. That attempt did not start the workflow or connect to a database.
+It did not establish that no other project environment existed. The October 8
+discovery, approved local environment and completed regression supersede this
+blocker; the historical exit code remains recorded above.
