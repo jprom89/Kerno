@@ -55,6 +55,7 @@ function readLimits() {
   return { file, body: file + product("EVIDENCE_UPLOAD_ENVELOPE_ALLOWANCE_BYTES") };
 }
 
+/** Send a JSON response from the stub backend. */
 function respond(response, status, data) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(data));
@@ -88,6 +89,7 @@ async function listen(server) {
   return server.address().port;
 }
 
+/** Reserve an available loopback port long enough to select the Next.js listener. */
 async function unusedPort() {
   const server = createServer();
   const port = await listen(server);
@@ -112,6 +114,7 @@ function startFrontend(port, backendPort, tempRoot, resources) {
   { cwd: frontend, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
 }
 
+/** Wait for the production server's login page, failing if the process exits first. */
 async function waitReady(port, record) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -125,6 +128,7 @@ async function waitReady(port, record) {
   throw new Error("Isolated Next.js startup timed out");
 }
 
+/** A multipart body with a fixed boundary: one text file and a record_type field. */
 function multipart(content, filename = "policy.txt") {
   return Buffer.concat([
     Buffer.from(`--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n`
@@ -134,6 +138,7 @@ function multipart(content, filename = "policy.txt") {
   ]);
 }
 
+/** The request line and headers of an upload: chunked unless a length is given, with the session cookie if any. */
 function requestHead(port, { token, length }) {
   const lines = [`POST /api/evidence HTTP/1.1`, `Host: 127.0.0.1:${port}`, `Origin: http://127.0.0.1:${port}`,
     `Content-Type: multipart/form-data; boundary=${BOUNDARY}`];
@@ -142,6 +147,7 @@ function requestHead(port, { token, length }) {
   return lines.join("\r\n") + HEADER_END;
 }
 
+/** Frame one piece of body for Transfer-Encoding: chunked. */
 function chunkFrame(data) {
   return Buffer.concat([Buffer.from(`${data.length.toString(16)}\r\n`), data, Buffer.from("\r\n")]);
 }
@@ -184,6 +190,7 @@ function exchange(port, head, frames, finish) {
   });
 }
 
+/** Resolve when the socket can take more data, or has closed. */
 function drained(socket) {
   return new Promise((done) => {
     const resume = () => { socket.off("drain", resume); socket.off("close", resume); done(); };
@@ -192,6 +199,7 @@ function drained(socket) {
   });
 }
 
+/** Split a buffer into write-sized pieces without copying it. */
 function slices(buffer) {
   const list = [];
   for (let start = 0; start < buffer.length; start += WRITE_CHUNK_BYTES) list.push(buffer.subarray(start, start + WRITE_CHUNK_BYTES));
@@ -209,6 +217,7 @@ async function check(name, run) {
   return { outcome, calls };
 }
 
+/** Anonymous and forged-session uploads must be answered with 401 while their body is still incomplete. */
 async function unverifiedCallers(port) {
   for (const [name, token] of [["anonymous upload answered before its body completes", null],
     ["forged-session upload answered before its body completes", FORGED_TOKEN]]) {
@@ -221,6 +230,7 @@ async function unverifiedCallers(port) {
   }
 }
 
+/** Declared and unknown-length over-limit bodies must be refused and the connection closed, with nothing forwarded. */
 async function overLimitBodies(port) {
   const declared = await check("declared over-limit body refused before reading it", () => exchange(port,
     requestHead(port, { token: VALID_TOKEN, length: limits.body + 1 }), slices(Buffer.alloc(WRITE_CHUNK_BYTES, "x")), null));
@@ -241,6 +251,7 @@ async function overLimitBodies(port) {
   assert.deepEqual(streamed.calls, ["GET /api/v1/auth/me"]);
 }
 
+/** A small upload and a maximum-size one must reach the backend byte-identical, with the stub's 201 relayed. */
 async function validUploads(port) {
   for (const [name, content] of [["small text upload forwarded byte-identical", Buffer.from("Access review policy v2.")],
     ["maximum-size file forwarded byte-identical", Buffer.alloc(limits.file, "m")]]) {
@@ -255,6 +266,7 @@ async function validUploads(port) {
   }
 }
 
+/** Stop the owned server process and listener and remove the owned temporary directory, each independently. */
 async function cleanup(resources, tempRoot) {
   const errors = [];
   for (const [label, action] of [["frontend process", () => stopOwned(resources.frontendProcess, CLEANUP_TIMEOUT_MS)],
@@ -266,6 +278,7 @@ async function cleanup(resources, tempRoot) {
   return { errors };
 }
 
+/** Run every check against a fresh production server and always clean up, reporting evidence as JSON. */
 async function main() {
   const tempRoot = mkdtempSync(join(tmpdir(), "kerno-upload-intake-"));
   const resources = { backend: createServer((request, response) => {

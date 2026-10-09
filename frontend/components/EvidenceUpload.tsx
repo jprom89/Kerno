@@ -40,6 +40,7 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
+  /** Upload the chosen file, refusing one over the size limit before any request is sent. */
   async function handleUpload() {
     if (!file) {
       return;
@@ -50,26 +51,37 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
     }
     setUploading(true);
     setError(null);
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("record_type", recordType);
-    if (title.trim()) {
-      formData.append("title", title.trim());
-    }
     let response: Response;
     try {
-      response = await fetch("/api/evidence", { method: "POST", body: formData });
+      response = await fetch("/api/evidence", { method: "POST", body: uploadForm(file) });
     } catch {
       setError("Upload failed: the connection was interrupted.");
       setUploading(false);
       return;
     }
+    await reportOutcome(response, file);
+    setUploading(false);
+  }
+
+  /** Build the form the proxy forwards: the file, its type, and the title when one was given. */
+  function uploadForm(chosen: File): FormData {
+    const formData = new FormData();
+    formData.append("file", chosen);
+    formData.append("record_type", recordType);
+    if (title.trim()) {
+      formData.append("title", title.trim());
+    }
+    return formData;
+  }
+
+  /** Show a completed request's outcome: a success message and a cleared form, or the refusal. */
+  async function reportOutcome(response: Response, chosen: File) {
     if (response.ok) {
       const result = await response.json();
       onUploaded?.(
         result.deduplicated
-          ? `"${result.title ?? file.name}" was already in your evidence library.`
-          : `Uploaded "${result.title ?? file.name}".`,
+          ? `"${result.title ?? chosen.name}" was already in your evidence library.`
+          : `Uploaded "${result.title ?? chosen.name}".`,
       );
       setFile(null);
       setTitle("");
@@ -85,7 +97,6 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
           : `Upload failed: ${body.detail ?? response.status}`,
       );
     }
-    setUploading(false);
   }
 
   return (

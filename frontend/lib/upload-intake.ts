@@ -42,6 +42,7 @@ function refusal(status: number, detail: string): NextResponse {
   return NextResponse.json({ detail }, { status, headers: { Connection: "close" } });
 }
 
+/** The 413 for a body over the limit, declared or counted. */
 function tooLarge(): NextResponse {
   return refusal(CONTENT_TOO_LARGE_STATUS, "upload exceeds the size limit");
 }
@@ -94,6 +95,7 @@ export function rejectUnacceptableUpload(request: Request, maxBodyBytes: number)
   return Number(declared) > maxBodyBytes ? tooLarge() : null;
 }
 
+/** Join the received chunks into one buffer of the length already counted. */
 function concatenate(chunks: Uint8Array[], length: number): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(length);
   let offset = 0;
