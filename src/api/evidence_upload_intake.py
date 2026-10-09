@@ -117,6 +117,8 @@ def _refuse_by_headers(headers: Headers) -> None:
     Only ASCII digits are a Content-Length (RFC 9110): int() alone would also
     accept a sign, surrounding spaces and underscores. The declared length
     only allows an earlier refusal; the bytes that arrive are always counted.
+    Its size is compared without converting the whole string, see
+    _declares_more_than.
     """
     media_type, options = parse_options_header(headers.get("content-type"))
     if media_type.lower() != _MULTIPART_FORM_DATA:
@@ -128,8 +130,26 @@ def _refuse_by_headers(headers: Headers) -> None:
         return
     if not (declared.isascii() and declared.isdigit()):
         raise HTTPException(status_code=400, detail=_INVALID_CONTENT_LENGTH, headers=_CLOSE_CONNECTION)
-    if int(declared) > EVIDENCE_UPLOAD_MAX_BODY_BYTES:
+    if _declares_more_than(declared, EVIDENCE_UPLOAD_MAX_BODY_BYTES):
         raise HTTPException(status_code=413, detail=_BODY_TOO_LARGE, headers=_CLOSE_CONNECTION)
+
+
+def _declares_more_than(digits: str, limit: int) -> bool:
+    """Return whether a string of ASCII digits states a number above limit, without converting all of it.
+
+    int() refuses a decimal string longer than CPython's integer-conversion
+    limit (4,300 digits by default) with a ValueError, which here would be a
+    500. Leading zeros are allowed, since RFC 9110 defines Content-Length as
+    1*DIGIT, and they do not change the value: "0010" declares 10. After
+    stripping them, a value with more digits than the limit is above it, one
+    with fewer is not, and only a value of the limit's own length is ever
+    passed to int().
+    """
+    significant = digits.lstrip("0")
+    limit_digits = len(str(limit))
+    if len(significant) != limit_digits:
+        return len(significant) > limit_digits
+    return int(significant) > limit
 
 
 async def _receive_bounded_body(request: Request) -> bytes:

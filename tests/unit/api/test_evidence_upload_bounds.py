@@ -55,6 +55,8 @@ _TOKEN_LIFETIME_SECONDS = 3600
 _SMALL_FILE_LIMIT = 64
 _SMALL_BODY_LIMIT = 1024
 _SMALL_FIELD_LIMIT = 32
+# Far past CPython's default limit of 4,300 digits on int() of a decimal string.
+_LONG_DIGIT_COUNT = 10_000
 _CHUNK_BYTES = 256
 _LARGE_CHUNK_BYTES = 64 * 1024
 _RECORD_TYPE_COLUMN_CHARS = 64
@@ -379,6 +381,41 @@ def test_a_declared_over_limit_body_is_refused_without_reading_any_of_it(pool, s
     assert body.delivered == 0
     assert spooled == []
     assert pool.getconn_calls == 0
+
+
+@pytest.mark.parametrize("declared", ["9" * _LONG_DIGIT_COUNT, "1" + "0" * _LONG_DIGIT_COUNT],
+                         ids=["all-nines", "one-then-zeros"])
+def test_an_extremely_long_content_length_is_a_controlled_refusal_without_reading(pool, spooled, declared):
+    body = _ScriptedBody(_chunks(_upload_body(b"synthetic evidence")))
+    outcome = _send(create_app(), _headers(token=_token(), **{"Content-Length": declared}), body)
+    assert outcome.status == 413
+    assert outcome.headers.get("connection") == "close"
+    assert outcome.json() == {"detail": "upload exceeds the size limit"}
+    assert body.delivered == 0
+    assert spooled == []
+    assert pool.getconn_calls == 0
+
+
+def test_leading_zeros_do_not_lift_an_over_limit_declared_length(pool, spooled, small_limits):
+    body = _ScriptedBody(_chunks(_upload_body(b"synthetic evidence")))
+    declared = "0" * _LONG_DIGIT_COUNT + str(_SMALL_BODY_LIMIT + 1)
+    outcome = _send(create_app(), _headers(token=_token(), **{"Content-Length": declared}), body)
+    assert outcome.status == 413
+    assert body.delivered == 0
+    assert spooled == []
+    assert pool.getconn_calls == 0
+
+
+@pytest.mark.parametrize("declared", [str(_SMALL_BODY_LIMIT), "0" * _LONG_DIGIT_COUNT + str(_SMALL_BODY_LIMIT),
+                                      "0" * _LONG_DIGIT_COUNT],
+                         ids=["at-limit", "zero-padded-at-limit", "long-run-of-zeros"])
+def test_a_declared_length_within_the_limit_passes_whatever_its_leading_zeros(
+    small_limits, writable_app, audit_calls, declared,
+):
+    app, _connection = writable_app
+    outcome = _send(app, _headers(token=_token(), **{"Content-Length": declared}),
+                    _ScriptedBody(_chunks(_upload_body(b"synthetic evidence"))))
+    assert outcome.status == 201
 
 
 # ── c. The actual bytes received are the authority, whatever is declared ────
