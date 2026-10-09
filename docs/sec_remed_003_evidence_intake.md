@@ -26,6 +26,8 @@ Finding: `resource-exhaustion.evidence-buffering`, scope SEC-REMED-003 only.
 - **Reproduced at route level** here against the unfixed code at `94b3a01`.
 - **Fixed and tested** at `5804458` and `41ee7a6`. A real production
   Next.js server check passed at both, with a stub backend over loopback.
+- **Review corrections** were made at `c09554c` and `e151f83` after the
+  review of `d1bfb48`. See *Review corrections* below.
 - **Not covered:** this was not a browser test or a deployment test.
 - **Pending independent review.** The branch is unmerged.
 
@@ -139,6 +141,10 @@ envelope was not given the file's limit.
   ignored, or the last value won.
 - A second file, a third field, or a field over 4 KiB is now a 400. Before,
   1,000 files and 1 MiB fields were accepted.
+- A declared Content-Length may carry leading zeros, which are ignored:
+  `0010` declares 10. Since `c09554c`, a value too long for Python's `int()`
+  is compared by its significant digits, so a long over-limit value is a 413,
+  not a 500.
 - The proxy makes one extra backend call per upload, `GET /api/v1/auth/me`.
 - Refusals sent before the body is read close the connection. A client still
   sending at that moment may see a **connection reset instead of the 413**.
@@ -235,6 +241,57 @@ gave the same six outcomes. This confirms what the route tests could not:
 The harness was not run against the unfixed build, so it is evidence for the
 fixed SHAs only.
 
+## Review corrections, 9 October 2026
+
+The review of `d1bfb48` accepted the intake design and asked for two
+corrections. The results above stay tied to the SHAs they name; the results
+in this section are new.
+
+1. **A long numeric Content-Length** (`c09554c`). `_refuse_by_headers`
+   called `int()` on any string of ASCII digits. CPython refuses `int()` of a
+   decimal string longer than 4,300 digits with a `ValueError`, which the app
+   turned into a 500. `_declares_more_than` now strips leading zeros and
+   compares the number of significant digits with the limit's. It calls
+   `int()` only on a value of the limit's own length. Strict ASCII validation
+   is unchanged, and Python's integer-conversion setting is not touched.
+   Whether a header this long can reach the application at all, through
+   uvicorn's HTTP parser or a deployed proxy, is **unverified**: the tests
+   drive the ASGI app directly.
+2. **Upload form recovery** (`e151f83`). When the response arrived with a
+   success status but its body could not be read or decoded, the rejection
+   escaped, no message appeared, and the button stayed at "Uploading…". The
+   whole operation now runs inside `try`/`finally`, so the button is
+   restored on every path. Such a response is reported as unconfirmed, with
+   no claim that the document was or was not stored: *"The upload's result
+   could not be read, so it is unconfirmed. Reload the evidence list before
+   uploading this file again."* No success message runs, the chosen file is
+   kept, and nothing is sent again.
+
+| Run | Exit | Result |
+|---|---|---|
+| The new Content-Length tests against `d1bfb48` | 1 | **5 failed, 1 passed** of 6. Each failure was a 500 from the `ValueError`; the plain at-limit value passed. |
+| The new form tests against `d1bfb48` | 1 | **2 failed, 4 passed** of 6. Both unreadable-success cases showed no message and left the button at "Uploading…". |
+| `python -m pytest --require-live-database -p no:cacheprovider -rfEs` at `e151f83` | 0 | **1,583 passed**; 0 failed, errored or skipped |
+| `npx jest --runInBand` at `e151f83` | 0 | 18 suites, **244 passed** |
+| `node node_modules/typescript/bin/tsc --noEmit` | 0 | no errors |
+| `npx eslint` on the two changed frontend files | 0 | no findings |
+| `npm run build` | 0 | compiled; TypeScript passed |
+
+The new Content-Length tests send 10,000-digit values, all nines and a one
+followed by zeros. Each gets a 413 with `Connection: close`, with no body
+byte consumed, no spooled file and no database lease. A zero-padded
+over-limit value gets a 413. An at-limit value, a zero-padded at-limit value
+and a long run of zeros pass the header check, and the actual bytes are still
+counted. The new form tests cover a JSON-decoding failure, a body-read
+failure and a refused upload with an unreadable body. Each restores the
+button and makes exactly one request.
+
+The server harness was not re-run. Neither correction changes the proxy route
+or the intake helper it exercises: the form is client code, and the harness
+stubs the backend. Its results remain those recorded at `5804458` and
+`41ee7a6`. The separately tracked webhook Content-Length follow-up was not
+touched.
+
 ## Remaining limitations
 
 - **PDF parsing is not bounded by this change.** Decoded-output, page and CPU
@@ -266,6 +323,10 @@ fixed SHAs only.
 - **Private Starlette attribute.** The cleanup reads
   `_files_to_close_on_error`, an internal of Starlette 1.3.1, which is pinned
   in `uv.lock`. The cleanup tests fail if it changes.
+- **Long Content-Length reachability.** Whether a Content-Length too long for
+  `int()` can reach the application through uvicorn's HTTP parser or a
+  deployed proxy is unverified. The application now refuses it in a
+  controlled way either way.
 - **Lockfile drift.** The ordering was verified on the installed FastAPI
   0.138.1. `uv.lock` pins 0.139.0, a known gap recorded in CLAUDE.md §17.
 
@@ -304,14 +365,14 @@ happens to it.
 | Check | Result | Notes |
 |---|---|---|
 | Module docstring present | ✅ | |
-| All functions have docstrings | ✅ | checked with `ast` |
+| All functions have docstrings | ✅ | checked with `ast`, again after `c09554c` added `_declares_more_than` |
 | No spec notation in variable names | ✅ | |
 | No magic numbers | ✅ | only `+ 1` (permitted) and HTTP status codes, as in every router |
-| No function longer than 40 lines | ✅ | checked with `ast` |
+| No function longer than 40 lines | ✅ | checked with `ast`, again after `c09554c` |
 | Tenant isolation rule followed (if DB file) | N/A | no database access |
 | TenantContextMissingError raised on null/empty context | N/A | |
 
-**Tests:** `tests/unit/api/test_evidence_upload_bounds.py`, 44 ✅; `tests/integration/test_sec_remed_003_evidence_intake.py`, 7 ✅.
+**Tests:** `tests/unit/api/test_evidence_upload_bounds.py`, 44 ✅ at `5804458` and 50 ✅ at `c09554c`; `tests/integration/test_sec_remed_003_evidence_intake.py`, 7 ✅.
 **Open questions:** It relies on Starlette's private `_files_to_close_on_error` (see Remaining limitations); tests pin it.
 **Proceed to File 3?** Yes — all gates pass; the open point is recorded and tested.
 
@@ -395,19 +456,20 @@ first.
 ### ✅ File 7 Review — frontend/components/EvidenceUpload.tsx
 
 **What this file does:** It is the upload form. It now rejects a file that is
-too large without sending it, and recovers from a dropped connection.
+too large without sending it. Whatever happens to the request or its
+response, it gives the button back.
 
 | Check | Result | Notes |
 |---|---|---|
 | Module docstring present | ✅ | |
-| All functions have docstrings | ✅ | `handleUpload`, `uploadForm` and `reportOutcome` have doc comments; the component itself is documented by the module docstring, as before |
+| All functions have docstrings | ✅ | at `e151f83`, `handleUpload`, `sendUpload`, `uploadForm`, `reportStored` and `reportRefusal` have doc comments; the component itself is documented by the module docstring, as before |
 | No spec notation in variable names | ✅ | |
 | No magic numbers | ✅ | |
-| No function longer than 40 lines | ✅ | the size check and the recovery took `handleUpload` from 36 to 47 lines; `41ee7a6` split it into 21, 9 and 23 lines. The component function was already over 40 lines because of its markup, which is unchanged |
+| No function longer than 40 lines | ✅ | the size check and the recovery took `handleUpload` from 36 to 47 lines; `41ee7a6` split it into 21, 9 and 23 lines. At `e151f83` the five functions are 16, 14, 9, 20 and 8 lines. The component function was already over 40 lines because of its markup, which is unchanged |
 | Tenant isolation rule followed (if DB file) | N/A | |
 | TenantContextMissingError raised on null/empty context | N/A | |
 
-**Tests:** `__tests__/evidence-upload.test.tsx`, 3 ✅.
+**Tests:** `__tests__/evidence-upload.test.tsx`, 3 ✅ at `41ee7a6` and 6 ✅ at `e151f83`.
 **Open questions:** None — ready to proceed.
 **Proceed to File 8?** Yes — all gates pass, no open questions.
 
