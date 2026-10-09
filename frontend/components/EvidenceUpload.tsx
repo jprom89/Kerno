@@ -8,7 +8,9 @@
  *        FastAPI directly). A file over the shared size limit is refused here,
  *        before any request: the proxy closes the connection on an over-limit
  *        body (SEC-REMED-003), which a browser may report as a network error
- *        rather than a 413. Tests: npm test -- evidence-upload.
+ *        rather than a 413. Whatever happens, including a response whose body
+ *        cannot be read, the Upload button is restored, and nothing is retried.
+ *        Tests: npm test -- evidence-upload.
  */
 
 "use client";
@@ -25,6 +27,19 @@ const ACCEPTED_EXTENSIONS = ".txt,.md,.csv,.pdf";
 const RECORD_TYPES = ["policy", "report", "runbook", "assessment", "attestation", "evidence"];
 
 const TOO_LARGE_MESSAGE = "That file is too large.";
+const INTERRUPTED_MESSAGE = "Upload failed: the connection was interrupted.";
+
+// A success status whose body cannot be read or decoded: the document may or
+// may not have been stored, so neither outcome is claimed, the form is kept,
+// and nothing is sent again automatically.
+const UNCONFIRMED_MESSAGE = "The upload's result could not be read, so it is unconfirmed. "
+  + "Reload the evidence list before uploading this file again.";
+
+/** The parts of a stored upload's response that the success message uses. */
+interface UploadResult {
+  title?: string | null;
+  deduplicated?: boolean;
+}
 
 interface EvidenceUploadProps {
   onUploaded?: (message: string) => void;
@@ -51,16 +66,27 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
     }
     setUploading(true);
     setError(null);
+    try {
+      await sendUpload(file);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  /** Post the file once and report what came back; nothing here retries. */
+  async function sendUpload(chosen: File) {
     let response: Response;
     try {
-      response = await fetch("/api/evidence", { method: "POST", body: uploadForm(file) });
+      response = await fetch("/api/evidence", { method: "POST", body: uploadForm(chosen) });
     } catch {
-      setError("Upload failed: the connection was interrupted.");
-      setUploading(false);
+      setError(INTERRUPTED_MESSAGE);
       return;
     }
-    await reportOutcome(response, file);
-    setUploading(false);
+    if (response.ok) {
+      await reportStored(response, chosen);
+    } else {
+      await reportRefusal(response);
+    }
   }
 
   /** Build the form the proxy forwards: the file, its type, and the title when one was given. */
@@ -74,29 +100,36 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
     return formData;
   }
 
-  /** Show a completed request's outcome: a success message and a cleared form, or the refusal. */
-  async function reportOutcome(response: Response, chosen: File) {
-    if (response.ok) {
-      const result = await response.json();
-      onUploaded?.(
-        result.deduplicated
-          ? `"${result.title ?? chosen.name}" was already in your evidence library.`
-          : `Uploaded "${result.title ?? chosen.name}".`,
-      );
-      setFile(null);
-      setTitle("");
-      if (inputRef.current) {
-        inputRef.current.value = "";
-      }
-      router.refresh();
-    } else {
-      const body = await response.json().catch(() => ({}));
-      setError(
-        response.status === 413
-          ? TOO_LARGE_MESSAGE
-          : `Upload failed: ${body.detail ?? response.status}`,
-      );
+  /** Confirm a stored upload and clear the form, or report it unconfirmed when its result cannot be read. */
+  async function reportStored(response: Response, chosen: File) {
+    let result: UploadResult;
+    try {
+      result = await response.json();
+    } catch {
+      setError(UNCONFIRMED_MESSAGE);
+      return;
     }
+    onUploaded?.(
+      result.deduplicated
+        ? `"${result.title ?? chosen.name}" was already in your evidence library.`
+        : `Uploaded "${result.title ?? chosen.name}".`,
+    );
+    setFile(null);
+    setTitle("");
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+    router.refresh();
+  }
+
+  /** Show why the upload was refused, using the backend's detail when it can be read. */
+  async function reportRefusal(response: Response) {
+    const body = await response.json().catch(() => ({}));
+    setError(
+      response.status === 413
+        ? TOO_LARGE_MESSAGE
+        : `Upload failed: ${body.detail ?? response.status}`,
+    );
   }
 
   return (
