@@ -7,20 +7,22 @@ Why:   before this, evidence could only arrive by webhook and could not be
        linked at all — so a customer could ingest perfectly and still score
        every control "gap, no evidence". This is the surface that makes the
        evidence base usable by a human.
-How:   thin translation only. Text extraction lives in evidence_intake, the
-       link upsert in evidence_service; the tenant and the acting user always
-       come from the verified JWT, never the request.
-       pytest tests/unit/api/test_evidence.py -v
+How:   thin translation only. Upload intake (limits, multipart parsing) lives
+       in src/api/evidence_upload_intake, text extraction in evidence_intake,
+       the link upsert in evidence_service; the tenant and the acting user
+       always come from the verified JWT, never the request.
+       pytest tests/unit/api/test_evidence.py tests/unit/api/test_evidence_upload_bounds.py -v
 """
 
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config.constants import UPLOAD_SOURCE_SYSTEM
 from src.api.dependencies import get_conn, get_tenant_id, require_role
+from src.api.evidence_upload_intake import ReceivedEvidenceUpload, receive_evidence_upload
 # get_reviewer_id is the existing verified-JWT user identity (KER-202); reused
 # so linked_by names the same verified actor that override attribution does.
 from src.api.routers.overrides import get_reviewer_id
@@ -112,26 +114,49 @@ RETURNING link_id
 
 _NOT_FOUND_DETAIL = "evidence record or control not found"
 
+# The upload body is read by a dependency rather than declared as File() and
+# Form() parameters (which FastAPI would parse before authenticating), so the
+# OpenAPI document is told its shape explicitly.
+_UPLOAD_REQUEST_BODY = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["file", "record_type"],
+                    "properties": {
+                        "file": {"type": "string", "format": "binary"},
+                        "record_type": {"type": "string"},
+                        "title": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+}
 
-@router.post("", status_code=201)
+
+@router.post("", status_code=201, openapi_extra=_UPLOAD_REQUEST_BODY)
 def upload_evidence(
-    file: UploadFile = File(...),
-    record_type: str = Form(...),
-    title: str | None = Form(default=None),
     tenant_id: str = Depends(get_tenant_id),
     user_id: str = Depends(get_reviewer_id),
     rbac_role: str = Depends(require_role(*EVIDENCE_CAPABLE_ROLES)),
+    upload: ReceivedEvidenceUpload = Depends(receive_evidence_upload),
     conn=Depends(get_conn),
 ) -> EvidenceUploadResponse:
     """Store one uploaded document as an evidence record for this tenant.
 
-    Extracts text (the original bytes are not retained — §16 decision 2),
-    fingerprints it, and returns the EXISTING record when the same content was
-    already uploaded rather than creating a duplicate. Unsupported file type →
-    422; unreadable content → 422; oversize → 413.
+    The parameter order is the SEC-REMED-003 boundary: FastAPI resolves these
+    dependencies in declaration order, so the token and role are checked
+    before any body byte is read, and the bounded upload is received before a
+    database connection is leased. Do not reorder them. Extracts text (the
+    original bytes are not retained, §16 decision 2), fingerprints it, and
+    returns the EXISTING record when the same content was already uploaded.
+    Intake refusals are listed on receive_evidence_upload; unsupported file
+    type or unreadable content → 422; oversize → 413.
     """
-    content = file.file.read()
-    text = _extract_or_reject(file.filename or "", content)
+    text = _extract_or_reject(upload.filename, upload.content)
     content_hash = content_fingerprint(text)
     set_tenant_context(conn, tenant_id)
 
@@ -140,17 +165,26 @@ def upload_evidence(
     ).fetchone()
     if existing is not None:
         return _upload_response(existing, deduplicated=True)
+    return _store_new_upload(conn, tenant_id, user_id, rbac_role, upload, text, content_hash)
 
+
+def _store_new_upload(
+    conn, tenant_id: str, user_id: str, rbac_role: str,
+    upload: ReceivedEvidenceUpload, text: str, content_hash: str,
+) -> EvidenceUploadResponse:
+    """Insert a new evidence record and its KER-107 ledger entry on the caller's transaction."""
     record_id = str(uuid.uuid4())
+    external_id = external_id_for(upload.filename or "upload")
+    title = upload.title or external_id
     conn.execute(
         _INSERT_RECORD,
         {
             "record_id": record_id,
             "tenant_id": tenant_id,
             "source_system": UPLOAD_SOURCE_SYSTEM,
-            "external_id": external_id_for(file.filename or "upload"),
-            "record_type": record_type,
-            "title": title or external_id_for(file.filename or "upload"),
+            "external_id": external_id,
+            "record_type": upload.record_type,
+            "title": title,
             "body": text,
             "content_hash": content_hash,
         },
@@ -160,17 +194,12 @@ def upload_evidence(
     ).fetchone()[0]
     _record_evidence_audit(
         conn, tenant_id, user_id, rbac_role, "evidence_uploaded", record_id,
-        {"external_id": external_id_for(file.filename or ""), "record_type": record_type},
+        {"external_id": external_id_for(upload.filename), "record_type": upload.record_type},
     )
     return EvidenceUploadResponse(
-        record_id=record_id,
-        source_system=UPLOAD_SOURCE_SYSTEM,
-        external_id=external_id_for(file.filename or "upload"),
-        record_type=record_type,
-        title=title or external_id_for(file.filename or "upload"),
-        content_hash=content_hash,
-        created_at=created_at,
-        deduplicated=False,
+        record_id=record_id, source_system=UPLOAD_SOURCE_SYSTEM, external_id=external_id,
+        record_type=upload.record_type, title=title, content_hash=content_hash,
+        created_at=created_at, deduplicated=False,
     )
 
 

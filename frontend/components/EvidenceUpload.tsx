@@ -5,7 +5,10 @@
  * Why:   this is the step that did not exist — a customer had no way to get a
  *        document into Kerno at all except by wiring signed webhooks.
  * How:   posts multipart to the /api/evidence proxy (the browser never calls
- *        FastAPI directly). Tests: npm test.
+ *        FastAPI directly). A file over the shared size limit is refused here,
+ *        before any request: the proxy closes the connection on an over-limit
+ *        body (SEC-REMED-003), which a browser may report as a network error
+ *        rather than a 413. Tests: npm test -- evidence-upload.
  */
 
 "use client";
@@ -13,11 +16,15 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
+import { MAX_EVIDENCE_FILE_BYTES } from "@/lib/evidence-upload-limits";
+
 // Mirrors config.constants.SUPPORTED_EVIDENCE_EXTENSIONS — the backend rejects
 // anything else with a 422, so the picker offers only what will succeed.
 const ACCEPTED_EXTENSIONS = ".txt,.md,.csv,.pdf";
 
 const RECORD_TYPES = ["policy", "report", "runbook", "assessment", "attestation", "evidence"];
+
+const TOO_LARGE_MESSAGE = "That file is too large.";
 
 interface EvidenceUploadProps {
   onUploaded?: (message: string) => void;
@@ -37,6 +44,10 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
     if (!file) {
       return;
     }
+    if (file.size > MAX_EVIDENCE_FILE_BYTES) {
+      setError(TOO_LARGE_MESSAGE);
+      return;
+    }
     setUploading(true);
     setError(null);
     const formData = new FormData();
@@ -45,7 +56,14 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
     if (title.trim()) {
       formData.append("title", title.trim());
     }
-    const response = await fetch("/api/evidence", { method: "POST", body: formData });
+    let response: Response;
+    try {
+      response = await fetch("/api/evidence", { method: "POST", body: formData });
+    } catch {
+      setError("Upload failed: the connection was interrupted.");
+      setUploading(false);
+      return;
+    }
     if (response.ok) {
       const result = await response.json();
       onUploaded?.(
@@ -63,7 +81,7 @@ export default function EvidenceUpload({ onUploaded }: EvidenceUploadProps) {
       const body = await response.json().catch(() => ({}));
       setError(
         response.status === 413
-          ? "That file is too large."
+          ? TOO_LARGE_MESSAGE
           : `Upload failed: ${body.detail ?? response.status}`,
       );
     }

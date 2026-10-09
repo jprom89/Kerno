@@ -430,6 +430,35 @@ SUPPORTED_EVIDENCE_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".csv"
 # from webhook-ingested records (which carry their sender's system).
 UPLOAD_SOURCE_SYSTEM: str = "upload"
 
+# Bounded intake for POST /api/v1/evidence (SEC-REMED-003, finding
+# resource-exhaustion.evidence-buffering). The token and role are checked
+# first; then the whole request body is received, counted as the bytes
+# actually arrive, BEFORE any multipart parsing. MAX_EVIDENCE_UPLOAD_BYTES
+# above stays the limit on the file itself; these bound everything around it.
+# frontend/lib/evidence-upload-limits.ts mirrors the file and body limits for
+# the Next.js proxy, and a test fails if the two drift apart.
+#
+# Room for everything in a valid upload that is not file content: three parts'
+# boundaries and headers (a long browser-supplied filename included) plus the
+# record_type and title values. Two fields at EVIDENCE_UPLOAD_MAX_FIELD_BYTES
+# and generous part headers stay far below it, so a file of exactly
+# MAX_EVIDENCE_UPLOAD_BYTES is never refused because of its envelope.
+EVIDENCE_UPLOAD_ENVELOPE_ALLOWANCE_BYTES: int = 64 * 1024
+
+# Largest request body either intake path will receive for one upload.
+EVIDENCE_UPLOAD_MAX_BODY_BYTES: int = (
+    MAX_EVIDENCE_UPLOAD_BYTES + EVIDENCE_UPLOAD_ENVELOPE_ALLOWANCE_BYTES
+)
+
+# Largest value accepted for one non-file field (record_type, title). The
+# record_type column is VARCHAR(64); 4 KiB leaves a title ample room.
+EVIDENCE_UPLOAD_MAX_FIELD_BYTES: int = 4 * 1024
+
+# Parts accepted in one upload: the one document, plus record_type and an
+# optional title. Anything more is refused while parsing, before any read.
+EVIDENCE_UPLOAD_MAX_FILES: int = 1
+EVIDENCE_UPLOAD_MAX_FIELDS: int = 2
+
 # ---------------------------------------------------------------------------
 # Frozen DORA filing download
 # ---------------------------------------------------------------------------
