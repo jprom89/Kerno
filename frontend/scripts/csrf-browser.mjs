@@ -1,5 +1,8 @@
 /**
- * What: validate the real production Next.js/browser cookie boundary for SEC-REMED-002.
+ * What: validate the real production Next.js/browser cookie boundary for SEC-REMED-002:
+ *       cross-site login and logout forms, the opaque-origin form, the login media-type
+ *       gate, and the export GET's Fetch Metadata gate (cross-site and direct navigations
+ *       refused, the dashboard's own export served).
  * Why: route mocks cannot prove that a cross-site form leaves a browser session intact.
  * How: build first, then node scripts/csrf-browser.mjs. Requires an existing Playwright
  *      module and Chromium browser; see docs/sec_remed_002_login_csrf.md. No installs,
@@ -27,8 +30,10 @@ const CHECK_TIMEOUT_MS = 15000;
 const READINESS_REQUEST_TIMEOUT_MS = 1000;
 const SYNTHETIC_PASSWORD = "only-for-this-disposable-test";
 const COOKIE = "kerno_session";
-const state = { loginCalls: 0, mutationCalls: 0, lastIdentity: null };
+const state = { loginCalls: 0, mutationCalls: 0, exportCalls: 0, lastIdentity: null };
 const results = [];
+const EXPORT_FAMILY = "synthetic_family";
+const EXPORT_ATTACHMENT = 'attachment; filename="kerno-evidence-pack-synthetic.json"';
 
 /** Launch the installed browser with its normal security defaults, without Playwright flags. */
 async function launchBrowser(profile, resources) {
@@ -60,8 +65,8 @@ function credentials(identity) {
 }
 
 /** Write a small JSON response without logging tokens or credentials. */
-function respond(response, status, data) {
-  response.writeHead(status, { "content-type": "application/json" });
+function respond(response, status, data, extraHeaders = {}) {
+  response.writeHead(status, { "content-type": "application/json", ...extraHeaders });
   response.end(JSON.stringify(data));
 }
 
@@ -92,7 +97,12 @@ async function backendRequest(request, response) {
     return respond(response, HTTP_OK, { total_controls: 0, met: 0, partial: 0, gap: 0,
       categories: [], last_recalculated_at: null });
   }
-  if (request.url === "/api/v1/coverage/controls") return respond(response, HTTP_OK, []);
+  if (request.url.startsWith("/api/v1/coverage/controls")) return respond(response, HTTP_OK, []);
+  if (request.url.startsWith("/api/v1/export/evidence-pack?")) {
+    // Counts every authenticated call that reaches it, like the real route's ledger entry would.
+    state.exportCalls += 1;
+    return respond(response, HTTP_OK, { synthetic_pack: true }, { "content-disposition": EXPORT_ATTACHMENT });
+  }
   return respond(response, NOT_FOUND, { detail: "stub route not implemented" });
 }
 
@@ -119,12 +129,13 @@ function attackForm(target) {
     field.name = ${JSON.stringify(name)}; field.value = '\"}';</script>`;
 }
 
-/** Serve only local synthetic attack pages, including an opaque-origin sandbox form. */
-function attackPage(request, response, target) {
-  const form = attackForm(target);
+/** Serve only local synthetic attack pages: the login form, an opaque-origin sandbox form, and a cross-site export link. */
+function attackPage(request, response, origin) {
+  const form = attackForm(`${origin}/api/auth/login`);
   const escaped = form.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  const exportLink = `<a id="export-link" href="${origin}/api/export?control_family=${EXPORT_FAMILY}">Cross-site export</a>`;
   const html = request.url === "/opaque"
-    ? `<iframe sandbox="allow-forms allow-scripts" srcdoc="${escaped}"></iframe>` : form;
+    ? `<iframe sandbox="allow-forms allow-scripts" srcdoc="${escaped}"></iframe>` : form + exportLink;
   response.writeHead(HTTP_OK, { "content-type": "text/html; charset=utf-8" });
   response.end(html);
 }
@@ -209,6 +220,40 @@ async function rejectedForm(page, context, origin, attacker, opaque = false, sig
     signedIn, origin: headers.origin, fetchSite: headers["sec-fetch-site"], passed: true });
 }
 
+/** Prove a signed-in browser's cross-site or direct navigation to the export cannot reach the backend, while the dashboard's own export still can. */
+async function exportBoundary(page, context, origin, attacker) {
+  const exportUrl = `${origin}/api/export?control_family=${EXPORT_FAMILY}`;
+  const isExport = (response) => response.url() === exportUrl;
+  const before = state.exportCalls;
+  await page.goto(attacker);
+  const crossSite = page.waitForResponse(isExport);
+  await page.locator("#export-link").click();
+  const crossSiteResponse = await crossSite;
+  assert.equal(crossSiteResponse.status(), FORBIDDEN);
+  const crossSiteHeaders = await crossSiteResponse.request().allHeaders();
+  assert.equal(crossSiteHeaders["sec-fetch-site"], "cross-site");
+  assert.equal((await crossSiteResponse.allHeaders())["content-disposition"], undefined);
+  assert.equal(state.exportCalls, before);
+  const direct = page.waitForResponse(isExport);
+  await page.goto(exportUrl);
+  const directResponse = await direct;
+  assert.equal(directResponse.status(), FORBIDDEN);
+  assert.equal((await directResponse.request().allHeaders())["sec-fetch-site"], "none");
+  assert.equal(state.exportCalls, before);
+  await victimCookie(context, origin);
+  await page.goto(`${origin}/dashboard/controls?category=${EXPORT_FAMILY}`);
+  const sameOrigin = page.waitForResponse(isExport);
+  await page.getByRole("button", { name: "Export evidence pack", exact: true }).click();
+  const sameOriginResponse = await sameOrigin;
+  assert.equal(sameOriginResponse.status(), HTTP_OK);
+  assert.equal((await sameOriginResponse.request().allHeaders())["sec-fetch-site"], "same-origin");
+  assert.equal((await sameOriginResponse.allHeaders())["content-disposition"], EXPORT_ATTACHMENT);
+  assert.equal(state.exportCalls, before + 1);
+  await victimCookie(context, origin);
+  results.push({ check: "cross-site and direct export navigations refused before the backend; same-origin dashboard export succeeds",
+    crossSiteFetchSite: crossSiteHeaders["sec-fetch-site"], passed: true });
+}
+
 /** Check login's independent JSON gate and both rejection and success of logout. */
 async function otherBoundaries(page, context, origin, attacker) {
   await page.goto(`${origin}/login`);
@@ -243,6 +288,7 @@ async function runBrowserChecks(context, origin, attacker) {
   await legitimateLogin(page, context, origin);
   await rejectedForm(page, context, origin, attacker);
   await rejectedForm(page, context, origin, attacker, true);
+  await exportBoundary(page, context, origin, attacker);
   await otherBoundaries(page, context, origin, attacker);
 }
 
@@ -263,7 +309,7 @@ async function main() {
     const backendPort = await listen(backend);
     const port = await unusedPort();
     const origin = `http://localhost:${port}`;
-    resources.attackerServer = createServer((req, res) => attackPage(req, res, `${origin}/api/auth/login`));
+    resources.attackerServer = createServer((req, res) => attackPage(req, res, origin));
     const attacker = `http://127.0.0.1:${await listen(resources.attackerServer)}`;
     resources.frontendProcess = startFrontend(port, backendPort, tempRoot, resources);
     assertRunning(resources.frontendProcess);

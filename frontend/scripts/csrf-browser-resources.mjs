@@ -21,13 +21,14 @@ export async function bounded(operation, timeoutMs, label) {
 
 /** Register ownership before launch; retain error events even before callers begin waiting. */
 export function spawnOwned(resources, key, command, args, options, launch = spawn) {
-  const record = { label: key, child: null, error: null, spawned: false, closed: false };
+  const record = { label: key, child: null, error: null, spawned: false, exited: false, closed: false };
   resources[key] = record;
   try {
     record.child = launch(command, args, options);
     record.spawned = Number.isInteger(record.child.pid);
     record.child.on("spawn", () => { record.spawned = true; });
     record.child.on("error", (error) => { record.error = error; });
+    record.child.on("exit", () => { record.exited = true; });
     record.child.on("close", () => { record.closed = true; });
   } catch (error) { record.error = error; }
   return record;
@@ -41,25 +42,33 @@ export function assertRunning(record) {
   }
 }
 
-/** Stop one owned child handle and bound its close wait; never enumerate or kill by name. */
+/**
+ * Stop one owned child handle and bound its exit wait; never enumerate or kill by name.
+ * The wait ends at "exit" (the process is gone), not only at "close": a browser's
+ * helper processes inherit its stderr pipe and can keep "close" from firing for
+ * longer than the bound after the browser itself has exited, which earlier
+ * reported a false cleanup failure.
+ */
 export async function stopOwned(record, timeoutMs = CLEANUP_TIMEOUT_MS) {
-  if (!record?.child || record.closed || (!record.spawned && record.error)) return;
+  if (!record?.child || record.closed || record.exited || (!record.spawned && record.error)) return;
   const child = record.child;
-  let onClose;
-  const closed = new Promise((done, reject) => {
-    onClose = done;
-    child.once("close", onClose);
+  let onEnded;
+  const ended = new Promise((done, reject) => {
+    onEnded = done;
+    child.once("exit", onEnded);
+    child.once("close", onEnded);
     try {
       if (child.exitCode === null && child.signalCode === null && !child.kill()) {
-        if (record.closed) done();
+        if (record.closed || record.exited) done();
         else reject(new Error(`${record.label} refused termination`));
       }
     } catch (error) { reject(error); }
   });
-  try { await bounded(closed, timeoutMs, `${record.label} exit`); }
+  try { await bounded(ended, timeoutMs, `${record.label} exit`); }
   finally {
-    child.removeListener("close", onClose);
-    // A failed termination must not leave the harness waiting on this owned handle.
+    child.removeListener("exit", onEnded);
+    child.removeListener("close", onEnded);
+    // Neither a failed termination nor a lingering inherited pipe may keep the harness open.
     if (!record.closed) {
       child.unref?.();
       for (const stream of child.stdio ?? []) stream?.unref?.();

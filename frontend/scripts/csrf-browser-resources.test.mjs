@@ -18,7 +18,9 @@ function fakeChild(mode = "close") {
     child.kills += 1;
     if (mode === "throw") throw new Error("kill denied");
     if (mode === "refuse") return false;
-    if (mode === "close") queueMicrotask(() => { child.exitCode = 0; child.emit("close"); });
+    if (mode === "close") queueMicrotask(() => { child.exitCode = 0; child.emit("exit", 0); child.emit("close", 0); });
+    // "exit-only": the process is gone but an inherited stdio pipe keeps "close" from firing.
+    if (mode === "exit-only") queueMicrotask(() => { child.exitCode = 0; child.emit("exit", 0); });
     return true;
   };
   return child;
@@ -66,6 +68,25 @@ test("stops an owned handle and does not touch an unrelated process double", asy
 test("does not kill a child that has already closed", async () => {
   const resources = {}; const child = owned(resources, "frontendProcess");
   child.exitCode = 0; child.emit("close");
+  await stopOwned(resources.frontendProcess, TEST_TIMEOUT_MS);
+  assert.equal(child.kills, 0);
+});
+
+test("treats a child that exited while a descendant holds its pipe as stopped, and unrefs the pipe", async () => {
+  const resources = {}; const child = owned(resources, "browserProcess", "exit-only");
+  const released = [];
+  child.unref = () => released.push("child");
+  child.stdio = [null, null, { unref: () => released.push("stderr") }];
+  await stopOwned(resources.browserProcess, TEST_TIMEOUT_MS);
+  assert.equal(child.kills, 1);
+  assert.equal(resources.browserProcess.exited, true);
+  assert.equal(resources.browserProcess.closed, false);
+  assert.deepEqual(released, ["child", "stderr"]);
+});
+
+test("does not kill a child that has already exited without closing", async () => {
+  const resources = {}; const child = owned(resources, "frontendProcess");
+  child.exitCode = 0; child.emit("exit", 0);
   await stopOwned(resources.frontendProcess, TEST_TIMEOUT_MS);
   assert.equal(child.kills, 0);
 });

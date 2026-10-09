@@ -3,7 +3,7 @@
  * Why: compare whole configured origins and fail closed on ambiguous input.
  * How: npm test -- csrf.test.ts; synthetic requests only, no backend or database.
  */
-import { rejectUnsafeRequest } from "@/lib/csrf";
+import { rejectUnlessSameOriginFetch, rejectUnsafeRequest } from "@/lib/csrf";
 
 const TRUSTED = "https://kerno.example.test";
 const FORBIDDEN = 403;
@@ -72,3 +72,24 @@ it("keeps trusted multipart and bodyless sibling mutations compatible", () => {
   expect(rejectUnsafeRequest(request(TRUSTED, "multipart/form-data; boundary=x"))).toBeNull();
   expect(rejectUnsafeRequest(request(TRUSTED, ""))).toBeNull();
 });
+
+/** Build a GET with the given Sec-Fetch-Site value; a trusted Origin is set so it cannot be what passes. */
+function fetchMetadataRequest(fetchSite: string | null): Request {
+  const headers = new Headers({ origin: TRUSTED, referer: `${TRUSTED}/dashboard` });
+  if (fetchSite !== null) headers.set("sec-fetch-site", fetchSite);
+  return new Request(`${TRUSTED}/api/export?control_family=governance`, { headers });
+}
+
+it("accepts only an exact same-origin Fetch Metadata token, independent of configuration", () => {
+  delete process.env.KERNO_TRUSTED_ORIGINS;
+  expect(rejectUnlessSameOriginFetch(fetchMetadataRequest("same-origin"))).toBeNull();
+});
+
+it.each(["cross-site", "same-site", "none", null, "Same-Origin", "same-origin, cross-site", "", "other"])(
+  "refuses Fetch Metadata %s with a no-store, Vary-marked 403", (fetchSite) => {
+    const rejection = rejectUnlessSameOriginFetch(fetchMetadataRequest(fetchSite));
+    expect(rejection?.status).toBe(FORBIDDEN);
+    expect(rejection?.headers.get("cache-control")).toBe("no-store");
+    expect(rejection?.headers.get("vary")).toBe("Sec-Fetch-Site");
+  },
+);
