@@ -13,7 +13,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
+/** Relay the existing read request with backend authentication unchanged. */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const linked = request.nextUrl.searchParams.get("linked");
   const query = linked === null ? "" : `?linked=${linked}`;
@@ -23,7 +25,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   });
 }
 
+/** Enforce the browser origin policy before parsing input or changing state. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   // Forward the multipart body as-is. Content-Type is deliberately NOT set:
   // fetch regenerates it with the correct multipart boundary for this FormData.
   const formData = await request.formData();

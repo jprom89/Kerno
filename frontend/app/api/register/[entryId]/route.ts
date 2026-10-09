@@ -12,11 +12,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
+/** Enforce the browser origin policy before parsing input or changing state. */
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ entryId: string }> },
 ): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const { entryId } = await params;
   const backendResponse = await apiFetch(
     `/api/v1/register/entries/${encodeURIComponent(entryId)}`,

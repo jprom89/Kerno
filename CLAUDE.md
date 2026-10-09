@@ -992,6 +992,15 @@ order of speed: (1) Railway or Render — connect the repo, set env vars,
 config, more control; (3) existing VPS — nginx + certbot. Must happen before
 the first design partner session.
 
+The Next.js deployment (Vercel) needs two server-side environment variables of
+its own, set in the hosting provider's project settings and never as
+`NEXT_PUBLIC_*`: `KERNO_API_URL` (the HTTPS backend) and `KERNO_TRUSTED_ORIGINS`
+(the deployment's exact browser origins, comma-separated, no wildcards —
+SEC-REMED-002). With the second missing or invalid, every login and dashboard
+write returns 503 by design. Each Vercel preview deployment has its own origin
+and must be listed to allow login there. Local values and the full policy:
+`DEV_SETUP.md` and `docs/sec_remed_002_login_csrf.md`.
+
 ### Baseline (verified 15 July 2026, commit 8eabc93)
 
 CLAUDE.md v1.7; migration head w8x9y0z1 (022 — webhook tables); 431 tests

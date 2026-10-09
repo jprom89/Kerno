@@ -55,6 +55,29 @@ cd J:\Kerno\frontend
 npm run dev
 ```
 
+The Next.js server reads its own environment file, `frontend/.env.local`
+(gitignored), not the backend's root `.env`. It needs two values:
+
+```text
+KERNO_API_URL=http://localhost:8001
+KERNO_TRUSTED_ORIGINS=http://localhost:3000
+```
+
+- `KERNO_API_URL` is where this Next.js server reaches the API (the port you
+  started uvicorn on; 8001 in this guide).
+- `KERNO_TRUSTED_ORIGINS` is the exact browser origin the dashboard is served
+  from (SEC-REMED-002). `http://localhost:3000` is right only for `npm run dev`
+  on that port and host; `http://127.0.0.1:3000` is a different origin and
+  would not match. A deployed instance lists its exact intended origins,
+  comma-separated, never a wildcard. It must be set in the Next.js server's
+  environment (`frontend/.env.local` locally, the hosting provider's
+  environment settings when deployed), never as `NEXT_PUBLIC_*`.
+- If it is missing, blank or contains an invalid entry, every login and every
+  dashboard write returns **503 "browser origin policy is not configured"**.
+  That is deliberate fail-closed behaviour, not an outage to debug elsewhere:
+  set the variable and restart `npm run dev`. Details and the full policy are
+  in `docs/sec_remed_002_login_csrf.md`.
+
 - Dashboard login: `http://localhost:3000/login`
 - Organisation: `dev-tenant` (required since KER-408 — an email is unique only
   within one organisation, so it alone does not identify an account)

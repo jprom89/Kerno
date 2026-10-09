@@ -10,11 +10,15 @@
  * How:   called by the RecalculateButton. Tests: npm test.
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { apiFetch } from "@/lib/api";
+import { rejectUnsafeRequest } from "@/lib/csrf";
 
-export async function POST(): Promise<NextResponse> {
+/** Enforce the browser origin policy before parsing input or changing state. */
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  const rejection = rejectUnsafeRequest(request);
+  if (rejection) return rejection;
   const backendResponse = await apiFetch("/api/v1/scheduler/run-recalculation", {
     method: "POST",
   });
