@@ -84,11 +84,34 @@ test("treats a child that exited while a descendant holds its pipe as stopped, a
   assert.deepEqual(released, ["child", "stderr"]);
 });
 
-test("does not kill a child that has already exited without closing", async () => {
+test("does not kill or wait for a child that already exited without closing, and releases its lingering handles", async () => {
   const resources = {}; const child = owned(resources, "frontendProcess");
+  const released = [];
+  child.unref = () => released.push("child");
+  child.stdio = [null, null, { unref: () => released.push("stderr") }];
   child.exitCode = 0; child.emit("exit", 0);
+  const started = Date.now();
   await stopOwned(resources.frontendProcess, TEST_TIMEOUT_MS);
   assert.equal(child.kills, 0);
+  assert.deepEqual(released, ["child", "stderr"]);
+  assert.ok(Date.now() - started < TEST_TIMEOUT_MS, "must not wait for another exit event");
+});
+
+test("releases the browser child's handles when browser.close() made it exit before stopOwned ran", async () => {
+  const resources = {}; const child = owned(resources, "browserProcess", "hang");
+  const released = [];
+  child.unref = () => released.push("child");
+  child.stdio = [null, null, { unref: () => released.push("stderr") }];
+  resources.session = { browser: { close() { child.exitCode = 0; child.emit("exit", 0); } } };
+  const report = await cleanupOwned(resources, "profile", "root", { timeoutMs: TEST_TIMEOUT_MS,
+    removeProfile() { assert.fail("A browser-used profile must not be deleted"); } });
+  assert.equal(child.kills, 0);
+  assert.deepEqual(released, ["child", "stderr"]);
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.steps.map((step) => `${step.resource}:${step.status}`),
+    ["browser connection:completed", "browser process:completed", "frontend process:completed",
+      "attacker listener:completed", "stub backend listener:completed"]);
+  assert.equal(report.profile, "retained");
 });
 
 test("bounds an exit wait even if the child never closes", async () => {

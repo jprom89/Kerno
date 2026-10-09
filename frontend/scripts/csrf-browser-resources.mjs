@@ -50,8 +50,14 @@ export function assertRunning(record) {
  * reported a false cleanup failure.
  */
 export async function stopOwned(record, timeoutMs = CLEANUP_TIMEOUT_MS) {
-  if (!record?.child || record.closed || record.exited || (!record.spawned && record.error)) return;
+  if (!record?.child || record.closed || (!record.spawned && record.error)) return;
   const child = record.child;
+  if (record.exited) {
+    // Already gone (for example after browser.close()) but "close" has not fired:
+    // nothing to kill or wait for, only the inherited handles to release.
+    releaseLingeringHandles(child);
+    return;
+  }
   let onEnded;
   const ended = new Promise((done, reject) => {
     onEnded = done;
@@ -69,11 +75,14 @@ export async function stopOwned(record, timeoutMs = CLEANUP_TIMEOUT_MS) {
     child.removeListener("exit", onEnded);
     child.removeListener("close", onEnded);
     // Neither a failed termination nor a lingering inherited pipe may keep the harness open.
-    if (!record.closed) {
-      child.unref?.();
-      for (const stream of child.stdio ?? []) stream?.unref?.();
-    }
+    if (!record.closed) releaseLingeringHandles(child);
   }
+}
+
+/** Unreference an owned child and its stdio so a still-open inherited pipe cannot hold the runner. */
+function releaseLingeringHandles(child) {
+  child.unref?.();
+  for (const stream of child.stdio ?? []) stream?.unref?.();
 }
 
 /** Close a harness-owned listener and its own keepalive sockets, including partial startup. */
