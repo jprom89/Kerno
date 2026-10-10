@@ -47,7 +47,18 @@ _STATEMENT_TIMEOUT_FACTOR = 2
 
 @pytest.fixture
 def review_seed(db_connection, tenant_a_id, tenant_b_id, monkeypatch):
+    """Seed two catalogue controls and one met-scored Tenant A evidence link; remove everything afterwards.
+
+    The template rationale path is forced (no LLM). recommendations and links
+    are outside the shared teardown, and bound decisions must go first.
+    """
     monkeypatch.delenv("KERNO_LLM_MODEL", raising=False)
+    _seed_controls_and_evidence(db_connection, tenant_a_id)
+    yield
+    _remove_seeded_rows(db_connection, (tenant_a_id, tenant_b_id))
+
+
+def _seed_controls_and_evidence(db_connection, tenant_a_id) -> None:
     with db_connection.transaction():
         for control_id, ref in ((_CONTROL, "SR005-A"), (_OTHER_CONTROL, "SR005-B")):
             db_connection.execute(
@@ -73,10 +84,10 @@ def review_seed(db_connection, tenant_a_id, tenant_b_id, monkeypatch):
             [_LINK, _CONTROL, _RECORD, _MET_RELEVANCE],
         )
 
-    yield
 
+def _remove_seeded_rows(db_connection, tenant_ids) -> None:
     db_connection.rollback()
-    for tenant_id in (tenant_a_id, tenant_b_id):
+    for tenant_id in tenant_ids:
         with db_connection.transaction():
             db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_id)])
             db_connection.execute(

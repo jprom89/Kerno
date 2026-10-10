@@ -106,6 +106,7 @@ def serialise_pack(pack: EvidencePack) -> bytes:
 
 
 def _build_control_entry(conn, tenant_id, control: CoverageControl) -> ControlEntry:
+    """Build one pack entry describing exactly one recommendation and the decision bound to it."""
     recommendation = _recommendation_behind(conn, tenant_id, control)
     evidence = _collect_evidence(conn, tenant_id, control.control_id)
     decisions = _collect_decisions(conn, tenant_id, control.control_id)
@@ -193,6 +194,7 @@ def _collect_evidence(conn, tenant_id, control_id: str) -> list[EvidenceEntry]:
 
 
 def _collect_decisions(conn, tenant_id, control_id: str) -> list[DecisionEntry]:
+    """Return every decision on the control, bound or historical, oldest first with its recommendation id."""
     rows = conn.execute(
         _SELECT_DECISIONS,
         {"tenant_id": str(tenant_id), "control_id": control_id},

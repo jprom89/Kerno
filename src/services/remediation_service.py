@@ -210,10 +210,12 @@ def _find_routing_rule(conn, tenant_id, category: str) -> RoutingRule:
 
 
 def _build_issue_description(conn, tenant_id, control: CoverageControl) -> str:
-    # The rationale of the recommendation the coverage row resolved, by id: a
-    # "latest" read here could describe a recommendation generated after the
-    # gap decision was taken (SEC-REMED-005). Rows are never deleted, so a
-    # miss is an integrity failure, as in export, not "no recommendation".
+    """Describe the gap with the rationale of the recommendation the coverage row resolved.
+
+    Read by id: a "latest" read could describe a recommendation generated after
+    the gap decision was taken (SEC-REMED-005). Rows are never deleted, so a
+    miss raises, as in export, rather than claiming there is no recommendation.
+    """
     if control.recommendation_id is None:
         rationale = "No recommendation on record for this control."
     else:
