@@ -3,8 +3,8 @@
 Verifies, without a database, that the ORM model describes the columns,
 defaults, constraints and indexes migration 027 creates — the partial unique
 index's predicate included — that the relationship-type vocabulary is exactly
-'overarching', that migration 027 sits directly on 026 as the only head, and
-that dora_contracts gained no hierarchy column. Live behaviour is proven in
+'overarching', that migration 027 sits directly on 026 inside a single-headed
+chain, and that dora_contracts gained no hierarchy column. Live behaviour is proven in
 tests/integration and tests/security.
 
 Run: pytest tests/unit/models/test_dora_contract_relationship_model.py -v
@@ -130,14 +130,16 @@ def test_dora_contracts_gained_no_hierarchy_column():
     assert not names & {"parent_contract_id", "overarching_contract_id", "contract_type", "is_standalone"}
 
 
-def test_migration_027_sits_directly_on_026_and_is_the_only_head():
+def test_migration_027_sits_directly_on_026_inside_a_single_headed_chain():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     migration = _load_migration_027()
     assert (migration.revision, migration.down_revision) == ("b3c4d5e6", "a2b3c4d5")
     script = ScriptDirectory.from_config(Config(str(_REPO_ROOT / "alembic.ini")))
-    assert script.get_heads() == ["b3c4d5e6"]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert "b3c4d5e6" in [s.revision for s in script.walk_revisions(head=heads[0])]
 
 
 def test_migration_027_downgrade_drops_only_its_own_table():

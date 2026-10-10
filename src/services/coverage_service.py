@@ -1,10 +1,12 @@
 """Control-coverage read service (KER-109) — resolves each control's system-of-record status.
 
-Resolution rule: a human override (KER-106) always wins over the AI recommendation —
-'approve' confirms the AI's status, 'edit'/'reject' invalidate it (conservatively resolving
-to gap until coverage is re-established); with no override the AI recommendation status is
-the working status, and a control with neither resolves to gap so coverage is never
-over-claimed. Run tests with: pytest tests/unit/services/test_coverage_service.py -v
+Resolution rule: a human decision (KER-106) bound to the control's current recommendation
+wins over that recommendation — 'approve' confirms its status, 'edit'/'reject' invalidate it
+(conservatively resolving to gap); with no bound decision the recommendation's status is the
+unconfirmed working status, and a control with no recommendation resolves to gap so coverage
+is never over-claimed. Decisions bound to an older recommendation, and historical unbound
+ones, confirm nothing (SEC-REMED-005). Run tests with:
+pytest tests/unit/services/test_coverage_service.py -v
 """
 
 from __future__ import annotations
@@ -22,12 +24,18 @@ SOURCE_OVERRIDE: str = "override"
 SOURCE_RECOMMENDATION: str = "recommendation"
 SOURCE_NONE: str = "none"
 
-# One row per active control with its latest non-superseded recommendation and
-# latest human override (LATERAL keeps "latest per control" in one pass).
-# recommendations.control_id and overrides.original_control_id are TEXT, so the
-# catalogue UUID is cast for the comparison. compliance_controls is global
-# platform data (no tenant column); the tenant-owned joins filter explicitly on
-# tenant_id as defence in depth on top of RLS.
+# One row per active control with its current recommendation and the newest
+# decision bound to THAT recommendation, resolved in one statement so the pair
+# cannot come from two different moments (SEC-REMED-005). "Current" is the
+# newest non-superseded row by (generated_at, recommendation_id), the rule the
+# queue and the review lock share. The decision join is by recommendation_id
+# only: a decision on an older recommendation, or an unbound historical one,
+# never confirms the current recommendation, and no timestamp is compared.
+# recommendations.control_id is TEXT, so the catalogue UUID is cast for the
+# comparison. compliance_controls is global platform data (no tenant column);
+# the tenant-owned joins filter explicitly on tenant_id as defence in depth on
+# top of RLS. The recommendation id is the last column so a reader that needs
+# the recommendation's prose can fetch exactly this row by id.
 _COVERAGE_QUERY = """
 SELECT
     cc.control_id,
@@ -39,23 +47,24 @@ SELECT
     rec.confidence_level,
     rec.confidence_score,
     ov.action_type,
-    COALESCE(ev.evidence_count, 0)
+    COALESCE(ev.evidence_count, 0),
+    rec.recommendation_id
 FROM compliance_controls cc
 LEFT JOIN LATERAL (
-    SELECT r.status, r.confidence_level, r.confidence_score
+    SELECT r.recommendation_id, r.status, r.confidence_level, r.confidence_score
     FROM recommendations r
     WHERE r.tenant_id = :tenant_id
       AND r.control_id = cc.control_id::text
       AND r.is_superseded = FALSE
-    ORDER BY r.generated_at DESC
+    ORDER BY r.generated_at DESC, r.recommendation_id DESC
     LIMIT 1
 ) rec ON TRUE
 LEFT JOIN LATERAL (
     SELECT o.action_type
     FROM overrides o
     WHERE o.tenant_id = :tenant_id
-      AND o.original_control_id = cc.control_id::text
-    ORDER BY o.created_at DESC
+      AND o.recommendation_id = rec.recommendation_id
+    ORDER BY o.created_at DESC, o.override_id DESC
     LIMIT 1
 ) ov ON TRUE
 LEFT JOIN LATERAL (
@@ -73,7 +82,11 @@ _COVERAGE_ORDER = " ORDER BY cc.category, cc.control_ref"
 
 @dataclasses.dataclass(frozen=True)
 class CoverageControl:
-    """One control with its resolved system-of-record status for the dashboard."""
+    """One control with its resolved system-of-record status for the dashboard.
+
+    recommendation_id is the recommendation the status was resolved from, or
+    None when the control has none.
+    """
 
     control_id: str
     control_ref: str
@@ -86,6 +99,7 @@ class CoverageControl:
     confidence_level: str | None
     confidence_score: float | None
     evidence_count: int
+    recommendation_id: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -123,12 +137,15 @@ def resolve_system_of_record_status(
 ) -> tuple[str, str, bool]:
     """Return (status, source, human_confirmed) for one control.
 
-    The KER-106 human decision is the system of record: 'approve' confirms the
-    AI's status, while 'edit' and 'reject' invalidate the AI's asserted coverage
-    for this control — both resolve to gap until a new recommendation is
-    confirmed, because a compliance dashboard must never over-claim. Without an
-    override the AI recommendation is the (unconfirmed) working status; with
-    neither, the control has nothing demonstrating coverage and is a gap.
+    override_action is the newest decision bound to the recommendation whose
+    status is passed, never a decision on any other recommendation. The KER-106
+    human decision is then the system of record: 'approve' confirms the AI's
+    status, while 'edit' and 'reject' invalidate the AI's asserted coverage —
+    both resolve to gap until a new recommendation is confirmed, because a
+    compliance dashboard must never over-claim. Without a bound decision the AI
+    recommendation is the (unconfirmed) working status; with neither, the
+    control has nothing demonstrating coverage and is a gap. Export applies the
+    same rule to the same pair.
     """
     if override_action == "approve":
         return (recommendation_status or STATUS_GAP), SOURCE_OVERRIDE, True
@@ -227,4 +244,5 @@ def _row_to_coverage_control(row) -> CoverageControl:
         confidence_level=row[6],
         confidence_score=row[7],
         evidence_count=row[9],
+        recommendation_id=str(row[10]) if row[10] is not None else None,
     )

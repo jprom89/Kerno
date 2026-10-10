@@ -17,6 +17,15 @@ Tenant isolation applies here exactly as everywhere else: the tenant context
 must be set before any write, and the tenant identity comes from the
 authenticated session — never from the request body.
 
+Every decision names the exact recommendation the reviewer saw
+(``recommendation_id``, SEC-REMED-005). Before anything is written the service
+takes that control's review lock and checks, tenant-scoped, that the
+recommendation exists in this tenant, belongs to this control and is still the
+control's current one; otherwise the decision is refused and nothing is
+written. The id is stored on the override and in its ledger entry, so an
+approval of R1 can never be read as an approval of R2. Lock order and the
+reasons are recorded in recommendation_service.
+
 If the reviewer provides a justification note (``justification_text``), the
 text is anonymised before storage — internal hostnames, email addresses, IP
 ranges, cloud account identifiers, and ticket references are stripped by
@@ -34,7 +43,8 @@ Unit tests (no database required):
     pytest tests/unit/services/test_override_service.py -v
 
 The test suite covers valid overrides, invalid inputs, tenant isolation
-enforcement, reviewer weighting, and hash-chained audit ledger creation.
+enforcement, reviewer weighting, and hash-chained audit ledger creation. The
+live proof of the binding is tests/integration/test_sec_remed_005_*.py.
 """
 
 from __future__ import annotations
@@ -51,6 +61,10 @@ from config.constants import (
 from src.models.override import Override
 from src.services.anonymisation import anonymise
 from src.services.audit_log import append_audit_entry
+from src.services.recommendation_service import (
+    ReviewedRecommendation,
+    claim_recommendation_for_review,
+)
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 # Reviewer roles that carry full (senior) confidence weight.
@@ -96,7 +110,8 @@ class OverrideInput:
     Frozen so that neither the service nor any downstream code can mutate the
     input after submission. The ``tenant_id`` field is intentionally absent: the
     service always resolves the tenant from the authenticated session, never from
-    caller-supplied input.
+    caller-supplied input. ``recommendation_id`` defaults to None only so that a
+    caller omitting it gets the service's explicit ValueError, not a TypeError.
     """
 
     reviewer_id: uuid.UUID
@@ -105,22 +120,35 @@ class OverrideInput:
     original_control_id: str
     corrected_control_id: str | None = None
     justification_text: str | None = None
+    recommendation_id: str | None = None
 
 
 def capture_override(session, conn, override_input: OverrideInput) -> Override:
     """Save a human override and write its audit log entry in one transaction.
 
-    Resolves the tenant from the authenticated session, validates it, then writes
-    the override record and the audit log entry together. Anonymises the
-    justification text before storing it, then reads the database-generated
-    ``created_at`` back onto the record. Returns the saved override record so the
-    caller can confirm what was stored. Raises ``TenantContextMissingError`` if the
-    session cannot supply a valid tenant. Raises ``ValueError`` if input fields
-    fail validation. The ``conn`` parameter must be a raw database connection
-    supporting ``conn.execute(sql, params_dict)`` — not a SQLAlchemy Session.
+    Resolves the tenant from the authenticated session, then claims the reviewed
+    recommendation under its control's review lock before writing the override
+    record and the audit log entry together. Anonymises the justification text
+    before storing it, then reads the database-generated ``created_at`` back onto
+    the record. Returns the saved override record so the caller can confirm what
+    was stored. Raises ``TenantContextMissingError`` if the session cannot supply
+    a valid tenant; ``ValueError`` if input fields fail validation or the
+    recommendation belongs to another control; ``EntryNotFoundError`` if the
+    recommendation is not this tenant's; ``StaleRecommendationError`` if it has
+    been replaced. Every refusal happens before any write. The ``conn``
+    parameter must be a raw database connection supporting
+    ``conn.execute(sql, params_dict)`` — not a SQLAlchemy Session.
     """
     _validate_override_input(override_input)
     tenant_id = resolve_and_set_tenant_context(session, conn)
+    # Canonical form, so a spelling uuid.UUID accepts but PostgreSQL does not
+    # (urn:uuid:..., braces) can never reach the database as a 500.
+    reviewed = claim_recommendation_for_review(
+        conn,
+        tenant_id,
+        str(uuid.UUID(str(override_input.recommendation_id))),
+        override_input.original_control_id,
+    )
     confidence_weight = _assign_reviewer_confidence_weight(override_input.reviewer_role)
     override = _build_override_record(tenant_id, override_input, confidence_weight)
     _persist_override(conn, override)
@@ -129,7 +157,7 @@ def capture_override(session, conn, override_input: OverrideInput) -> Override:
         {"id": str(override.override_id)},
     ).fetchone()
     override.created_at = row[0]
-    _record_override_audit_entry(conn, override)
+    _record_override_audit_entry(conn, override, reviewed)
     return override
 
 
@@ -137,8 +165,9 @@ def _validate_override_input(override_input: OverrideInput) -> None:
     """Reject override inputs that are structurally invalid before touching the DB.
 
     Checks that required fields are present and that action-specific constraints
-    hold (e.g. an edit or reject must name a corrected control and say why).
-    Raises ``ValueError`` with a plain-English message on any violation.
+    hold (e.g. an edit or reject must name a corrected control and say why), and
+    that the decision names the recommendation it reviewed as a UUID. Raises
+    ``ValueError`` with a plain-English message on any violation.
     """
     valid_actions = {"approve", "edit", "reject"}
     if override_input.action_type not in valid_actions:
@@ -168,6 +197,19 @@ def _validate_override_input(override_input: OverrideInput) -> None:
             )
     if not override_input.original_control_id:
         raise ValueError("original_control_id must not be empty.")
+    # Checked last so the existing messages for inputs with several faults are
+    # unchanged.
+    _validate_recommendation_id(override_input.recommendation_id)
+
+
+def _validate_recommendation_id(recommendation_id: str | None) -> None:
+    """Reject a decision that does not name, as a UUID, the recommendation the reviewer saw."""
+    if not recommendation_id:
+        raise ValueError("recommendation_id is required: name the recommendation that was reviewed.")
+    try:
+        uuid.UUID(str(recommendation_id))
+    except ValueError:
+        raise ValueError("recommendation_id must be a UUID.") from None
 
 
 def _assign_reviewer_confidence_weight(reviewer_role: str) -> float:
@@ -211,18 +253,21 @@ def _build_override_record(
         corrected_control_id=override_input.corrected_control_id,
         reviewer_confidence_weight=confidence_weight,
         justification_text=anonymised_justification,
+        recommendation_id=uuid.UUID(str(override_input.recommendation_id)),
     )
 
 
-def _record_override_audit_entry(conn, override: Override) -> None:
+def _record_override_audit_entry(
+    conn, override: Override, reviewed: ReviewedRecommendation
+) -> None:
     """Append the override's entry to the tamper-evident audit ledger (KER-107).
 
     Runs on the same connection and transaction as the override INSERT, so the
-    override row and its ledger entry commit or roll back together. Overrides
-    carry no stored pre-decision snapshot, so the minimal before/after
-    representation is: before_state = the control the AI recommended,
-    after_state = the control the reviewer decided on (unchanged for approve)
-    plus their already-anonymised justification text.
+    override row and its ledger entry commit or roll back together.
+    before_state is the recommendation the reviewer saw: its control, id and
+    status. after_state is the control the reviewer decided on (unchanged for
+    approve), their already-anonymised justification text, and the same
+    recommendation id, so the entry alone says which version was decided.
     """
     append_audit_entry(
         conn,
@@ -235,10 +280,15 @@ def _record_override_audit_entry(conn, override: Override) -> None:
         control_id=override.original_control_id,
         # actor_id is override.reviewer_id — a verified per-user JWT user_id
         # (KER-202); the tenant-principal placeholder attribution is removed.
-        before_state={"control_id": override.original_control_id},
+        before_state={
+            "control_id": override.original_control_id,
+            "recommendation_id": reviewed.recommendation_id,
+            "recommendation_status": reviewed.status,
+        },
         after_state={
             "control_id": override.corrected_control_id or override.original_control_id,
             "justification_text": override.justification_text,
+            "recommendation_id": reviewed.recommendation_id,
         },
     )
 
@@ -256,11 +306,11 @@ def _persist_override(conn, override: Override) -> None:
         INSERT INTO overrides
             (override_id, tenant_id, reviewer_id, reviewer_role, action_type,
              original_control_id, corrected_control_id, reviewer_confidence_weight,
-             justification_text)
+             justification_text, recommendation_id)
         VALUES
             (:override_id, :tenant_id, :reviewer_id, :reviewer_role, :action_type,
              :original_control_id, :corrected_control_id, :reviewer_confidence_weight,
-             :justification_text)
+             :justification_text, :recommendation_id)
         """,
         {
             "override_id": str(override.override_id),
@@ -272,6 +322,7 @@ def _persist_override(conn, override: Override) -> None:
             "corrected_control_id": override.corrected_control_id,
             "reviewer_confidence_weight": override.reviewer_confidence_weight,
             "justification_text": override.justification_text,
+            "recommendation_id": str(override.recommendation_id),
         },
     )
 

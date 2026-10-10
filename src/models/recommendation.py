@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -54,10 +54,24 @@ class Recommendation(Base):
 
     At most one row per (tenant_id, control_id) has is_superseded=False at any
     time. Older rows are marked is_superseded=True when a new recommendation is
-    generated for the same pair (§4.2 supersede pattern).
+    generated for the same pair (§4.2 supersede pattern); generation serialises
+    that per control (SEC-REMED-005), and readers pick the newest current row
+    by (generated_at, recommendation_id) so a duplicate left by an earlier,
+    unserialised generation cannot split them. The table shape matches
+    migrations 010 and 028 exactly; the candidate key exists only as the target
+    of the overrides composite foreign key.
     """
 
     __tablename__ = "recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "recommendation_id",
+            "control_id",
+            name="uq_recommendations_tenant_recommendation_control",
+        ),
+        Index("idx_recommendations_current", "tenant_id", "control_id", "is_superseded"),
+    )
 
     recommendation_id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True), primary_key=True
@@ -65,7 +79,7 @@ class Recommendation(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True), nullable=False
     )
-    control_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    control_id: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     confidence_level: Mapped[str] = mapped_column(String(16), nullable=False)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -78,5 +92,5 @@ class Recommendation(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     is_superseded: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+        Boolean, nullable=False, default=False, server_default=text("false")
     )

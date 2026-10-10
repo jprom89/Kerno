@@ -40,13 +40,19 @@ class EvidenceEntry(BaseModel):
 
 
 class DecisionEntry(BaseModel):
-    """One human decision (KER-106 override). justification_text is stored anonymised."""
+    """One human decision (KER-106 override). justification_text is stored anonymised.
+
+    recommendation_id is the recommendation the reviewer decided (SEC-REMED-005);
+    null marks a historical decision recorded before decisions were bound, which
+    confirms no recommendation.
+    """
 
     override_id: str
     action_type: str
     reviewer_role: str
     created_at: datetime
     justification_text: str | None
+    recommendation_id: str | None = None
 
 
 class AuditExtract(BaseModel):
@@ -64,9 +70,13 @@ class AuditExtract(BaseModel):
 class ControlEntry(BaseModel):
     """One control with its system-of-record status and all supporting records.
 
-    decided_by is 'human_confirmed' when a KER-106 override is the system of
-    record, 'ai_unconfirmed' otherwise. Empty evidence/decisions/audit lists
-    mean none exist — controls are never silently dropped from a pack.
+    recommendation_id names the one recommendation whose status, confidence,
+    rationale and gaps this entry shows (null when the control has none).
+    decided_by is 'human_confirmed' only when a decision in `decisions` is
+    bound to that recommendation, 'ai_unconfirmed' otherwise; decided_at is
+    that decision's time, or the recommendation's generation time. Empty
+    evidence/decisions/audit lists mean none exist — controls are never
+    silently dropped from a pack.
     """
 
     control_id: str
@@ -74,6 +84,7 @@ class ControlEntry(BaseModel):
     title: str
     category: str
     system_of_record_status: str
+    recommendation_id: str | None = None
     confidence_level: str | None
     rationale: str | None
     gaps: str | None

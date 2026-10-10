@@ -2,7 +2,9 @@
 
 Proves against a live PostgreSQL database (migration 016 applied) that capture_override
 writes its ledger entry in the same transaction (commit and rollback together), and that
-auditors can query the ledger by control, by actor, and by created_at range.
+auditors can query the ledger by control, by actor, and by created_at range. Every captured
+decision names a seeded current recommendation, as SEC-REMED-005 requires; the rows are seeded
+directly so no generation ledger entry joins the per-control counts.
 Run: pytest tests/integration/test_ker107_audit_ledger.py -m integration -v
 """
 
@@ -22,6 +24,12 @@ from src.services.override_service import OverrideInput, capture_override
 
 _ACTOR_ONE = uuid.UUID("d0000000-0000-4000-d000-000000000004")
 _ACTOR_TWO = uuid.UUID("e0000000-0000-4000-e000-000000000005")
+_DECISION_CONTROLS = (
+    "ker107-atomic-commit",
+    "ker107-atomic-rollback",
+    "ker107-blank-justification",
+    "ker107-justified-edit",
+)
 
 
 class _FakeAuthSession:
@@ -36,7 +44,38 @@ class _DeliberateRollback(Exception):
     pass
 
 
-def _make_override_input(control_id: str) -> OverrideInput:
+@pytest.fixture
+def seed_recommendation(db_connection, tenant_a_id):
+    """Yield a function that inserts a current recommendation for a control; delete them afterwards.
+
+    recommendations is outside the shared teardown, and the decisions bound to
+    these rows must go first because of the composite foreign key.
+    """
+
+    def seed(control_id: str) -> str:
+        recommendation_id = str(uuid.uuid4())
+        with db_connection.transaction():
+            db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
+            db_connection.execute(
+                """INSERT INTO recommendations
+                   (recommendation_id, tenant_id, control_id, status, confidence_level,
+                    confidence_score, rationale, evidence_ids, requires_review, input_snapshot)
+                   VALUES (%s, %s, %s, 'met', 'high', 0.9, 'Seeded.', %s, FALSE, '{}')""",
+                [recommendation_id, str(tenant_a_id), control_id, []],
+            )
+        return recommendation_id
+
+    yield seed
+
+    db_connection.rollback()
+    with db_connection.transaction():
+        db_connection.execute("SET LOCAL app.current_tenant_id = %s", [str(tenant_a_id)])
+        for control_id in _DECISION_CONTROLS:
+            db_connection.execute("DELETE FROM overrides WHERE original_control_id = %s", [control_id])
+            db_connection.execute("DELETE FROM recommendations WHERE control_id = %s", [control_id])
+
+
+def _make_override_input(control_id: str, recommendation_id: str) -> OverrideInput:
     return OverrideInput(
         reviewer_id=_ACTOR_ONE,
         reviewer_role="vciso",
@@ -44,6 +83,7 @@ def _make_override_input(control_id: str) -> OverrideInput:
         original_control_id=control_id,
         corrected_control_id=None,
         justification_text="Reviewed and confirmed.",
+        recommendation_id=recommendation_id,
     )
 
 
@@ -63,27 +103,34 @@ def _append_entry(conn, tenant_id, control_id: str, actor_id):
 
 
 @pytest.mark.integration
-def test_override_capture_writes_ledger_entry_in_same_transaction(db_connection, tenant_a_id):
+def test_override_capture_writes_ledger_entry_in_same_transaction(
+    db_connection, tenant_a_id, seed_recommendation
+):
+    recommendation_id = seed_recommendation("ker107-atomic-commit")
     with db_connection.transaction():
         override = capture_override(
             _FakeAuthSession(tenant_a_id), db_connection,
-            _make_override_input("ker107-atomic-commit"),
+            _make_override_input("ker107-atomic-commit", recommendation_id),
         )
     with db_connection.transaction():
         entries = get_entries_by_control(db_connection, tenant_a_id, "ker107-atomic-commit")
     assert len(entries) == 1
     assert entries[0].object_id == str(override.override_id)
     assert entries[0].actor_id == str(override.reviewer_id)
+    assert str(override.recommendation_id) == recommendation_id
 
 
 @pytest.mark.integration
-def test_override_capture_rolls_back_ledger_entry_atomically(db_connection, tenant_a_id):
+def test_override_capture_rolls_back_ledger_entry_atomically(
+    db_connection, tenant_a_id, seed_recommendation
+):
+    recommendation_id = seed_recommendation("ker107-atomic-rollback")
     captured: dict = {}
     with pytest.raises(_DeliberateRollback):
         with db_connection.transaction():
             override = capture_override(
                 _FakeAuthSession(tenant_a_id), db_connection,
-                _make_override_input("ker107-atomic-rollback"),
+                _make_override_input("ker107-atomic-rollback", recommendation_id),
             )
             captured["override_id"] = str(override.override_id)
             raise _DeliberateRollback()
@@ -140,7 +187,9 @@ def test_auditor_can_query_by_time_range(db_connection, tenant_a_id):
 
 
 @pytest.mark.integration
-def test_blank_justification_on_edit_writes_nothing_at_all(db_connection, tenant_a_id):
+def test_blank_justification_on_edit_writes_nothing_at_all(
+    db_connection, tenant_a_id, seed_recommendation
+):
     # §17 Ticket D part (i). The rule rejects before any SQL runs, so the point
     # of proving it live is the absence: no override row, and no ledger entry
     # either. A half-written decision is worse than a refused one.
@@ -151,6 +200,7 @@ def test_blank_justification_on_edit_writes_nothing_at_all(db_connection, tenant
         original_control_id="ker107-blank-justification",
         corrected_control_id="ctrl-002",
         justification_text="   ",
+        recommendation_id=seed_recommendation("ker107-blank-justification"),
     )
     with db_connection.transaction():
         with pytest.raises(ValueError, match="justification_text"):
@@ -171,7 +221,9 @@ def test_blank_justification_on_edit_writes_nothing_at_all(db_connection, tenant
 
 
 @pytest.mark.integration
-def test_edit_with_a_real_justification_is_stored_stripped(db_connection, tenant_a_id):
+def test_edit_with_a_real_justification_is_stored_stripped(
+    db_connection, tenant_a_id, seed_recommendation
+):
     justified_edit = OverrideInput(
         reviewer_id=_ACTOR_ONE,
         reviewer_role="vciso",
@@ -179,6 +231,7 @@ def test_edit_with_a_real_justification_is_stored_stripped(db_connection, tenant
         original_control_id="ker107-justified-edit",
         corrected_control_id="ctrl-002",
         justification_text="  Evidence supports control 002, not 001.  ",
+        recommendation_id=seed_recommendation("ker107-justified-edit"),
     )
     with db_connection.transaction():
         override = capture_override(

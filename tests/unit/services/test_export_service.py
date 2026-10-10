@@ -1,9 +1,11 @@
 """Unit tests for src/services/export_service.py — deterministic evidence pack assembly (KER-111).
 
-Ten tests cover full-field assembly, deterministic ordering (controls by control_ref,
+Tests cover full-field assembly, deterministic ordering (controls by control_ref,
 evidence by linked_at, audit entries by created_at), byte-stable serialisation with schema
 round-trip, empty-list preservation, the export_generated ledger entry, ValueError on an
-empty family, and tenant isolation. Spy connections only; no database required.
+empty family, tenant isolation, and the SEC-REMED-005 binding: each entry reads its coverage
+row's recommendation by id and is confirmed only by a decision bound to that recommendation.
+Spy connections only; no database required.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 _CONTROL_A = "e1000000-0000-4000-a000-00000000000a"
 _CONTROL_B = "e1000000-0000-4000-a000-00000000000b"
 _BASE_TIME = datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+_CURRENT_RECOMMENDATION_ID = "f2000000-0000-4000-a000-000000000002"
+_OLDER_RECOMMENDATION_ID = "f2000000-0000-4000-a000-000000000001"
 
 
 # ── Test infrastructure ───────────────────────────────────────────────────────
@@ -93,14 +97,16 @@ class _FakeSession:
 
 
 def _coverage_row(control_id: str, ref: str, rec_status: str | None, override_action: str | None) -> tuple:
+    # Column order mirrors coverage_service._COVERAGE_QUERY; the recommendation id is last.
     return (control_id, ref, f"Title {ref}", "governance", "nis2",
             rec_status, "high" if rec_status else None, 0.9 if rec_status else None,
-            override_action, 1)
+            override_action, 1, _CURRENT_RECOMMENDATION_ID if rec_status else None)
 
 
-def _recommendation_row() -> tuple:
-    return ("r0000000-0000-4000-a000-000000000001", str(_TENANT_ID), _CONTROL_A,
-            "met", "high", 0.9, "Strong evidence coverage.", None,
+def _recommendation_row(status: str = "met") -> tuple:
+    # Column order mirrors recommendation_service._SELECT_BY_ID.
+    return (_CURRENT_RECOMMENDATION_ID, str(_TENANT_ID), _CONTROL_A,
+            status, "high", 0.9, "Strong evidence coverage.", None,
             [], False, {}, _BASE_TIME, False)
 
 
@@ -110,8 +116,14 @@ def _evidence_row(record_id: str, linked_at: datetime) -> tuple:
             _BASE_TIME, "hash")
 
 
-def _decision_row(override_id: str, created_at: datetime) -> tuple:
-    return (override_id, "approve", "vciso", created_at, "Confirmed.")
+def _decision_row(
+    override_id: str,
+    created_at: datetime,
+    action_type: str = "approve",
+    recommendation_id: str | None = _CURRENT_RECOMMENDATION_ID,
+) -> tuple:
+    # Column order mirrors export_service._SELECT_DECISIONS; None is a legacy unbound decision.
+    return (override_id, action_type, "vciso", created_at, "Confirmed.", recommendation_id)
 
 
 def _audit_row(entry_id: str, created_at: datetime) -> tuple:
@@ -138,6 +150,14 @@ def _populated_spy(**kwargs) -> _ExportSpyConn:
     }
     defaults.update(kwargs)
     return _ExportSpyConn(**defaults)
+
+
+def _recommendation_reads(spy: _ExportSpyConn) -> list[tuple[str, object]]:
+    # The coverage statement joins recommendations too; only the entry's own reads count.
+    return [
+        (sql, params) for sql, params in spy.calls
+        if "FROM recommendations" in sql and "FROM compliance_controls" not in sql
+    ]
 
 
 # ── Assembly ──────────────────────────────────────────────────────────────────
@@ -182,18 +202,22 @@ def test_control_without_records_kept_with_empty_lists():
     pack = build_evidence_pack(spy, _FakeSession(), "governance")
     control = pack.controls[0]
     assert control.system_of_record_status == "gap"
+    assert control.recommendation_id is None
     assert control.decided_by == DECIDED_BY_AI
     assert control.decided_at is None
     assert control.rationale is None
     assert (control.evidence, control.decisions, control.audit_extract) == ([], [], [])
+    assert _recommendation_reads(spy) == []
 
 
 def test_decided_at_for_unconfirmed_uses_recommendation_time():
     spy = _populated_spy(
         coverage_rows=[_coverage_row(_CONTROL_A, "NIS2-1.1", "partial", None)],
+        recommendation_row=_recommendation_row("partial"),
         decision_rows=[],
     )
     pack = build_evidence_pack(spy, _FakeSession(), "governance")
+    assert pack.controls[0].system_of_record_status == "partial"
     assert pack.controls[0].decided_by == DECIDED_BY_AI
     assert pack.controls[0].decided_at == _BASE_TIME
 
@@ -210,13 +234,22 @@ def test_building_twice_produces_identical_content():
 
 
 def test_serialise_pack_is_byte_stable_and_schema_valid():
-    pack = build_evidence_pack(_populated_spy(), _FakeSession(), "governance")
+    spy = _populated_spy(decision_rows=[
+        _decision_row("ov-0", _BASE_TIME - timedelta(hours=1), recommendation_id=None),
+        _decision_row("ov-1", _BASE_TIME + timedelta(hours=1)),
+    ])
+    pack = build_evidence_pack(spy, _FakeSession(), "governance")
     first = serialise_pack(pack)
     second = serialise_pack(pack)
     assert first == second
     assert not first.decode("utf-8").endswith((" ", "\n"))
     round_tripped = EvidencePack.model_validate_json(first)
     assert round_tripped == pack
+    published = json.loads(first)["controls"][0]
+    assert published["recommendation_id"] == _CURRENT_RECOMMENDATION_ID
+    assert [d["recommendation_id"] for d in published["decisions"]] == [
+        None, _CURRENT_RECOMMENDATION_ID,
+    ]
 
 
 # ── Audit, validation, isolation ──────────────────────────────────────────────
@@ -247,3 +280,110 @@ def test_none_session_raises_before_sql():
     with pytest.raises(TenantContextMissingError):
         build_evidence_pack(spy, None, "governance")
     assert len(spy.calls) == 0
+
+
+# ── Review binding (SEC-REMED-005) ────────────────────────────────────────────
+
+
+def test_recommendation_is_read_by_the_coverage_rows_id_not_latest():
+    spy = _populated_spy()
+    build_evidence_pack(spy, _FakeSession(), "governance")
+    reads = _recommendation_reads(spy)
+    assert len(reads) == 1
+    sql, params = reads[0]
+    assert "WHERE recommendation_id = :recommendation_id" in sql
+    assert "AND tenant_id = :tenant_id" in sql
+    assert "ORDER BY generated_at" not in sql
+    assert params == {"recommendation_id": _CURRENT_RECOMMENDATION_ID, "tenant_id": str(_TENANT_ID)}
+
+
+def test_missing_recommendation_by_id_raises_and_records_no_export():
+    spy = _populated_spy(recommendation_row=None)
+    with pytest.raises(RuntimeError, match=_CURRENT_RECOMMENDATION_ID):
+        build_evidence_pack(spy, _FakeSession(), "governance")
+    assert not any("INSERT INTO audit_log" in s for s, _ in spy.calls)
+
+
+def test_decided_at_is_the_newest_decision_bound_to_the_current_recommendation():
+    spy = _populated_spy(decision_rows=[
+        _decision_row("ov-1", _BASE_TIME + timedelta(hours=1)),
+        _decision_row("ov-2", _BASE_TIME + timedelta(hours=3)),
+        _decision_row("ov-3", _BASE_TIME + timedelta(hours=4), "reject", _OLDER_RECOMMENDATION_ID),
+        _decision_row("ov-4", _BASE_TIME + timedelta(hours=5), "edit", None),
+    ])
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.system_of_record_status == "met"
+    assert control.decided_by == DECIDED_BY_HUMAN
+    assert control.decided_at == _BASE_TIME + timedelta(hours=3)
+    assert [d.override_id for d in control.decisions] == ["ov-1", "ov-2", "ov-3", "ov-4"]
+
+
+def test_decision_bound_to_an_older_recommendation_does_not_confirm_the_current_one():
+    spy = _populated_spy(
+        coverage_rows=[_coverage_row(_CONTROL_A, "NIS2-1.1", "partial", None)],
+        recommendation_row=_recommendation_row("partial"),
+        decision_rows=[
+            _decision_row("ov-1", _BASE_TIME - timedelta(hours=1), "approve", _OLDER_RECOMMENDATION_ID),
+        ],
+    )
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.system_of_record_status == "partial"
+    assert control.decided_by == DECIDED_BY_AI
+    assert control.decided_at == _BASE_TIME
+    assert control.decisions[0].recommendation_id == _OLDER_RECOMMENDATION_ID
+
+
+def test_legacy_unbound_decision_does_not_confirm():
+    spy = _populated_spy(
+        coverage_rows=[_coverage_row(_CONTROL_A, "NIS2-1.1", "partial", None)],
+        recommendation_row=_recommendation_row("partial"),
+        decision_rows=[_decision_row("ov-1", _BASE_TIME + timedelta(hours=1), "approve", None)],
+    )
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.system_of_record_status == "partial"
+    assert control.decided_by == DECIDED_BY_AI
+    assert control.decided_at == _BASE_TIME
+    assert control.decisions[0].recommendation_id is None
+
+
+@pytest.mark.parametrize("action_type", ["edit", "reject"])
+def test_edit_or_reject_bound_to_the_current_recommendation_is_a_confirmed_gap(action_type):
+    spy = _populated_spy(
+        coverage_rows=[_coverage_row(_CONTROL_A, "NIS2-1.1", "met", action_type)],
+        decision_rows=[_decision_row("ov-1", _BASE_TIME + timedelta(hours=2), action_type)],
+    )
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.system_of_record_status == "gap"
+    assert control.decided_by == DECIDED_BY_HUMAN
+    assert control.decided_at == _BASE_TIME + timedelta(hours=2)
+
+
+def test_confirmation_comes_from_the_entrys_own_decisions_not_the_coverage_row():
+    # A decision committed between the coverage read and the decisions read:
+    # the entry must agree with the decisions it publishes.
+    spy = _populated_spy(
+        coverage_rows=[_coverage_row(_CONTROL_A, "NIS2-1.1", "partial", None)],
+        recommendation_row=_recommendation_row("partial"),
+        decision_rows=[_decision_row("ov-1", _BASE_TIME + timedelta(hours=1))],
+    )
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.system_of_record_status == "partial"
+    assert control.decided_by == DECIDED_BY_HUMAN
+    assert control.decided_at == _BASE_TIME + timedelta(hours=1)
+
+
+def test_control_and_decision_entries_carry_recommendation_ids():
+    spy = _populated_spy(decision_rows=[
+        _decision_row("ov-0", _BASE_TIME - timedelta(hours=1), recommendation_id=None),
+        _decision_row("ov-1", _BASE_TIME + timedelta(hours=1)),
+    ])
+    control = build_evidence_pack(spy, _FakeSession(), "governance").controls[0]
+    assert control.recommendation_id == _CURRENT_RECOMMENDATION_ID
+    assert [d.recommendation_id for d in control.decisions] == [None, _CURRENT_RECOMMENDATION_ID]
+
+
+def test_decisions_are_ordered_with_the_coverage_tie_break():
+    spy = _populated_spy()
+    build_evidence_pack(spy, _FakeSession(), "governance")
+    sql = next(s for s, _ in spy.calls if "FROM overrides" in s and "FROM compliance_controls" not in s)
+    assert "ORDER BY created_at ASC, override_id ASC" in sql

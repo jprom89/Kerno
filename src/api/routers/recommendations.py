@@ -47,9 +47,10 @@ def list_recommendations(
 ) -> RecommendationListResponse:
     """Return one page of the tenant's open recommendations, newest first.
 
-    Open = current (not superseded) with no override recorded after generation
-    (the exact KER-303 predicate, corrected 15 July 2026). Read-only; the
-    review actions themselves go through POST /api/v1/overrides.
+    Open = the control's current recommendation with no review decision bound
+    to it by recommendation_id (SEC-REMED-005). Read-only; the review actions
+    go through POST /api/v1/overrides, which must name the recommendation_id
+    shown here.
     """
     items, total = list_open_recommendations(conn, tenant_id, page, page_size)
     return RecommendationListResponse(

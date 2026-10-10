@@ -25,6 +25,7 @@ from src.api.dependencies import (
 )
 from src.api.rate_limit import limiter
 from src.api.schemas.overrides import OverrideRequest, OverrideResponse
+from src.exceptions import StaleRecommendationError
 from src.services.override_service import (
     OVERRIDE_CAPABLE_ROLES,
     OverrideInput,
@@ -67,6 +68,20 @@ def get_reviewer_id(token: str | None = Depends(_oauth2_scheme)) -> str:
     return reviewer_id
 
 
+def _capture_or_refuse(tenant_id: str, conn, override_input: OverrideInput):
+    """Run capture_override, mapping a replaced recommendation to 409 and invalid input to 422.
+
+    Raising rather than returning an error response is what makes get_conn roll
+    the transaction back; EntryNotFoundError reaches the app's generic 404.
+    """
+    try:
+        return capture_override(_SessionContext(tenant_id), conn, override_input)
+    except StaleRecommendationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.post("/overrides", status_code=201)
 @limiter.limit("60/minute")
 def create_override(
@@ -77,9 +92,12 @@ def create_override(
     rbac_role: str = Depends(require_role(*OVERRIDE_CAPABLE_ROLES)),
     conn=Depends(get_conn),
 ) -> OverrideResponse:
-    """Capture a human override for the authenticated tenant and reviewer; return the stored record with 201.
+    """Capture a human decision on the recommendation the reviewer saw; return the stored record with 201.
     Auditors and any role that may not override are rejected with 403 by require_role. The reviewer_role is
-    derived from the verified JWT role, never the body. ValueError -> 422; TenantContextMissingError -> 403."""
+    derived from the verified JWT role, never the body. A recommendation that is not this tenant's is the
+    generic 404; one for another control, or any other invalid input, is 422; one that a newer recommendation
+    has replaced is 409 and is never re-pointed at the newer one. Every refusal raises, so get_conn rolls
+    back and nothing is written. TenantContextMissingError -> 403."""
     reviewer_role = resolve_reviewer_role(rbac_role)
     if reviewer_role is None:
         # Defensive: require_role already excludes auditor and unknown roles.
@@ -93,15 +111,14 @@ def create_override(
         original_control_id=body.original_control_id,
         corrected_control_id=body.corrected_control_id,
         justification_text=body.justification_text,
+        recommendation_id=str(body.recommendation_id),
     )
-    try:
-        override = capture_override(_SessionContext(tenant_id), conn, override_input)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    override = _capture_or_refuse(tenant_id, conn, override_input)
     return OverrideResponse(
         override_id=str(override.override_id),
         action_type=override.action_type,
         original_control_id=override.original_control_id,
+        recommendation_id=str(override.recommendation_id),
         corrected_control_id=override.corrected_control_id,
         created_at=override.created_at,
     )

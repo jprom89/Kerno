@@ -81,3 +81,15 @@ class UnsupportedTransactionIsolationError(Exception):
     connection is not inside a caller-owned transaction at all. The service
     never changes the caller's isolation level to make the call succeed.
     """
+
+
+class StaleRecommendationError(Exception):
+    """Raised when a review decision names a recommendation that is no longer its control's current one.
+
+    Raised by recommendation_service.claim_recommendation_for_review under the
+    control's review lock, before anything is written: the reviewer saw R1 and
+    R2 has since replaced it. The overrides router maps it to 409 and the
+    decision is never re-pointed at R2. Deliberately neither a ValueError nor a
+    RuntimeError, so the 422 handler cannot absorb it and app.py's RuntimeError
+    handler cannot turn it into a 500.
+    """

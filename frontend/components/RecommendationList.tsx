@@ -1,15 +1,8 @@
 /**
- * components/RecommendationList.tsx — the human-in-the-loop review queue (KER-303).
- *
- * What:  each open recommendation with confidence badge, evidence count, and
- *        the three actions mapped EXACTLY to the KER-106 backend vocabulary
- *        (decided 15 July 2026): Approve → "approve" (immediate), Edit →
- *        "edit" and Reject → "reject" (both open the shared OverrideForm,
- *        which requires justification AND a corrected control). Client-side
- *        filters by confidence band and category; auditors get a read-only
- *        view (the backend enforces their 403 for real).
- * Why:   EU AI Act Article 14 — this is where humans oversee the machine.
- * How:   rendered by app/dashboard/recommendations/page.tsx. Tests: npm test.
+ * The human-in-the-loop review queue (KER-303, EU AI Act Article 14): Approve, Edit and Reject map exactly onto the
+ * KER-106 action vocabulary, and every decision names the recommendation_id of the row the reviewer actually saw.
+ * A 409 means a newer recommendation has replaced that row (SEC-REMED-005), so the row is marked replaced and the
+ * decision is never re-sent against the newer recommendation, which the reviewer has not seen.
  */
 
 "use client";
@@ -29,6 +22,14 @@ const CONFIDENCE_BADGE_CLASSES: Record<string, string> = {
 };
 
 const FULL_PERCENT = 100;
+const CREATED_STATUS = 201;
+const STALE_RECOMMENDATION_STATUS = 409;
+
+// A plain link rather than next/link: the rows live in state seeded once from
+// initialItems, so only a full page load brings in the newer recommendation.
+const QUEUE_PATH = "/dashboard/recommendations";
+
+type ReviewAction = "approve" | "edit" | "reject";
 
 interface RecommendationListProps {
   initialItems: OpenRecommendation[];
@@ -42,12 +43,38 @@ interface ToastState {
   stamp: number;
 }
 
+// Kerno's own handlers return `detail` as a string, but FastAPI's request
+// validation returns a list of objects, which would interpolate as "[object Object]".
+function errorDetail(body: unknown): string {
+  const detail = (body as { detail?: unknown })?.detail;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((issue) => (issue as { msg?: string })?.msg ?? JSON.stringify(issue))
+      .join("; ");
+  }
+  return "see backend logs";
+}
+
+function controlLabel(item: OpenRecommendation): string {
+  return item.control_ref ?? item.control_id;
+}
+
+// Module scope keeps Date.now() out of the component body, where the
+// react-hooks/purity lint cannot tell an event-handler-only helper from a render-time call.
+function newToast(message: string, tone: ToastState["tone"]): ToastState {
+  return { message, tone, stamp: Date.now() };
+}
+
 export default function RecommendationList({
   initialItems,
   controls,
   readOnly,
 }: RecommendationListProps) {
   const [items, setItems] = useState(initialItems);
+  const [replacedIds, setReplacedIds] = useState<string[]>([]);
   const [openFormFor, setOpenFormFor] = useState<{ id: string; action: "edit" | "reject" } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -65,36 +92,58 @@ export default function RecommendationList({
       (categoryFilter === "all" || item.category === categoryFilter),
   );
 
+  function recordSuccess(item: OpenRecommendation, action: ReviewAction) {
+    setItems((current) => current.filter((row) => row.recommendation_id !== item.recommendation_id));
+    setToast(newToast(`Recorded ${action} for ${controlLabel(item)}.`, "success"));
+    setOpenFormFor(null);
+  }
+
+  function markReplaced(item: OpenRecommendation) {
+    setReplacedIds((current) => [...current, item.recommendation_id]);
+    setOpenFormFor((current) => (current?.id === item.recommendation_id ? null : current));
+    setToast(newToast(
+      `Decision not recorded: a newer recommendation has replaced the one you reviewed for ${controlLabel(item)}. ` +
+        "Reload the queue to review it.",
+      "error",
+    ));
+  }
+
   async function submitAction(
     item: OpenRecommendation,
-    action: "approve" | "edit" | "reject",
+    action: ReviewAction,
     correctedControlId?: string,
     justification?: string,
   ) {
     setSubmitting(true);
-    const response = await fetch("/api/overrides", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action_type: action,
-        original_control_id: item.control_id,
-        corrected_control_id: correctedControlId ?? null,
-        justification_text: justification ?? null,
-      }),
-    });
-    if (response.status === 201) {
-      setItems((current) => current.filter((row) => row.recommendation_id !== item.recommendation_id));
-      setToast({ message: `Recorded ${action} for ${item.control_ref ?? item.control_id}.`, tone: "success", stamp: Date.now() });
-      setOpenFormFor(null);
-    } else {
-      const body = await response.json().catch(() => ({}));
-      setToast({
-        message: `Action failed (${response.status}): ${body.detail ?? "see backend logs"}`,
-        tone: "error",
-        stamp: Date.now(),
+    try {
+      const response = await fetch("/api/overrides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: action,
+          original_control_id: item.control_id,
+          recommendation_id: item.recommendation_id,
+          corrected_control_id: correctedControlId ?? null,
+          justification_text: justification ?? null,
+        }),
       });
+      if (response.status === CREATED_STATUS) {
+        recordSuccess(item, action);
+      } else if (response.status === STALE_RECOMMENDATION_STATUS) {
+        markReplaced(item);
+      } else {
+        const body = await response.json().catch(() => ({}));
+        setToast(newToast(`Action failed (${response.status}): ${errorDetail(body)}`, "error"));
+      }
+    } catch {
+      setToast(newToast(
+        `Action failed for ${controlLabel(item)}: the request did not complete. ` +
+          "Reload the queue to check whether it was recorded.",
+        "error",
+      ));
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   }
 
   if (items.length === 0) {
@@ -141,82 +190,94 @@ export default function RecommendationList({
       </div>
 
       <ul className="space-y-3">
-        {visible.map((item) => (
-          <li
-            key={item.recommendation_id}
-            className="rounded-lg border border-slate-200 bg-white p-4"
-            data-testid={`recommendation-${item.recommendation_id}`}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="font-mono text-xs text-slate-500">
-                  {item.control_ref ?? item.control_id}
-                  {item.category && (
-                    <span className="ml-2 capitalize">· {item.category.replace(/_/g, " ")}</span>
+        {visible.map((item) => {
+          const replaced = replacedIds.includes(item.recommendation_id);
+          return (
+            <li
+              key={item.recommendation_id}
+              className="rounded-lg border border-slate-200 bg-white p-4"
+              data-testid={`recommendation-${item.recommendation_id}`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-mono text-xs text-slate-500">
+                    {controlLabel(item)}
+                    {item.category && (
+                      <span className="ml-2 capitalize">· {item.category.replace(/_/g, " ")}</span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">
+                    {item.control_title ?? "(control not in catalogue)"} — proposed status:{" "}
+                    <span className="font-semibold">{item.status}</span>
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">{item.rationale}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {item.evidence_count} evidence record(s) ·{" "}
+                    {new Date(item.generated_at).toLocaleDateString("en-GB")}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-2">
+                  <span
+                    className={`rounded px-2 py-0.5 text-xs font-medium ${
+                      CONFIDENCE_BADGE_CLASSES[item.confidence_level] ?? "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {Math.round(item.confidence_score * FULL_PERCENT)}% · {item.confidence_level}
+                  </span>
+                  {!readOnly && !replaced && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => submitAction(item, "approve")}
+                        className="rounded bg-green-700 px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => setOpenFormFor({ id: item.recommendation_id, action: "edit" })}
+                        className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-700"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={submitting}
+                        onClick={() => setOpenFormFor({ id: item.recommendation_id, action: "reject" })}
+                        className="rounded border border-red-300 px-3 py-1 text-xs text-red-700"
+                      >
+                        Reject
+                      </button>
+                    </div>
                   )}
-                </p>
-                <p className="mt-1 text-sm font-medium text-slate-900">
-                  {item.control_title ?? "(control not in catalogue)"} — proposed status:{" "}
-                  <span className="font-semibold">{item.status}</span>
-                </p>
-                <p className="mt-1 text-xs text-slate-600">{item.rationale}</p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {item.evidence_count} evidence record(s) ·{" "}
-                  {new Date(item.generated_at).toLocaleDateString("en-GB")}
-                </p>
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-2">
-                <span
-                  className={`rounded px-2 py-0.5 text-xs font-medium ${
-                    CONFIDENCE_BADGE_CLASSES[item.confidence_level] ?? "bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  {Math.round(item.confidence_score * FULL_PERCENT)}% · {item.confidence_level}
-                </span>
-                {!readOnly && (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => submitAction(item, "approve")}
-                      className="rounded bg-green-700 px-3 py-1 text-xs font-medium text-white disabled:opacity-40"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => setOpenFormFor({ id: item.recommendation_id, action: "edit" })}
-                      className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-700"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => setOpenFormFor({ id: item.recommendation_id, action: "reject" })}
-                      className="rounded border border-red-300 px-3 py-1 text-xs text-red-700"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-            {openFormFor?.id === item.recommendation_id && (
-              <OverrideForm
-                action={openFormFor.action}
-                initialJustification={item.rationale}
-                controls={controls}
-                submitting={submitting}
-                onSubmit={(correctedControlId, justification) =>
-                  submitAction(item, openFormFor.action, correctedControlId, justification)
-                }
-                onCancel={() => setOpenFormFor(null)}
-              />
-            )}
-          </li>
-        ))}
+              {replaced && (
+                <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  A newer recommendation has replaced this one. Your decision was not recorded.{" "}
+                  <a href={QUEUE_PATH} className="font-medium underline underline-offset-2">
+                    Reload the queue
+                  </a>{" "}
+                  to review the newer recommendation.
+                </p>
+              )}
+              {openFormFor?.id === item.recommendation_id && (
+                <OverrideForm
+                  action={openFormFor.action}
+                  initialJustification={item.rationale}
+                  controls={controls}
+                  submitting={submitting}
+                  onSubmit={(correctedControlId, justification) =>
+                    submitAction(item, openFormFor.action, correctedControlId, justification)
+                  }
+                  onCancel={() => setOpenFormFor(null)}
+                />
+              )}
+            </li>
+          );
+        })}
       </ul>
       {visible.length === 0 && (
         <p className="mt-4 text-sm text-slate-600">No recommendations match the current filters.</p>

@@ -9,7 +9,10 @@ RESERVED PATH (KER-401, 16 July 2026): this LLM-decides-everything engine has
 no production trigger. The production engine of record is the hybrid path in
 recommendation_service.py (deterministic score + LLM rationale). This module
 is kept intact for KER-403 engine-comparison work; do not wire it to a trigger
-without a recorded decision.
+without a recorded decision. Because it also replaces a control's current
+recommendation, it takes the same per-control review lock as
+generate_recommendation (SEC-REMED-005), after the LLM call and before
+superseding.
 
 Why:   the mapping decision is the product's core output; validation, persistence,
        and the retained decision record must happen in one auditable place.
@@ -39,6 +42,7 @@ from src.models.recommendation import CONFIDENCE_HIGH, CONFIDENCE_LOW, CONFIDENC
 from src.services.ai_decision_log_service import emit_decision_log, hash_snapshot
 from src.services.audit_log import write_audit_event
 from src.services.llm_client import get_llm_client
+from src.services.recommendation_service import acquire_control_review_lock
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +146,7 @@ def map_control(
     requires_human_review = confidence_level == CONFIDENCE_LOW
     snapshot = _build_input_snapshot(control, evidence, model_id, now)
     rec_id = str(uuid.uuid4())
+    acquire_control_review_lock(conn, tenant_id, control.control_id)
     _supersede_prior(conn, tenant_id, control.control_id)
     _persist_recommendation(
         conn, rec_id, tenant_id, control.control_id,

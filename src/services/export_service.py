@@ -4,6 +4,10 @@ build_evidence_pack() gathers every control in a family (KER-109 system-of-recor
 with its evidence, human decisions, and KER-107 audit extract, in fully deterministic order;
 serialise_pack() renders stable UTF-8 JSON bytes. The generation itself is recorded in the
 audit ledger with control_id NULL, so repeated exports never change any control's extract.
+Each entry describes ONE recommendation: the one its coverage row resolved, read back by id,
+never "latest" again, with confirmation and decided_at taken from the decision bound to that
+recommendation among the decisions the same entry lists (SEC-REMED-005). A generation that
+commits mid-export therefore cannot pair R2's status or prose with R1's confirmation.
 Run tests with: pytest tests/unit/services/test_export_service.py -v
 """
 
@@ -24,9 +28,13 @@ from src.api.schemas.export import (
     PackMetadata,
 )
 from src.services.audit_log import append_audit_entry, get_entries_by_control
-from src.services.coverage_service import CoverageControl, get_coverage_controls
+from src.services.coverage_service import (
+    CoverageControl,
+    get_coverage_controls,
+    resolve_system_of_record_status,
+)
 from src.services.evidence_service import get_evidence_for_control
-from src.services.recommendation_service import get_recommendation
+from src.services.recommendation_service import RecommendationOutput, get_recommendation_by_id
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 # Roles allowed to export an evidence pack, matching the KER-304 button's
@@ -43,7 +51,8 @@ DECIDED_BY_HUMAN: str = "human_confirmed"
 DECIDED_BY_AI: str = "ai_unconfirmed"
 
 _SELECT_DECISIONS = """
-SELECT override_id, action_type, reviewer_role, created_at, justification_text
+SELECT override_id, action_type, reviewer_role, created_at, justification_text,
+       recommendation_id
 FROM overrides
 WHERE tenant_id = :tenant_id
 AND original_control_id = :control_id
@@ -55,8 +64,10 @@ def build_evidence_pack(conn, session, control_family: str) -> EvidencePack:
     """Assemble the complete evidence pack for one control family (category).
 
     Resolves the tenant from the authenticated session and every control in the
-    family via the KER-109 coverage pass, so statuses match the dashboard
-    exactly. Controls are sorted by control_ref, evidence by linked_at,
+    family via the KER-109 coverage pass, then applies the same resolution rule
+    to the recommendation that pass named and the decisions the entry lists, so
+    a pack agrees with the dashboard unless a decision commits in between, in
+    which case the entry follows its own published decisions. Controls are sorted by control_ref, evidence by linked_at,
     decisions and audit entries by created_at — all ascending with stable
     tiebreaks, so the pack content is deterministic. Records an
     export_generated ledger entry after assembly. Raises ValueError when the
@@ -95,32 +106,68 @@ def serialise_pack(pack: EvidencePack) -> bytes:
 
 
 def _build_control_entry(conn, tenant_id, control: CoverageControl) -> ControlEntry:
-    recommendation = get_recommendation(conn, str(tenant_id), control.control_id)
+    recommendation = _recommendation_behind(conn, tenant_id, control)
     evidence = _collect_evidence(conn, tenant_id, control.control_id)
     decisions = _collect_decisions(conn, tenant_id, control.control_id)
     audit_extract = _collect_audit_extract(conn, tenant_id, control.control_id)
+    decision = _decision_bound_to(decisions, recommendation)
+    status, _, human_confirmed = resolve_system_of_record_status(
+        decision.action_type if decision else None,
+        recommendation.status if recommendation else None,
+    )
     return ControlEntry(
         control_id=control.control_id,
         control_ref=control.control_ref,
         title=control.title,
         category=control.category,
-        system_of_record_status=control.status,
-        confidence_level=control.confidence_level,
+        system_of_record_status=status,
+        recommendation_id=recommendation.recommendation_id if recommendation else None,
+        confidence_level=recommendation.confidence_level if recommendation else None,
         rationale=recommendation.rationale if recommendation else None,
         gaps=recommendation.gaps if recommendation else None,
-        decided_by=DECIDED_BY_HUMAN if control.human_confirmed else DECIDED_BY_AI,
-        decided_at=_resolve_decided_at(control.human_confirmed, decisions, recommendation),
+        decided_by=DECIDED_BY_HUMAN if human_confirmed else DECIDED_BY_AI,
+        decided_at=_resolve_decided_at(decision, recommendation),
         evidence=evidence,
         decisions=decisions,
         audit_extract=audit_extract,
     )
 
 
-def _resolve_decided_at(human_confirmed: bool, decisions: list[DecisionEntry], recommendation):
-    """The moment the current status was decided: the latest human decision when
-    one is the system of record, else the recommendation's generation time."""
-    if human_confirmed and decisions:
-        return decisions[-1].created_at
+def _recommendation_behind(conn, tenant_id, control: CoverageControl) -> RecommendationOutput | None:
+    """Read the recommendation the coverage row resolved, by id, never "latest".
+
+    A recommendation generated after the coverage read must not lend this
+    entry its status or prose. Rows are never deleted, so a miss is an
+    integrity failure (RuntimeError), not an empty entry.
+    """
+    if control.recommendation_id is None:
+        return None
+    recommendation = get_recommendation_by_id(conn, str(tenant_id), control.recommendation_id)
+    if recommendation is None:
+        raise RuntimeError(f"recommendation {control.recommendation_id} disappeared during export")
+    return recommendation
+
+
+def _decision_bound_to(
+    decisions: list[DecisionEntry], recommendation: RecommendationOutput | None
+) -> DecisionEntry | None:
+    """Return the newest decision bound to this recommendation, from the list the entry publishes.
+
+    Taking it from the entry's own decisions means its status, decided_by and
+    decided_at can never disagree with them. The list is ordered by
+    (created_at, override_id), the coverage read's order reversed.
+    """
+    if recommendation is None:
+        return None
+    bound = [d for d in decisions if d.recommendation_id == recommendation.recommendation_id]
+    return bound[-1] if bound else None
+
+
+def _resolve_decided_at(decision: DecisionEntry | None, recommendation: RecommendationOutput | None):
+    """The moment the entry's status was decided: the bound human decision if
+    there is one, else the generation time of the recommendation it shows."""
+    if decision is not None:
+        return decision.created_at
     if recommendation is not None:
         return recommendation.generated_at
     return None
@@ -157,6 +204,7 @@ def _collect_decisions(conn, tenant_id, control_id: str) -> list[DecisionEntry]:
             reviewer_role=row[2],
             created_at=row[3],
             justification_text=row[4],
+            recommendation_id=str(row[5]) if row[5] is not None else None,
         )
         for row in rows
     ]
