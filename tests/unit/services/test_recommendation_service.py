@@ -46,6 +46,7 @@ from src.services.evidence_service import LINK_STATUS_ACTIVE, LINK_STATUS_BROKEN
 from src.services.recommendation_service import (
     ReviewedRecommendation,
     ScoringResult,
+    acquire_control_review_lock,
     claim_recommendation_for_review,
     generate_recommendation,
     get_recommendation,
@@ -755,18 +756,35 @@ def test_claim_takes_the_review_lock_before_reading_the_reviewed_row_for_share()
         (_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), (_RECOMMENDATION_ID,)
     )
     claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
-    assert len(spy.calls) == 3
-    lock_sql, lock_params = spy.calls[0]
+    assert len(spy.calls) == 4
+    assert "SET LOCAL app.current_tenant_id" in spy.calls[0][0]
+    lock_sql, lock_params = spy.calls[1]
     assert "pg_advisory_xact_lock(hashtextextended(:lock_key, 0))" in lock_sql
     assert lock_params == {"lock_key": _REVIEW_LOCK_KEY}
-    read_sql, read_params = spy.calls[1]
+    read_sql, read_params = spy.calls[2]
     assert "FOR SHARE" in read_sql
     assert "tenant_id = :tenant_id" in read_sql
     assert read_params == {"tenant_id": _TENANT_ID, "recommendation_id": _RECOMMENDATION_ID}
-    current_sql, current_params = spy.calls[2]
+    current_sql, current_params = spy.calls[3]
     assert "is_superseded = FALSE" in current_sql
     assert "ORDER BY generated_at DESC, recommendation_id DESC" in current_sql
     assert current_params == {"tenant_id": _TENANT_ID, "control_id": _CONTROL_ID}
+
+
+@pytest.mark.parametrize("tenant_id", [None, "", "not-a-uuid"])
+def test_claim_without_a_valid_tenant_raises_before_any_sql(tenant_id) -> None:
+    spy = _claim_spy((_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), (_RECOMMENDATION_ID,))
+    with pytest.raises(TenantContextMissingError):
+        claim_recommendation_for_review(spy, tenant_id, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("tenant_id", [None, "", "not-a-uuid"])
+def test_review_lock_without_a_valid_tenant_raises_before_any_sql(tenant_id) -> None:
+    spy = _claim_spy(None, None)
+    with pytest.raises(TenantContextMissingError):
+        acquire_control_review_lock(spy, tenant_id, _CONTROL_ID)
+    assert spy.calls == []
 
 
 def test_claim_of_an_id_outside_the_tenant_raises_entry_not_found() -> None:

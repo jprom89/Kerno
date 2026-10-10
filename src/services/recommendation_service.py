@@ -65,7 +65,7 @@ from config.constants import (
     RbacRole,
     SCORING_ENGINE_VERSION,
 )
-from src.db.rls import set_tenant_context
+from src.db.rls import require_valid_tenant_uuid, set_tenant_context
 from src.exceptions import (  # noqa: F401  TenantContextMissingError re-exported
     EntryNotFoundError,
     StaleRecommendationError,
@@ -470,8 +470,10 @@ def acquire_control_review_lock(conn, tenant_id, control_id: str) -> None:
 
     Replacement and review of a control serialise on it. It must be taken
     before the tenant ledger lock and never held across an external request.
+    Raises TenantContextMissingError, before any SQL, for a missing or invalid
+    tenant, so a bad tenant can never collapse onto a shared key.
     """
-    lock_key = f"{CONTROL_REVIEW_LOCK_PREFIX}{uuid.UUID(str(tenant_id))}:{control_id}"
+    lock_key = f"{CONTROL_REVIEW_LOCK_PREFIX}{require_valid_tenant_uuid(tenant_id)}:{control_id}"
     conn.execute(_ACQUIRE_CONTROL_REVIEW_LOCK, {"lock_key": lock_key})
 
 
@@ -480,13 +482,15 @@ def claim_recommendation_for_review(
 ) -> ReviewedRecommendation:
     """Lock and return the recommendation a review decision names, or refuse the decision.
 
-    Takes the control's review lock, then reads the row tenant-scoped FOR SHARE.
-    Raises EntryNotFoundError when the id is not this tenant's (a nonexistent id
-    and another tenant's are indistinguishable), ValueError when it belongs to
-    another control, and StaleRecommendationError when it is no longer the
-    control's current recommendation. Writes nothing; the caller has already
-    set tenant context and owns the transaction that keeps both locks.
+    Sets tenant context (TenantContextMissingError before any SQL for a missing
+    tenant), takes the control's review lock, then reads the row tenant-scoped
+    FOR SHARE. Raises EntryNotFoundError when the id is not this tenant's (a
+    nonexistent id and another tenant's are indistinguishable), ValueError when
+    it belongs to another control, and StaleRecommendationError when it is no
+    longer the control's current recommendation. Writes nothing; the caller
+    owns the transaction that keeps both locks.
     """
+    set_tenant_context(conn, tenant_id)
     acquire_control_review_lock(conn, tenant_id, control_id)
     row = conn.execute(
         _SELECT_REVIEWED_RECOMMENDATION,
