@@ -1148,6 +1148,45 @@ green; Jest suite green; category grid verified against seeded dev data;
 **Priority:** Must-have · **Points:** 8 · **Reg tie:** EU AI Act Article 14
 (human oversight — this UI is the human-in-the-loop surface).
 
+> **SEC-REMED-005 supersession — current behaviour (recorded 11 October 2026).**
+> AC-1's "open" predicate and design decision 2 below are the historical
+> 15 July 2026 timestamp rule. SEC-REMED-005 (finding
+> `integrity.stale-recommendation-approval`) replaced them. Keep them as the
+> record of what was built then. Do not restore them, and do not change the
+> implementation to match them. What holds now:
+>
+> - **The reviewer submits the displayed recommendation.** Every approve, edit
+>   or reject sends the `recommendation_id` of the row the queue showed, and
+>   `POST /api/v1/overrides` requires it: a missing or malformed id is a 422.
+>   Nothing at submission time looks up "the latest" recommendation and
+>   substitutes it.
+> - **Binding, not timestamps.**
+>   - **Migration 028** (`c4d5e6f7`) added `overrides.recommendation_id`, with
+>     a composite foreign key from `(tenant_id, recommendation_id,
+>     original_control_id)` to `recommendations (tenant_id, recommendation_id,
+>     control_id)`. AC-1's statement that no such column exists is no longer
+>     true.
+>   - **Open** means the control's current row and no decision bound to it by
+>     `recommendation_id`. The current row is the newest non-superseded one,
+>     ordered by `generated_at, recommendation_id`.
+>   - **Confirmed** means coverage confirms, and export reports as
+>     human-confirmed, only a decision bound to the recommendation it shows.
+>   - No timestamp comparison between overrides and recommendations remains.
+> - **Stale submissions are refused, never re-pointed.** A decision that names
+>   a recommendation since replaced by a newer one gets 409 and writes
+>   nothing. The UI marks the row replaced, asks for a reload, and never
+>   retries against the newer recommendation. AC-5's "row removed" therefore
+>   applies only to a recorded decision. Another tenant's id gets the generic
+>   404; another control's gets 422.
+> - **History is preserved.** Overrides recorded before migration 028 keep
+>   `recommendation_id` NULL. They stay in the decision history, confirm
+>   nothing and close nothing. No binding was inferred, backfilled or attached
+>   to the latest recommendation, so controls confirmed only by such decisions
+>   reopen for review.
+>
+> Details, evidence and remaining limits:
+> `docs/sec_remed_005_recommendation_approval.md`.
+
 **Acceptance criteria:**
 1. Page at `/dashboard/recommendations`: paginated list of open recommendations
    showing control_id, status, confidence (percentage + colour badge),
@@ -1170,6 +1209,9 @@ green; Jest suite green; category grid verified against seeded dev data;
    the recommendation does not close it. Note: because map_control supersedes
    prior rows on every regeneration, is_superseded = FALSE yields at most one
    open row per control.
+
+   *Superseded on 11 October 2026 by SEC-REMED-005: see the note at the top of
+   this story. The predicate above is kept as the historical record.*
 
 2. Each row has three actions mapping **exactly** onto the KER-106 backend
    vocabulary (decided 15 July 2026 — there is no `override` or `dismiss`
@@ -1211,7 +1253,10 @@ green; Jest suite green; category grid verified against seeded dev data;
 2. **The new list endpoint is read-only and thin**: router + schema + a
    `list_open_recommendations()` read in `recommendation_service`; "open"
    uses the exact corrected predicate in AC-1 (control + time join).
-   No writes, no migration.
+   No writes, no migration. *(Superseded on 11 October 2026 by SEC-REMED-005:
+   "open" is now the binding rule in the note at the top of this story, and
+   migration 028 added the column. The list endpoint itself is still
+   read-only.)*
 
 **Files to create:** `frontend/app/dashboard/recommendations/page.tsx`,
 `frontend/components/RecommendationList.tsx`,

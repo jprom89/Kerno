@@ -16,6 +16,13 @@ revision `c4d5e6f7`.
   `kerno_test` at the base code: an approval of R1 confirmed R2, and a stale R1
   screen was accepted.
 - **Fixed and tested** at `9c3b097`.
+- **Documentation and comment completion** (11 October 2026, after review of
+  `43c4cfa`, in the commit that follows it):
+  - CLAUDE.md §14 KER-303 now carries a dated supersession note;
+  - the advisory-lock commentary in `recommendation_service` is made precise;
+  - nothing executable changed.
+
+  Every execution result below stays attributed to the SHA it ran at.
 - **Pending independent review.** The branch is unmerged.
 
 The finding's severity (low) and confidence (high) are unchanged.
@@ -96,6 +103,23 @@ review lock, then recommendation rows, then the tenant ledger lock inside
 
 Neither ordering can attribute R1's approval to R2.
 
+**Precision note (11 October 2026), correcting two phrases in the note above
+without changing what was built:**
+
+- **The key prefix.** "Its own key prefix" separates the lock's *input naming
+  scheme* (`recommendation-review:<tenant>:<control>`) from the tenant ledger
+  lock's (the bare tenant id). It does not separate the keys. Both inputs are
+  hashed by `hashtextextended` into PostgreSQL's single bigint advisory-lock
+  key space, so a collision is improbable, not impossible. If one happened, the
+  two locks would be the same lock: unrelated operations would wait on each
+  other, and PostgreSQL would abort one side of any deadlock that caused. No
+  collision has been observed or reproduced.
+- **"No lock is held across an external request"** holds only for the locks
+  this operation acquires. Generation takes no advisory or row lock before or
+  during the LLM call; its earlier reads hold only the ACCESS SHARE table locks
+  every SELECT takes. A caller-owned transaction may already hold locks it took
+  earlier.
+
 The implementation followed this note. Four additions came out of building
 and testing it, and are recorded under "What changed": the same lock in the
 reserved `map_control` path, the remediation description's by-id read, the
@@ -160,7 +184,8 @@ buttons, and a list-shaped 422 detail is shown readably.
 
 **Generation.** `generate_recommendation` is split at the lock:
 `_assess_control` scores and writes the prose (it may call the LLM and takes no
-lock), then the review lock is taken, then `_replace_current_recommendation`
+advisory or row lock), then the review lock is taken, then
+`_replace_current_recommendation`
 supersedes, inserts, and writes the decision log and the ledger. The statement
 order is unchanged apart from the lock. `map_control` takes the same lock after
 its LLM call, before superseding.
@@ -392,10 +417,15 @@ touched.
     invisible to the client.
   - The Next.js proxy turns a non-JSON body or response into a 500.
   - The development-only legacy panel now fails closed, as described above.
-- **CLAUDE.md §14 KER-303 AC-1 is now out of date.** It still describes the
-  timestamp-based queue predicate and says no `overrides.recommendation_id`
-  column exists. That record now describes superseded behaviour; it was not
-  edited here.
+- **The review lock key can collide, improbably.** It shares PostgreSQL's
+  bigint advisory-lock key space with the tenant ledger lock, as the precision
+  note above records. A collision would cost waiting, or a deadlock that
+  PostgreSQL aborts on one side; it would never cost a wrong binding.
+- **CLAUDE.md §14 KER-303 has been reconciled** (11 October 2026). AC-1's
+  timestamp predicate and its claim that no `overrides.recommendation_id`
+  column exists are kept as the historical record. A dated SEC-REMED-005
+  supersession note at the top of that story now states the current
+  behaviour. The contradiction recorded here earlier is closed.
 - **No browser test and no deployment test were run.** Kerno is not claimed to
   be penetration-tested.
 

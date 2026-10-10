@@ -12,11 +12,20 @@ Review binding and lock order — recorded decision (SEC-REMED-005):
     A review decision binds to the recommendation the reviewer saw, never to
     whichever row is current when the decision arrives. Replacement and review
     of one tenant's control serialise on a transaction-scoped advisory lock
-    (acquire_control_review_lock), keyed on a prefixed string so it can never
-    share a key with the tenant ledger lock. generate_recommendation takes it
-    after the LLM call has returned and before superseding prior rows, so no
-    lock is held across an external request; claim_recommendation_for_review
-    takes it before reading the reviewed row FOR SHARE and refuses
+    (acquire_control_review_lock). Its key input carries the
+    "recommendation-review:" prefix, which keeps its naming scheme apart from
+    the tenant ledger lock's bare-tenant-id input. That separates the inputs,
+    not the keys: both are hashed by hashtextextended into PostgreSQL's single
+    bigint advisory-lock key space, so a collision is improbable, not
+    impossible. A collision would make the two locks one: unrelated operations
+    would wait on each other, and PostgreSQL would abort one side of any
+    deadlock that caused. None has been observed. generate_recommendation
+    takes the review lock after the LLM call has returned and before
+    superseding prior rows. The operation therefore acquires no advisory or row
+    lock before or during that call; its earlier reads hold only the ACCESS
+    SHARE table locks every SELECT takes. A caller-owned transaction may
+    already hold locks it took earlier. claim_recommendation_for_review takes
+    the review lock before reading the reviewed row FOR SHARE and refuses
     (StaleRecommendationError) unless that row is still current. Per call the
     order is: review lock, recommendation rows, then the tenant ledger lock
     inside append_audit_entry. If an approval of R1 commits first, generation
@@ -105,8 +114,11 @@ GENERATE_CAPABLE_ROLES: tuple[RbacRole, ...] = (
 RATIONALE_SOURCE_LLM = "llm"
 RATIONALE_SOURCE_TEMPLATE = "template"
 
-# Prefix of the per-(tenant, control) review lock key. The tenant ledger lock
-# hashes the bare tenant id, so a prefixed key can never be the same lock.
+# Prefix of the per-(tenant, control) review lock's key input. It keeps that
+# naming scheme apart from the tenant ledger lock, whose input is the bare
+# tenant id. Both inputs hash into the same single-bigint advisory-lock key
+# space, so the prefix does not make a collision impossible (see the module
+# docstring).
 CONTROL_REVIEW_LOCK_PREFIX = "recommendation-review:"
 
 # ---------------------------------------------------------------------------
@@ -322,8 +334,10 @@ def generate_recommendation(
     KER-203 decision-log row, and a KER-107 ledger entry attributing the
     triggering user all commit or roll back together on the caller's
     transaction. The control's review lock is taken between the assessment,
-    which may call the LLM, and the replacement, so it is never held across an
-    external request. Raises EntryNotFoundError for an unknown control and
+    which may call the LLM, and the replacement. This operation therefore holds
+    no advisory or row lock of its own across that call, although a
+    caller-owned transaction may already hold locks it took earlier. Raises
+    EntryNotFoundError for an unknown control and
     TenantContextMissingError if tenant_id is None or empty.
     """
     set_tenant_context(conn, tenant_id)
@@ -339,7 +353,10 @@ def generate_recommendation(
 
 
 def _assess_control(conn, tenant_id, control_id: str, control_meta: tuple) -> _Assessment:
-    """Score the evidence and write the rationale; takes no lock and may call the LLM."""
+    """Score the evidence and write the rationale; may call the LLM.
+
+    Takes no advisory or row lock; its reads hold only ACCESS SHARE table locks.
+    """
     evidence = get_evidence_for_control(conn, tenant_id, control_id)
     scoring = _score_evidence(evidence)
     active_evidence = [e for e in evidence if e.link_status == LINK_STATUS_ACTIVE]
@@ -469,9 +486,9 @@ def acquire_control_review_lock(conn, tenant_id, control_id: str) -> None:
     """Hold the review lock for one tenant's control until the caller's transaction ends.
 
     Replacement and review of a control serialise on it. It must be taken
-    before the tenant ledger lock and never held across an external request.
-    Raises TenantContextMissingError, before any SQL, for a missing or invalid
-    tenant, so a bad tenant can never collapse onto a shared key.
+    before the tenant ledger lock, and callers must not hold it across an
+    external request. Raises TenantContextMissingError, before any SQL, for a
+    missing or invalid tenant, so invalid tenants never share one key input.
     """
     lock_key = f"{CONTROL_REVIEW_LOCK_PREFIX}{require_valid_tenant_uuid(tenant_id)}:{control_id}"
     conn.execute(_ACQUIRE_CONTROL_REVIEW_LOCK, {"lock_key": lock_key})
