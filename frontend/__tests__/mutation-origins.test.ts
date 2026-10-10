@@ -53,10 +53,26 @@ function mutation(path: string, method: string, origin: string | null): NextRequ
   return new NextRequest(`${ORIGIN}/api/${path}`, { method, body, headers });
 }
 
+const SESSION_URL = "http://backend.test/api/v1/auth/me";
+
+/**
+ * A backend double: the upload route's session check (SEC-REMED-003) is
+ * answered as a valid session; every operation call gets the given response.
+ */
+function backend(operation: () => Response): jest.Mock {
+  return jest.fn().mockImplementation(async (url: string) =>
+    url === SESSION_URL ? Response.json({ email: "u@example.test", role: "compliance_lead" }) : operation());
+}
+
+/** The calls that forwarded an operation, leaving out the upload route's session check. */
+function operationCalls(): [string, RequestInit][] {
+  return (global.fetch as jest.Mock).mock.calls.filter(([url]) => url !== SESSION_URL);
+}
+
 beforeEach(() => {
   jest.replaceProperty(process, "env", { ...process.env,
     KERNO_TRUSTED_ORIGINS: ORIGIN, KERNO_API_URL: "http://backend.test" });
-  global.fetch = jest.fn().mockImplementation(async () => Response.json({ ok: true }));
+  global.fetch = backend(() => Response.json({ ok: true }));
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -83,8 +99,8 @@ describe.each(routes)("$method /api/$path", ({ path, method, invoke }) => {
       expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
       expect(global.fetch).not.toHaveBeenCalled();
     } else {
-      expect(global.fetch).toHaveBeenCalledTimes(1);
-      const init = (global.fetch as jest.Mock).mock.calls[0][1];
+      expect(operationCalls()).toHaveLength(1);
+      const init = operationCalls()[0][1];
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer synthetic-victim-session");
       expect(init.method).toBe(method);
       expect(response.headers.get("set-cookie")).toBeNull();
@@ -93,10 +109,10 @@ describe.each(routes)("$method /api/$path", ({ path, method, invoke }) => {
 
   if (path !== "auth/logout") {
     it("preserves backend permission refusals for trusted requests", async () => {
-      global.fetch = jest.fn().mockResolvedValue(Response.json({ detail: "forbidden" }, { status: 403 }));
+      global.fetch = backend(() => Response.json({ detail: "forbidden" }, { status: 403 }));
       const response = await invoke(mutation(path, method, ORIGIN));
       expect(response.status).toBe(403);
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(operationCalls()).toHaveLength(1);
       expect(response.headers.get("set-cookie")).toBeNull();
     });
   }
