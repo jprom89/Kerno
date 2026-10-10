@@ -11,7 +11,12 @@ PARTIAL / GAP outputs, confidence level assignment, requires_review flag,
 superseding prior recommendations, input_snapshot persistence, rationale and
 gaps content, tenant context ordering (SET LOCAL first), TenantContextMissingError
 on None tenant, absence of SQLAlchemy Session API calls, and broken links
-appearing in gaps text.
+appearing in gaps text. The SEC-REMED-005 tests pin the statement shapes of
+the review binding: the open queue's bound-decision predicate, the per-control
+review lock and its position in generation, the tenant-scoped by-id read, and
+every outcome of claim_recommendation_for_review. Whether the lock actually
+serialises review and replacement is proven against PostgreSQL in
+tests/integration/test_sec_remed_005_review_concurrency.py.
 
 How to run
 ----------
@@ -21,13 +26,14 @@ How to run
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
 
 from config.constants import MAX_RATIONALE_LENGTH
-from src.exceptions import TenantContextMissingError
+from src.exceptions import EntryNotFoundError, StaleRecommendationError, TenantContextMissingError
 from src.models.recommendation import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
@@ -38,13 +44,24 @@ from src.models.recommendation import (
 )
 from src.services.evidence_service import LINK_STATUS_ACTIVE, LINK_STATUS_BROKEN, EvidenceResult
 from src.services.recommendation_service import (
+    ReviewedRecommendation,
     ScoringResult,
+    acquire_control_review_lock,
+    claim_recommendation_for_review,
     generate_recommendation,
+    get_recommendation,
+    get_recommendation_by_id,
     list_open_recommendations,
 )
 
 _TENANT_ID = "c0000000-0000-4000-a000-000000000077"
 _CONTROL_ID = "NIS2-Art21-1"
+_OTHER_CONTROL_ID = "NIS2-Art21-2"
+_RECOMMENDATION_ID = "f0000000-0000-4000-f000-000000000001"
+_NEWER_RECOMMENDATION_ID = "f0000000-0000-4000-f000-000000000002"
+# Spelled out rather than built from the prefix constant, so a change to the
+# key format fails here instead of silently agreeing with itself.
+_REVIEW_LOCK_KEY = "recommendation-review:c0000000-0000-4000-a000-000000000077:NIS2-Art21-1"
 _RECORD_ID = "rec-uuid-001"
 _CONTROL_ROW = (_CONTROL_ID, "NIS2-Art21-1", "Risk Management Measures")
 _NOW = datetime.now(timezone.utc)
@@ -358,16 +375,32 @@ def _open_list_spy(rows: list, total: int) -> _SpyConn:
     ])
 
 
+def _single_spaced(sql: str) -> str:
+    return " ".join(sql.split())
+
+
 def test_open_list_uses_the_corrected_predicate() -> None:
     spy = _open_list_spy([], 0)
     list_open_recommendations(spy, _TENANT_ID, page=1, page_size=20)
-    sql = next(s for s, _ in spy.calls if "LEFT JOIN compliance_controls" in str(s))
-    assert "NOT EXISTS" in sql
-    assert "o.original_control_id = r.control_id" in sql
-    assert "o.created_at > r.generated_at" in sql
-    assert "is_superseded = FALSE" in sql
-    # The phantom column from the superseded AC-1 draft must never appear.
-    assert "recommendation_id FROM overrides" not in sql
+    page_sql = next(s for s, _ in spy.calls if "LEFT JOIN compliance_controls" in str(s))
+    count_sql = next(s for s, _ in spy.calls if "SELECT count(*)" in str(s))
+    for sql in (_single_spaced(page_sql), _single_spaced(count_sql)):
+        assert "r.is_superseded = FALSE" in sql
+        assert "newer.tenant_id = r.tenant_id" in sql
+        assert "newer.control_id = r.control_id" in sql
+        assert "newer.is_superseded = FALSE" in sql
+        assert (
+            "(newer.generated_at, newer.recommendation_id) > (r.generated_at, r.recommendation_id)"
+            in sql
+        )
+        assert "o.tenant_id = r.tenant_id" in sql
+        assert "o.recommendation_id = r.recommendation_id" in sql
+        # An override closes only the recommendation it names: no timestamp
+        # race between overrides and recommendations, no match by control.
+        assert "o.created_at > r.generated_at" not in sql
+        assert "o.created_at" not in sql
+        assert "original_control_id" not in sql
+    assert "ORDER BY r.generated_at DESC, r.recommendation_id DESC" in _single_spaced(page_sql)
 
 
 def test_open_list_paginates_and_maps_rows() -> None:
@@ -633,3 +666,178 @@ def test_rationale_prompt_carries_verdict_alignment_clause() -> None:
     assert "gap" in prompt and "partial" in prompt
     assert "thorough" in prompt or "comprehensive" in prompt  # the sounds-strong caveat
     assert "final" in prompt  # verdict is fixed
+
+
+# ── SEC-REMED-005: review lock, current-row reads, and the review claim ───────
+
+
+def _review_lock_positions(spy: _SpyConn) -> list[int]:
+    return [
+        index for index, (sql, params) in enumerate(spy.calls)
+        if "pg_advisory_xact_lock" in str(sql) and params == {"lock_key": _REVIEW_LOCK_KEY}
+    ]
+
+
+def _writes(spy: _SpyConn) -> list[str]:
+    return [
+        str(sql) for sql, _ in spy.calls
+        if str(sql).lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+    ]
+
+
+def _claim_spy(reviewed_row: tuple | None, current_row: tuple | None) -> _SpyConn:
+    return _SpyConn(responses=[
+        ("FOR SHARE", _SelectResult([reviewed_row] if reviewed_row else [])),
+        ("ORDER BY generated_at DESC", _SelectResult([current_row] if current_row else [])),
+    ])
+
+
+def test_generation_takes_the_review_lock_after_the_llm_call_and_before_superseding(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("KERNO_LLM_MODEL", "mistral-large-latest")
+    spy = _default_spy()
+    client = _mock_rationale_client({
+        "rationale": "The Security Patch record demonstrates active remediation.",
+        "own_status": "met",
+        "own_confidence": 0.9,
+    })
+    llm_response = client.chat.complete.return_value
+    statements_before_llm_call: list[int] = []
+
+    def _complete(**kwargs):
+        statements_before_llm_call.append(len(spy.calls))
+        return llm_response
+
+    client.chat.complete.side_effect = _complete
+    monkeypatch.setattr("src.services.recommendation_service.get_llm_client", lambda: client)
+    with patch(_PATCH_TARGET, return_value=[_make_evidence()]):
+        result = generate_recommendation(spy, _TENANT_ID, _CONTROL_ID)
+
+    assert result.input_snapshot["rationale_source"] == "llm"
+    assert len(statements_before_llm_call) == 1
+    lock_positions = _review_lock_positions(spy)
+    assert len(lock_positions) == 1
+    statements = [str(sql) for sql, _ in spy.calls]
+    supersede_position = next(
+        index for index, sql in enumerate(statements) if "is_superseded = TRUE" in sql
+    )
+    ledger_lock_position = next(
+        index for index, (_, params) in enumerate(spy.calls) if params == {"lock_key": _TENANT_ID}
+    )
+    # No lock may be held across the external request, and the review lock
+    # precedes both the supersede and the tenant ledger lock.
+    assert lock_positions[0] >= statements_before_llm_call[0]
+    assert lock_positions[0] < supersede_position < ledger_lock_position
+
+
+def test_get_recommendation_breaks_generated_at_ties_by_recommendation_id() -> None:
+    spy = _SpyConn()
+    assert get_recommendation(spy, _TENANT_ID, _CONTROL_ID) is None
+    sql, params = next((s, p) for s, p in spy.calls if "FROM recommendations" in str(s))
+    assert "is_superseded = FALSE" in sql
+    assert "ORDER BY generated_at DESC, recommendation_id DESC" in sql
+    assert params == {"tenant_id": _TENANT_ID, "control_id": _CONTROL_ID}
+
+
+def test_get_recommendation_by_id_is_tenant_scoped_and_reads_superseded_rows() -> None:
+    spy = _SpyConn()
+    assert get_recommendation_by_id(spy, _TENANT_ID, uuid.UUID(_RECOMMENDATION_ID)) is None
+    assert "SET LOCAL" in str(spy.calls[0][0])
+    sql, params = next((s, p) for s, p in spy.calls if "FROM recommendations" in str(s))
+    assert "WHERE recommendation_id = :recommendation_id" in sql
+    assert "AND tenant_id = :tenant_id" in sql
+    assert "is_superseded = FALSE" not in sql
+    assert params == {"recommendation_id": _RECOMMENDATION_ID, "tenant_id": _TENANT_ID}
+
+
+def test_claim_takes_the_review_lock_before_reading_the_reviewed_row_for_share() -> None:
+    spy = _claim_spy(
+        (_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), (_RECOMMENDATION_ID,)
+    )
+    claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert len(spy.calls) == 4
+    assert "SET LOCAL app.current_tenant_id" in spy.calls[0][0]
+    lock_sql, lock_params = spy.calls[1]
+    assert "pg_advisory_xact_lock(hashtextextended(:lock_key, 0))" in lock_sql
+    assert lock_params == {"lock_key": _REVIEW_LOCK_KEY}
+    read_sql, read_params = spy.calls[2]
+    assert "FOR SHARE" in read_sql
+    assert "tenant_id = :tenant_id" in read_sql
+    assert read_params == {"tenant_id": _TENANT_ID, "recommendation_id": _RECOMMENDATION_ID}
+    current_sql, current_params = spy.calls[3]
+    assert "is_superseded = FALSE" in current_sql
+    assert "ORDER BY generated_at DESC, recommendation_id DESC" in current_sql
+    assert current_params == {"tenant_id": _TENANT_ID, "control_id": _CONTROL_ID}
+
+
+@pytest.mark.parametrize("tenant_id", [None, "", "not-a-uuid"])
+def test_claim_without_a_valid_tenant_raises_before_any_sql(tenant_id) -> None:
+    spy = _claim_spy((_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), (_RECOMMENDATION_ID,))
+    with pytest.raises(TenantContextMissingError):
+        claim_recommendation_for_review(spy, tenant_id, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("tenant_id", [None, "", "not-a-uuid"])
+def test_review_lock_without_a_valid_tenant_raises_before_any_sql(tenant_id) -> None:
+    spy = _claim_spy(None, None)
+    with pytest.raises(TenantContextMissingError):
+        acquire_control_review_lock(spy, tenant_id, _CONTROL_ID)
+    assert spy.calls == []
+
+
+def test_claim_of_an_id_outside_the_tenant_raises_entry_not_found() -> None:
+    spy = _claim_spy(None, None)
+    with pytest.raises(EntryNotFoundError):
+        claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert _writes(spy) == []
+
+
+def test_claim_of_another_controls_recommendation_raises_value_error() -> None:
+    spy = _claim_spy(
+        (_RECOMMENDATION_ID, _OTHER_CONTROL_ID, STATUS_PARTIAL, False), (_RECOMMENDATION_ID,)
+    )
+    with pytest.raises(ValueError, match="does not belong to control"):
+        claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert _writes(spy) == []
+
+
+def test_claim_of_a_superseded_recommendation_is_stale() -> None:
+    # The current-id read is made to name the same row, so the superseded
+    # flag alone has to refuse the decision.
+    spy = _claim_spy(
+        (_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, True), (_RECOMMENDATION_ID,)
+    )
+    with pytest.raises(StaleRecommendationError, match="newer recommendation"):
+        claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert _writes(spy) == []
+
+
+def test_claim_is_stale_when_a_newer_recommendation_is_current() -> None:
+    spy = _claim_spy(
+        (_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), (_NEWER_RECOMMENDATION_ID,)
+    )
+    with pytest.raises(StaleRecommendationError, match="newer recommendation"):
+        claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert _writes(spy) == []
+
+
+def test_claim_is_stale_when_the_control_has_no_current_recommendation() -> None:
+    spy = _claim_spy((_RECOMMENDATION_ID, _CONTROL_ID, STATUS_PARTIAL, False), None)
+    with pytest.raises(StaleRecommendationError):
+        claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert _writes(spy) == []
+
+
+def test_claim_of_the_current_recommendation_returns_the_reviewed_row() -> None:
+    # The driver may hand back UUID objects; the claim compares and returns text.
+    spy = _claim_spy(
+        (uuid.UUID(_RECOMMENDATION_ID), _CONTROL_ID, STATUS_PARTIAL, False),
+        (uuid.UUID(_RECOMMENDATION_ID),),
+    )
+    reviewed = claim_recommendation_for_review(spy, _TENANT_ID, _RECOMMENDATION_ID, _CONTROL_ID)
+    assert reviewed == ReviewedRecommendation(
+        recommendation_id=_RECOMMENDATION_ID, control_id=_CONTROL_ID, status=STATUS_PARTIAL
+    )
+    assert _writes(spy) == []

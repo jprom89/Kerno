@@ -14,6 +14,12 @@ in the nightly recalculation). A vCISO's override counts for 1.0; an internal
 admin's counts for 0.5. These weights come from config/constants.py and must
 never be hard-coded here. (LEARNING_PIPELINE_SPEC.md Section 5.2.)
 
+``recommendation_id`` names the exact recommendation the reviewer saw
+(SEC-REMED-005, migration 028). Rows written before that migration keep it NULL:
+they are historical, unbound decisions and confirm no recommendation. The table
+shape here matches migrations 003 and 028 exactly, including the composite
+foreign key that keeps a binding inside one tenant and one control.
+
 How to run or test
 ------------------
 Model files have no executable logic of their own; the override path is tested
@@ -25,7 +31,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, String, text
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, ForeignKeyConstraint, Index, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,6 +55,19 @@ class Override(Base):
     """
 
     __tablename__ = "overrides"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "recommendation_id", "original_control_id"],
+            [
+                "recommendations.tenant_id",
+                "recommendations.recommendation_id",
+                "recommendations.control_id",
+            ],
+            name="fk_overrides_reviewed_recommendation",
+        ),
+        Index("overrides_tenant_id_idx", "tenant_id"),
+        Index("ix_overrides_tenant_recommendation", "tenant_id", "recommendation_id", "created_at"),
+    )
 
     # Unique identifier for this override decision.
     override_id: Mapped[uuid.UUID] = mapped_column(
@@ -61,8 +80,8 @@ class Override(Base):
     # The company this override belongs to. Never accepted from HTTP input.
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PostgresUUID(as_uuid=True),
+        ForeignKey("tenants.tenant_id", name="overrides_tenant_id_fkey"),
         nullable=False,
-        index=True,
     )
 
     # The user who made the override decision.
@@ -84,20 +103,26 @@ class Override(Base):
     )
 
     # The control the AI originally recommended.
-    original_control_id: Mapped[str] = mapped_column(String, nullable=False)
+    original_control_id: Mapped[str] = mapped_column(Text, nullable=False)
 
     # The control the reviewer chose instead — present for edit/reject, None for approve.
-    corrected_control_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    corrected_control_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # The reviewer's free-text explanation of their decision, stored anonymised.
     # override_service.py strips internal identifiers before writing this column.
-    justification_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    justification_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # How much weight the nightly batch gives this reviewer's decision.
     # Set by override_service.py based on reviewer_role; never from user input.
     reviewer_confidence_weight: Mapped[float] = mapped_column(
         Float,
         nullable=False,
+    )
+
+    # The recommendation this decision reviewed; NULL for historical, unbound rows.
+    recommendation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PostgresUUID(as_uuid=True),
+        nullable=True,
     )
 
     # When the reviewer submitted this decision.

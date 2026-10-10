@@ -8,6 +8,7 @@ How:   pytest tests/unit/api/test_overrides.py -v
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +20,9 @@ class OverrideRequest(BaseModel):
     # override_service.REVIEWER_ROLE_MAP. reviewer_id likewise comes from the JWT.
     action_type: str
     original_control_id: str
+    # The recommendation the reviewer saw (SEC-REMED-005). Required, so a
+    # client cannot leave the server to guess; missing or malformed is a 422.
+    recommendation_id: uuid.UUID
     corrected_control_id: str | None = None
     justification_text: str | None = None
 
@@ -29,5 +33,6 @@ class OverrideResponse(BaseModel):
     override_id: str
     action_type: str
     original_control_id: str
+    recommendation_id: str
     corrected_control_id: str | None
     created_at: datetime

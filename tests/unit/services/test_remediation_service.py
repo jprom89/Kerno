@@ -1,9 +1,10 @@
 """Unit tests for src/services/remediation_service.py — gap remediation routing (KER-110).
 
-Eleven tests cover gap-only enforcement, routing-rule lookup (category match with tenant
+Tests cover gap-only enforcement, routing-rule lookup (category match with tenant
 default fallback), Jira call parameters, task-row persistence, audit-ledger entries on both
-trigger and closure, and tenant isolation. The Jira client is mocked at the module level
-and spy connections serve every query; no database or network is touched.
+trigger and closure, tenant isolation, and the SEC-REMED-005 rule that the Jira description
+quotes the recommendation the coverage row resolved, read by id. The Jira client is mocked
+at the module level and spy connections serve every query; no database or network is touched.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ _TENANT_ID = uuid.UUID("c0000000-0000-4000-a000-000000000003")
 _CONTROL_ID = "e1000000-0000-4000-a000-000000000001"
 _TASK_ID = "f1000000-0000-4000-a000-000000000001"
 _ISSUE_KEY = "KERNO-123"
+_RECOMMENDATION_ID = "f1000000-0000-4000-a000-000000000002"
 
 
 # ── Test infrastructure ───────────────────────────────────────────────────────
@@ -86,17 +88,18 @@ class _FakeSession:
 
 
 def _coverage_row(status: str | None = "gap", override_action: str | None = None) -> tuple:
-    # Column order mirrors coverage_service._COVERAGE_QUERY.
+    # Column order mirrors coverage_service._COVERAGE_QUERY; the recommendation id is last.
     return (
         _CONTROL_ID, "NIS2-1.1", "Governance policy", "governance", "nis2",
         status, "low" if status else None, 0.2 if status else None, override_action, 1,
+        _RECOMMENDATION_ID if status else None,
     )
 
 
 def _recommendation_row() -> tuple:
-    # Column order mirrors recommendation_service._SELECT_CURRENT.
+    # Column order mirrors recommendation_service._SELECT_BY_ID.
     return (
-        "r0000000-0000-4000-a000-000000000001", str(_TENANT_ID), _CONTROL_ID,
+        _RECOMMENDATION_ID, str(_TENANT_ID), _CONTROL_ID,
         "gap", "low", 0.2, "No active evidence records were found.", "Coverage missing.",
         [], True, {}, datetime(2025, 6, 1, tzinfo=timezone.utc), False,
     )
@@ -123,6 +126,14 @@ def _trigger(spy, session=None):
 
 def _find_params(spy, fragment: str) -> dict:
     return next(p for s, p in spy.calls if fragment in s)
+
+
+def _recommendation_reads(spy) -> list[tuple[str, object]]:
+    # The coverage statement joins recommendations too; only the description read counts.
+    return [
+        (sql, params) for sql, params in spy.calls
+        if "FROM recommendations" in sql and "FROM compliance_controls" not in sql
+    ]
 
 
 # ── trigger_remediation ───────────────────────────────────────────────────────
@@ -177,6 +188,42 @@ def test_jira_called_with_control_reference_sla_and_rationale() -> None:
     assert "NIS2-1.1" in kwargs["description"]
     assert "No active evidence records were found." in kwargs["description"]
     assert result.jira_issue_key == _ISSUE_KEY
+
+
+def test_description_quotes_the_coverage_rows_recommendation_read_by_id() -> None:
+    spy = _gap_spy()
+    _trigger(spy)
+    reads = _recommendation_reads(spy)
+    assert len(reads) == 1
+    sql, params = reads[0]
+    assert "WHERE recommendation_id = :recommendation_id" in sql
+    assert "AND tenant_id = :tenant_id" in sql
+    assert "ORDER BY generated_at" not in sql
+    assert params == {"recommendation_id": _RECOMMENDATION_ID, "tenant_id": str(_TENANT_ID)}
+
+
+def test_a_recommendation_missing_by_id_stops_the_trigger_before_jira() -> None:
+    spy = _gap_spy(recommendation_row=None)
+    with patch("src.services.remediation_service.JiraClient") as mock_client_cls:
+        with pytest.raises(RuntimeError, match="disappeared"):
+            trigger_remediation(spy, _FakeSession(), _CONTROL_ID)
+    mock_client_cls.return_value.create_issue.assert_not_called()
+    assert not any("INSERT INTO remediation_tasks" in sql for sql, _ in spy.calls)
+
+
+def test_description_labels_the_rationale_without_claiming_it_is_the_latest() -> None:
+    _, mock_client = _trigger(_gap_spy())
+    description = mock_client.create_issue.call_args.kwargs["description"]
+    assert "Assessment rationale:" in description
+    assert "Latest" not in description
+
+
+def test_control_without_a_recommendation_gets_the_placeholder_rationale() -> None:
+    spy = _gap_spy(coverage_rows=[_coverage_row(status=None)], recommendation_row=None)
+    _, mock_client = _trigger(spy)
+    description = mock_client.create_issue.call_args.kwargs["description"]
+    assert "No recommendation on record for this control." in description
+    assert _recommendation_reads(spy) == []
 
 
 def test_task_row_inserted_with_snapshot() -> None:

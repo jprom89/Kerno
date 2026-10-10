@@ -1,7 +1,8 @@
 """Unit tests for src/services/mapping_service.py — map_control and its helper functions.
 
-Fifteen tests cover tenant isolation, LLM and environment errors, JSON validation,
-happy-path output, requires_human_review logic, and audit event emission.
+Tests cover tenant isolation, LLM and environment errors, JSON validation,
+happy-path output, requires_human_review logic, audit event emission, and the
+SEC-REMED-005 review lock taken after the LLM call and before superseding.
 All tests use spy connections and mocked Mistral clients; no live DB or network required.
 """
 
@@ -281,3 +282,39 @@ def test_audit_event_emitted_with_correct_event_type():
     mock_audit.assert_called_once()
     event_type_arg = mock_audit.call_args[0][2]
     assert event_type_arg == "recommendation_generated"
+
+
+# ---------------------------------------------------------------------------
+# Review lock (SEC-REMED-005) — one test
+# ---------------------------------------------------------------------------
+
+# Spelled out so a change to the key format fails here, not only in
+# recommendation_service's own tests: both engines must take the same lock.
+_REVIEW_LOCK_KEY = "recommendation-review:c0000000-0000-4000-a000-000000000003:ctrl-001"
+
+
+def test_review_lock_taken_after_the_llm_call_and_before_superseding():
+    spy = _SpyConn()
+    mock_client = _mock_llm_client(_VALID_LLM_RESPONSE)
+    llm_response = mock_client.chat.complete.return_value
+    statements_before_llm_call: list[int] = []
+
+    def _complete(**kwargs):
+        statements_before_llm_call.append(len(spy.calls))
+        return llm_response
+
+    mock_client.chat.complete.side_effect = _complete
+    with patch("src.services.mapping_service.get_llm_client", return_value=mock_client), \
+         patch("src.services.mapping_service.write_audit_event"), \
+         patch.dict(os.environ, {"KERNO_LLM_MODEL": _MODEL_ID}):
+        map_control(spy, _TENANT_ID, _CONTROL, _EVIDENCE)
+    lock_positions = [
+        index for index, (sql, params) in enumerate(spy.calls)
+        if "pg_advisory_xact_lock" in sql and params == {"lock_key": _REVIEW_LOCK_KEY}
+    ]
+    supersede_position = next(
+        index for index, (sql, _) in enumerate(spy.calls) if "is_superseded = TRUE" in sql
+    )
+    assert len(statements_before_llm_call) == 1
+    assert len(lock_positions) == 1
+    assert statements_before_llm_call[0] <= lock_positions[0] < supersede_position

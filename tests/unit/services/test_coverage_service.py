@@ -1,9 +1,11 @@
 """Unit tests for src/services/coverage_service.py — system-of-record status resolution.
 
-Eleven tests cover the override-wins resolution matrix (approve confirms, edit/reject
+Tests cover the override-wins resolution matrix (approve confirms, edit/reject
 invalidate, recommendation is the unconfirmed fallback, nothing resolves to gap),
 summary aggregation and its exact reconciliation with the control rows, the category
-filter, and tenant isolation. Spy connections only; no database required.
+filter, tenant isolation, and the SEC-REMED-005 query shape: the decision is the newest
+one bound to the current recommendation's id, both laterals break ties deterministically,
+and each control carries that recommendation's id. Spy connections only; no database required.
 """
 
 from __future__ import annotations
@@ -69,15 +71,24 @@ def _row(
     rec_status: str | None = None,
     override_action: str | None = None,
     evidence_count: int = 0,
+    recommendation_id: uuid.UUID | None = None,
 ) -> tuple:
     # Column order mirrors _COVERAGE_QUERY: control_id, control_ref, title,
     # category, framework, status, confidence_level, confidence_score,
-    # action_type, evidence_count.
+    # action_type, evidence_count, recommendation_id.
     confidence = ("high", 0.9) if rec_status is not None else (None, None)
+    if recommendation_id is None and rec_status is not None:
+        recommendation_id = uuid.uuid4()
     return (
         str(uuid.uuid4()), ref, f"Title for {ref}", category, "nis2",
         rec_status, confidence[0], confidence[1], override_action, evidence_count,
+        recommendation_id,
     )
+
+
+def _coverage_sql(spy: _CoverageSpyConn) -> str:
+    sql = next(s for s, _ in spy.calls if "compliance_controls" in s)
+    return " ".join(sql.split())
 
 
 # ── Resolution matrix: the human decision is the system of record ─────────────
@@ -175,6 +186,46 @@ def test_summarise_empty_catalogue() -> None:
     assert summary.total_controls == 0
     assert (summary.met, summary.partial, summary.gap) == (0, 0, 0)
     assert summary.categories == []
+
+
+# ── Review binding (SEC-REMED-005) ────────────────────────────────────────────
+
+
+def test_decision_lateral_binds_to_the_current_recommendation_id() -> None:
+    spy = _CoverageSpyConn()
+    get_coverage_controls(spy, _TENANT_ID)
+    sql = _coverage_sql(spy)
+    assert "o.recommendation_id = rec.recommendation_id" in sql
+    # Matching by control would let a decision on an older recommendation, or
+    # an unbound historical one, confirm the current recommendation.
+    assert "original_control_id" not in sql
+
+
+def test_both_laterals_break_ties_deterministically() -> None:
+    spy = _CoverageSpyConn()
+    get_coverage_controls(spy, _TENANT_ID)
+    sql = _coverage_sql(spy)
+    assert "ORDER BY r.generated_at DESC, r.recommendation_id DESC LIMIT 1" in sql
+    assert "ORDER BY o.created_at DESC, o.override_id DESC LIMIT 1" in sql
+
+
+def test_query_returns_the_current_recommendation_id_as_its_last_column() -> None:
+    spy = _CoverageSpyConn()
+    get_coverage_controls(spy, _TENANT_ID)
+    sql = _coverage_sql(spy)
+    assert "SELECT r.recommendation_id, r.status," in sql
+    assert "COALESCE(ev.evidence_count, 0), rec.recommendation_id FROM compliance_controls cc" in sql
+
+
+def test_coverage_control_carries_its_recommendation_id_as_text() -> None:
+    recommendation_id = uuid.UUID("f0000000-0000-4000-f000-000000000001")
+    spy = _CoverageSpyConn(rows=[
+        _row(ref="B-1", rec_status="partial", recommendation_id=recommendation_id),
+        _row(ref="B-2"),
+    ])
+    with_recommendation, without_recommendation = get_coverage_controls(spy, _TENANT_ID)
+    assert with_recommendation.recommendation_id == str(recommendation_id)
+    assert without_recommendation.recommendation_id is None
 
 
 # ── Calibration timestamp (KER-302 AC-3) ──────────────────────────────────────

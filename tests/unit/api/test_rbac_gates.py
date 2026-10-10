@@ -44,6 +44,7 @@ from src.api.dependencies import get_conn
 _TENANT_ID = "a0000000-0000-4000-a000-000000000001"
 _USER_ID = "d0000000-0000-4000-d000-000000000004"
 _SOME_ID = "b0000000-0000-4000-b000-000000000009"
+_RECOMMENDATION_ID = "f0000000-0000-4000-f000-000000000005"
 
 ALL_ROLES = (
     "compliance_lead",
@@ -146,7 +147,11 @@ GATED_ROUTES = [
         "/api/v1/overrides",
         ("compliance_lead", "vciso", "security_engineer", "platform_engineer",
          "end_customer_admin"),
-        json={"action_type": "approve", "original_control_id": "ctrl-001"},
+        json={
+            "action_type": "approve",
+            "original_control_id": "ctrl-001",
+            "recommendation_id": _RECOMMENDATION_ID,
+        },
     ),
     GatedRoute(
         "POST",
@@ -310,6 +315,7 @@ def _fake_override() -> SimpleNamespace:
         override_id=uuid.UUID("e0000000-0000-4000-e000-000000000001"),
         action_type="approve",
         original_control_id="ctrl-001",
+        recommendation_id=uuid.UUID(_RECOMMENDATION_ID),
         corrected_control_id=None,
         created_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
     )
@@ -320,7 +326,11 @@ def _post_override(headers: dict) -> int:
         client = TestClient(_app())
         return client.post(
             "/api/v1/overrides",
-            json={"action_type": "approve", "original_control_id": "ctrl-001"},
+            json={
+                "action_type": "approve",
+                "original_control_id": "ctrl-001",
+                "recommendation_id": _RECOMMENDATION_ID,
+            },
             headers=headers,
         ).status_code
 

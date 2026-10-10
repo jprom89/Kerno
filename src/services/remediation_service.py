@@ -16,7 +16,7 @@ from src.models.recommendation import STATUS_GAP
 from src.services.audit_log import append_audit_entry
 from src.services.coverage_service import CoverageControl, get_coverage_controls
 from src.services.jira_client import JiraClient
-from src.services.recommendation_service import get_recommendation
+from src.services.recommendation_service import get_recommendation_by_id
 from src.services.tenant_context import resolve_and_set_tenant_context
 
 # Roles allowed to open a remediation task and to receive its closure callback.
@@ -210,15 +210,23 @@ def _find_routing_rule(conn, tenant_id, category: str) -> RoutingRule:
 
 
 def _build_issue_description(conn, tenant_id, control: CoverageControl) -> str:
-    recommendation = get_recommendation(conn, str(tenant_id), control.control_id)
-    rationale = (
-        recommendation.rationale if recommendation is not None
-        else "No recommendation on record for this control."
-    )
+    """Describe the gap with the rationale of the recommendation the coverage row resolved.
+
+    Read by id: a "latest" read could describe a recommendation generated after
+    the gap decision was taken (SEC-REMED-005). Rows are never deleted, so a
+    miss raises, as in export, rather than claiming there is no recommendation.
+    """
+    if control.recommendation_id is None:
+        rationale = "No recommendation on record for this control."
+    else:
+        recommendation = get_recommendation_by_id(conn, str(tenant_id), control.recommendation_id)
+        if recommendation is None:
+            raise RuntimeError(f"recommendation {control.recommendation_id} disappeared")
+        rationale = recommendation.rationale
     return (
         f"Control {control.control_ref} ({control.control_id}) in category "
         f"'{control.category}' is a confirmed compliance gap.\n\n"
-        f"Latest assessment rationale:\n{rationale}"
+        f"Assessment rationale:\n{rationale}"
     )
 
 

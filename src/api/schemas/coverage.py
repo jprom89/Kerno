@@ -50,3 +50,6 @@ class CoverageControlItem(BaseModel):
     confidence_level: str | None
     confidence_score: float | None
     evidence_count: int
+    # The recommendation the status was resolved from (SEC-REMED-005); null
+    # when the control has none.
+    recommendation_id: str | None = None

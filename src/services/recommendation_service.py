@@ -8,6 +8,36 @@ cannot change, with a template fallback on any LLM failure. Every generation
 emits a KER-203 decision-log row and a KER-107 ledger entry in the same
 transaction as the recommendation write.
 
+Review binding and lock order — recorded decision (SEC-REMED-005):
+    A review decision binds to the recommendation the reviewer saw, never to
+    whichever row is current when the decision arrives. Replacement and review
+    of one tenant's control serialise on a transaction-scoped advisory lock
+    (acquire_control_review_lock). Its key input carries the
+    "recommendation-review:" prefix, which keeps its naming scheme apart from
+    the tenant ledger lock's bare-tenant-id input. That separates the inputs,
+    not the keys: both are hashed by hashtextextended into PostgreSQL's single
+    bigint advisory-lock key space, so a collision is improbable, not
+    impossible. A collision would make the two locks one: unrelated operations
+    would wait on each other, and PostgreSQL would abort one side of any
+    deadlock that caused. None has been observed. generate_recommendation
+    takes the review lock after the LLM call has returned and before
+    superseding prior rows. The operation therefore acquires no advisory or row
+    lock before or during that call; its earlier reads hold only the ACCESS
+    SHARE table locks every SELECT takes. A caller-owned transaction may
+    already hold locks it took earlier. claim_recommendation_for_review takes
+    the review lock before reading the reviewed row FOR SHARE and refuses
+    (StaleRecommendationError) unless that row is still current. Per call the
+    order is: review lock, recommendation rows, then the tenant ledger lock
+    inside append_audit_entry. If an approval of R1 commits first, generation
+    waits and then supersedes R1 with R2, which stays unconfirmed; if R2
+    commits first, the R1 approval reads R1 as superseded and writes nothing.
+    "Current" means the newest non-superseded row by (generated_at,
+    recommendation_id) everywhere: here, in the open queue, and in coverage.
+    Per transaction the order is not guaranteed: a caller-owned transaction
+    that has already ledgered can deadlock against a review of the same
+    control; PostgreSQL aborts one side (40P01) and the loser writes nothing.
+    That is the KER-107 limitation every ledgered service shares.
+
 What:  Scores a compliance control's evidence coverage and persists a
        recommendation with status, confidence, rationale, cited evidence IDs,
        and a full input snapshot. Wires together evidence_service (Doc 12),
@@ -44,8 +74,12 @@ from config.constants import (
     RbacRole,
     SCORING_ENGINE_VERSION,
 )
-from src.db.rls import set_tenant_context
-from src.exceptions import EntryNotFoundError, TenantContextMissingError  # noqa: F401  re-exported
+from src.db.rls import require_valid_tenant_uuid, set_tenant_context
+from src.exceptions import (  # noqa: F401  TenantContextMissingError re-exported
+    EntryNotFoundError,
+    StaleRecommendationError,
+    TenantContextMissingError,
+)
 from src.models.recommendation import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
@@ -80,6 +114,13 @@ GENERATE_CAPABLE_ROLES: tuple[RbacRole, ...] = (
 RATIONALE_SOURCE_LLM = "llm"
 RATIONALE_SOURCE_TEMPLATE = "template"
 
+# Prefix of the per-(tenant, control) review lock's key input. It keeps that
+# naming scheme apart from the tenant ledger lock, whose input is the bare
+# tenant id. Both inputs hash into the same single-bigint advisory-lock key
+# space, so the prefix does not make a collision impossible (see the module
+# docstring).
+CONTROL_REVIEW_LOCK_PREFIX = "recommendation-review:"
+
 # ---------------------------------------------------------------------------
 # Internal dataclasses
 # ---------------------------------------------------------------------------
@@ -98,7 +139,7 @@ class ScoringResult:
 @dataclasses.dataclass(frozen=True)
 class OpenRecommendation:
     """One row of the review queue (KER-303) — a current recommendation with no
-    later override, enriched with catalogue metadata for display and filtering."""
+    decision bound to it, enriched with catalogue metadata for display and filtering."""
 
     recommendation_id: str
     control_id: str
@@ -111,6 +152,28 @@ class OpenRecommendation:
     rationale: str
     evidence_count: int
     generated_at: datetime
+
+
+@dataclasses.dataclass(frozen=True)
+class _Assessment:
+    """What generation decides before taking the review lock: evidence, score, prose and gaps."""
+
+    evidence: list[EvidenceResult]
+    active_evidence: list[EvidenceResult]
+    scoring: ScoringResult
+    rationale: str
+    rationale_source: str
+    llm_opinion: dict | None
+    gaps: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewedRecommendation:
+    """The recommendation a review decision binds to, read under the control's review lock."""
+
+    recommendation_id: str
+    control_id: str
+    status: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -164,7 +227,7 @@ FROM recommendations
 WHERE tenant_id = :tenant_id
 AND control_id = :control_id
 AND is_superseded = FALSE
-ORDER BY generated_at DESC
+ORDER BY generated_at DESC, recommendation_id DESC
 LIMIT 1
 """
 
@@ -174,6 +237,29 @@ SELECT recommendation_id, tenant_id, control_id, status, confidence_level,
        input_snapshot, generated_at, is_superseded
 FROM recommendations
 WHERE recommendation_id = :recommendation_id
+AND tenant_id = :tenant_id
+"""
+
+_ACQUIRE_CONTROL_REVIEW_LOCK = "SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"
+
+# FOR SHARE conflicts with the row lock the supersede UPDATE takes, so even a
+# writer that bypassed the review lock could not flip this row mid-decision.
+_SELECT_REVIEWED_RECOMMENDATION = """
+SELECT recommendation_id, control_id, status, is_superseded
+FROM recommendations
+WHERE tenant_id = :tenant_id
+AND recommendation_id = :recommendation_id
+FOR SHARE
+"""
+
+_SELECT_CURRENT_ID = """
+SELECT recommendation_id
+FROM recommendations
+WHERE tenant_id = :tenant_id
+AND control_id = :control_id
+AND is_superseded = FALSE
+ORDER BY generated_at DESC, recommendation_id DESC
+LIMIT 1
 """
 
 _SELECT_CONTROL_META = """
@@ -182,21 +268,29 @@ FROM compliance_controls
 WHERE control_id = :control_id
 """
 
-# "Open" predicate (KER-303, corrected 15 July 2026): a recommendation is open
-# when it is current (not superseded) and no override for its control was
-# recorded AFTER it was generated. Overrides link to controls via
-# original_control_id — there is NO overrides.recommendation_id column. The
-# created_at > generated_at guard is required: an override predating the
-# recommendation does not close it. The explicit o.tenant_id filter is defence
-# in depth on top of RLS, per the house pattern in coverage_service.
+# "Open" predicate (SEC-REMED-005, replacing the KER-303 timestamp rule): a
+# recommendation is open while it is its control's current row and no review
+# decision is bound to it by recommendation_id. There is no timestamp
+# comparison, so an unbound historical override never closes anything, and an
+# approval of R1 can never close R2. The first NOT EXISTS applies the shared
+# "newest by (generated_at, recommendation_id)" rule, so a duplicate current
+# row left by an earlier unserialised generation is not listed twice. The
+# explicit tenant filters are defence in depth on top of RLS.
 _OPEN_PREDICATE = """
 r.tenant_id = :tenant_id
   AND r.is_superseded = FALSE
   AND NOT EXISTS (
+      SELECT 1 FROM recommendations newer
+      WHERE newer.tenant_id = r.tenant_id
+        AND newer.control_id = r.control_id
+        AND newer.is_superseded = FALSE
+        AND (newer.generated_at, newer.recommendation_id)
+            > (r.generated_at, r.recommendation_id)
+  )
+  AND NOT EXISTS (
       SELECT 1 FROM overrides o
       WHERE o.tenant_id = r.tenant_id
-        AND o.original_control_id = r.control_id
-        AND o.created_at > r.generated_at
+        AND o.recommendation_id = r.recommendation_id
   )
 """
 
@@ -210,7 +304,7 @@ SELECT r.recommendation_id, r.control_id, cc.control_ref, cc.title, cc.category,
 FROM recommendations r
 LEFT JOIN compliance_controls cc ON r.control_id = cc.control_id::text
 WHERE {_OPEN_PREDICATE}
-ORDER BY r.generated_at DESC
+ORDER BY r.generated_at DESC, r.recommendation_id DESC
 LIMIT :page_size OFFSET :page_offset
 """
 
@@ -239,50 +333,90 @@ def generate_recommendation(
     LLM failure — prose is not the decision). The recommendation row, its
     KER-203 decision-log row, and a KER-107 ledger entry attributing the
     triggering user all commit or roll back together on the caller's
-    transaction. Raises EntryNotFoundError for an unknown control and
+    transaction. The control's review lock is taken between the assessment,
+    which may call the LLM, and the replacement. This operation therefore holds
+    no advisory or row lock of its own across that call, although a
+    caller-owned transaction may already hold locks it took earlier. Raises
+    EntryNotFoundError for an unknown control and
     TenantContextMissingError if tenant_id is None or empty.
     """
     set_tenant_context(conn, tenant_id)
     control_meta = _fetch_control_meta(conn, control_id)
     if control_meta is None:
         raise EntryNotFoundError(f"control {control_id!r} is not in the catalogue")
+    assessment = _assess_control(conn, tenant_id, control_id, control_meta)
+    acquire_control_review_lock(conn, tenant_id, control_id)
+    return _replace_current_recommendation(
+        conn, tenant_id, control_id, control_meta, assessment,
+        triggered_by_user_id, triggered_by_role,
+    )
+
+
+def _assess_control(conn, tenant_id, control_id: str, control_meta: tuple) -> _Assessment:
+    """Score the evidence and write the rationale; may call the LLM.
+
+    Takes no advisory or row lock; its reads hold only ACCESS SHARE table locks.
+    """
     evidence = get_evidence_for_control(conn, tenant_id, control_id)
     scoring = _score_evidence(evidence)
     active_evidence = [e for e in evidence if e.link_status == LINK_STATUS_ACTIVE]
     llm_rationale, llm_opinion = _llm_rationale_and_opinion(control_meta, active_evidence, scoring)
-    rationale = llm_rationale or _build_rationale(active_evidence, scoring)
-    rationale_source = RATIONALE_SOURCE_LLM if llm_rationale else RATIONALE_SOURCE_TEMPLATE
-    gaps = _build_gaps(evidence, active_evidence, scoring)
+    return _Assessment(
+        evidence=evidence,
+        active_evidence=active_evidence,
+        scoring=scoring,
+        rationale=llm_rationale or _build_rationale(active_evidence, scoring),
+        rationale_source=RATIONALE_SOURCE_LLM if llm_rationale else RATIONALE_SOURCE_TEMPLATE,
+        llm_opinion=llm_opinion,
+        gaps=_build_gaps(evidence, active_evidence, scoring),
+    )
+
+
+def _replace_current_recommendation(
+    conn,
+    tenant_id,
+    control_id: str,
+    control_meta: tuple,
+    assessment: _Assessment,
+    triggered_by_user_id: str | None,
+    triggered_by_role: str | None,
+) -> RecommendationOutput:
+    """Supersede the current row and insert the new one with its decision-log and ledger entries.
+
+    The caller already holds the control's review lock, so no review decision
+    can bind to the row being superseded once this starts.
+    """
     now = datetime.now(timezone.utc)
-    snapshot = _build_snapshot(control_id, control_meta, evidence, now)
+    snapshot = _build_snapshot(control_id, control_meta, assessment.evidence, now)
     snapshot["scoring_engine"] = SCORING_ENGINE_VERSION
-    snapshot["rationale_source"] = rationale_source
-    snapshot["llm_opinion"] = llm_opinion
+    snapshot["rationale_source"] = assessment.rationale_source
+    snapshot["llm_opinion"] = assessment.llm_opinion
     rec_id = str(uuid.uuid4())
+    evidence_ids = [e.record_id for e in assessment.active_evidence]
+    scoring = assessment.scoring
     _supersede_prior(conn, tenant_id, control_id)
     params = _build_insert_params(
-        rec_id, tenant_id, control_id, scoring, rationale, gaps,
-        active_evidence, snapshot, now,
+        rec_id, tenant_id, control_id, scoring, assessment.rationale, assessment.gaps,
+        assessment.active_evidence, snapshot, now,
     )
     conn.execute(_INSERT_RECOMMENDATION, params)
     _record_generation(
-        conn, tenant_id, control_id, rec_id, scoring, rationale, rationale_source,
-        [e.record_id for e in active_evidence], snapshot,
+        conn, tenant_id, control_id, rec_id, scoring, assessment.rationale,
+        assessment.rationale_source, evidence_ids, snapshot,
         triggered_by_user_id, triggered_by_role,
     )
     return _row_to_output(
         (rec_id, tenant_id, control_id, scoring.status, scoring.confidence_level,
-         scoring.confidence_score, rationale, gaps,
-         [e.record_id for e in active_evidence],
+         scoring.confidence_score, assessment.rationale, assessment.gaps, evidence_ids,
          scoring.requires_review, snapshot, now, False)
     )
 
 
 def get_recommendation(conn, tenant_id, control_id: str) -> RecommendationOutput | None:
-    """Return the current (is_superseded=False) recommendation, or None.
+    """Return the control's current recommendation, or None if none was ever generated.
 
-    Sets tenant context before querying. Returns None if no recommendation
-    has ever been generated for this (tenant, control) pair.
+    Current is the newest non-superseded row by (generated_at,
+    recommendation_id), the rule every reader shares. Sets tenant context first.
     """
     set_tenant_context(conn, tenant_id)
     row = conn.execute(
@@ -296,10 +430,10 @@ def list_open_recommendations(
 ) -> tuple[list[OpenRecommendation], int]:
     """Return one page of the tenant's open recommendations plus the total count.
 
-    "Open" uses the exact corrected KER-303 predicate (_OPEN_PREDICATE above):
-    current rows with no override recorded after generation. Newest first;
-    page is 1-based. Sets tenant context before querying and raises
-    TenantContextMissingError on a missing or invalid tenant. Read-only.
+    "Open" is _OPEN_PREDICATE above: the control's current row with no review
+    decision bound to it. Newest first; page is 1-based. Sets tenant context
+    before querying and raises TenantContextMissingError on a missing or
+    invalid tenant. Read-only.
     """
     set_tenant_context(conn, tenant_id)
     params = {
@@ -334,16 +468,68 @@ def _row_to_open_recommendation(row) -> OpenRecommendation:
 def get_recommendation_by_id(
     conn, tenant_id, recommendation_id: str
 ) -> RecommendationOutput | None:
-    """Return a specific recommendation by ID for audit reproduction.
+    """Return one recommendation of this tenant by id, superseded or not, or None.
 
-    Sets tenant context before querying. Returns None if the ID does not exist
-    within the current tenant's scope.
+    Readers that already resolved which recommendation they show use this
+    rather than get_recommendation, so a row generated in between cannot be
+    substituted. Sets tenant context before querying.
     """
     set_tenant_context(conn, tenant_id)
     row = conn.execute(
-        _SELECT_BY_ID, {"recommendation_id": recommendation_id}
+        _SELECT_BY_ID,
+        {"recommendation_id": str(recommendation_id), "tenant_id": str(tenant_id)},
     ).fetchone()
     return _row_to_output(row) if row is not None else None
+
+
+def acquire_control_review_lock(conn, tenant_id, control_id: str) -> None:
+    """Hold the review lock for one tenant's control until the caller's transaction ends.
+
+    Replacement and review of a control serialise on it. It must be taken
+    before the tenant ledger lock, and callers must not hold it across an
+    external request. Raises TenantContextMissingError, before any SQL, for a
+    missing or invalid tenant, so invalid tenants never share one key input.
+    """
+    lock_key = f"{CONTROL_REVIEW_LOCK_PREFIX}{require_valid_tenant_uuid(tenant_id)}:{control_id}"
+    conn.execute(_ACQUIRE_CONTROL_REVIEW_LOCK, {"lock_key": lock_key})
+
+
+def claim_recommendation_for_review(
+    conn, tenant_id, recommendation_id: str, control_id: str
+) -> ReviewedRecommendation:
+    """Lock and return the recommendation a review decision names, or refuse the decision.
+
+    Sets tenant context (TenantContextMissingError before any SQL for a missing
+    tenant), takes the control's review lock, then reads the row tenant-scoped
+    FOR SHARE. Raises EntryNotFoundError when the id is not this tenant's (a
+    nonexistent id and another tenant's are indistinguishable), ValueError when
+    it belongs to another control, and StaleRecommendationError when it is no
+    longer the control's current recommendation. Writes nothing; the caller
+    owns the transaction that keeps both locks.
+    """
+    set_tenant_context(conn, tenant_id)
+    acquire_control_review_lock(conn, tenant_id, control_id)
+    row = conn.execute(
+        _SELECT_REVIEWED_RECOMMENDATION,
+        {"tenant_id": str(tenant_id), "recommendation_id": str(recommendation_id)},
+    ).fetchone()
+    if row is None:
+        raise EntryNotFoundError(f"recommendation {recommendation_id} is not in this tenant")
+    if str(row[1]) != control_id:
+        raise ValueError(
+            f"recommendation {recommendation_id} does not belong to control {control_id!r}."
+        )
+    current = conn.execute(
+        _SELECT_CURRENT_ID, {"tenant_id": str(tenant_id), "control_id": control_id}
+    ).fetchone()
+    if row[3] or current is None or str(current[0]) != str(row[0]):
+        raise StaleRecommendationError(
+            f"recommendation {recommendation_id} has been replaced by a newer recommendation "
+            "for this control; review the newer recommendation. This decision was not recorded."
+        )
+    return ReviewedRecommendation(
+        recommendation_id=str(row[0]), control_id=str(row[1]), status=row[2]
+    )
 
 
 # ---------------------------------------------------------------------------
