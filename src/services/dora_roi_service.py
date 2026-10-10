@@ -11,8 +11,38 @@ Why:   KER-106 (Document 14, part 1 of 3) establishes the live-register foundati
        for RoI entries. Documents 15 and 16 will add xBRL-CSV export and authority
        submission workflows on top of this foundation.
 
+Concurrency and lock order — recorded decision (SEC-REMED-004):
+    update_register_entry reads the row with SELECT ... FOR NO KEY UPDATE,
+    with explicit tenant predicates, before capturing before_state. Under
+    READ COMMITTED a plain read let two amendments capture the same old row;
+    the second then ledgered a before_state that was not the state it
+    replaced, and the hash chain verified regardless, because the tenant's
+    advisory lock inside append_audit_entry is taken after the state was
+    captured. With the locking read a concurrent amendment waits for the
+    first to commit and is handed the committed row. That is the whole
+    guarantee: an accurate audit trail. A stale user edit is NOT rejected; it
+    waits, then wins. Rejecting it would need an optimistic token (an expected
+    updated_at) the API does not have. FOR NO KEY UPDATE is the lock the
+    UPDATE of these non-key columns takes anyway. The after_state is the row
+    the UPDATE actually stored (RETURNING), and ledger timestamps are rendered
+    in UTC, so a session's time zone cannot make two equal states differ.
+
+    Per call, the row lock is taken before the ledger advisory lock. Per
+    transaction that order does not hold: the advisory lock is
+    transaction-scoped, so a caller-owned transaction that has already
+    ledgered holds it while a later amendment waits on a row lock; if the
+    session holding that row is queued for the advisory lock, PostgreSQL
+    aborts one side with DeadlockDetected (40P01). The loser commits nothing,
+    the chain stays valid, and the retry is the caller's. This is the KER-107
+    "business write, then ledger" limitation every ledgered service shares;
+    the UPDATE already took the same row lock before the ledger lock, so the
+    locking read adds no new inversion. Read-only functions take no locks.
+    The service owns no transaction: the lock lives until the caller commits
+    or rolls back.
+
 How to run or test:
     pytest tests/unit/services/test_dora_roi_service.py -v
+    pytest tests/integration/test_sec_remed_004_register_audit.py -m integration -v
 """
 
 from __future__ import annotations
@@ -138,6 +168,9 @@ INSERT INTO dora_register_entries (
 )
 """
 
+# The tenant predicate repeats what RLS and set_tenant_context already
+# enforce, so the statement is correct on its own; RETURNING hands back the
+# row as stored, which is what the ledger's after_state records.
 _UPDATE_ENTRY = """
 UPDATE dora_register_entries
 SET provider_name = :provider_name,
@@ -153,7 +186,11 @@ SET provider_name = :provider_name,
     is_active = :is_active,
     source_record_id = :source_record_id,
     updated_at = :updated_at
-WHERE register_entry_id = :register_entry_id
+WHERE register_entry_id = :register_entry_id AND tenant_id = :tenant_id
+RETURNING register_entry_id, tenant_id, provider_name, service_name, provider_type,
+       criticality_level, business_function, data_types, countries_supported,
+       contract_start_date, contract_end_date, exit_strategy_summary, is_active,
+       source_record_id, created_at, updated_at
 """
 
 _SELECT_ENTRY_BY_ID = """
@@ -163,6 +200,18 @@ SELECT register_entry_id, tenant_id, provider_name, service_name, provider_type,
        source_record_id, created_at, updated_at
 FROM dora_register_entries
 WHERE register_entry_id = :register_entry_id
+"""
+
+# The amendment path's own read; the getters keep the plain SELECT above and
+# take no lock. See "Concurrency and lock order" in the module docstring.
+_SELECT_ENTRY_FOR_AMENDMENT = """
+SELECT register_entry_id, tenant_id, provider_name, service_name, provider_type,
+       criticality_level, business_function, data_types, countries_supported,
+       contract_start_date, contract_end_date, exit_strategy_summary, is_active,
+       source_record_id, created_at, updated_at
+FROM dora_register_entries
+WHERE register_entry_id = :register_entry_id AND tenant_id = :tenant_id
+FOR NO KEY UPDATE
 """
 
 _BASE_SELECT_ENTRIES = """
@@ -221,29 +270,31 @@ def update_register_entry(
     conn, tenant_id, register_entry_id: str, entry_input: RegisterEntryInput,
     *, actor_id, actor_role: str,
 ) -> RegisterEntryOutput | None:
-    """Update an existing DORARegisterEntry and return the refreshed output.
+    """Update an existing DORARegisterEntry and return it as stored.
 
-    Guards tenant_id first, then normalizes and validates entry_input. Sets tenant
-    context, then checks the entry exists. If not found, returns None. Otherwise
-    issues the UPDATE, records the row as it stood beforehand in the KER-107
-    ledger alongside the new values, and returns a RegisterEntryOutput built from
-    the new values and the original created_at timestamp. An amendment to a filed
-    regulatory record is worth as much as the original, so before_state is what
-    makes the change reconstructable rather than merely dated.
+    Guards tenant_id first, then normalizes and validates entry_input, so bad
+    input never reaches the database. Sets tenant context, then reads the row
+    with a FOR NO KEY UPDATE lock, scoped to this tenant; if there is none,
+    returns None and has written nothing. Otherwise updates it, records the
+    locked row as before_state and the stored row as after_state in the
+    KER-107 ledger, and returns the stored row. The lock is held until the
+    caller's transaction ends, so a concurrent amendment's before_state is
+    this one's committed result; that is accuracy, not stale-edit rejection.
     Raises TenantContextMissingError on bad tenant; ValueError on invalid input.
     """
     _guard_tenant(tenant_id)
     normalized = _normalize_and_validate(entry_input)
     set_tenant_context(conn, tenant_id)
-    row = conn.execute(
-        _SELECT_ENTRY_BY_ID, {"register_entry_id": register_entry_id}
-    ).fetchone()
+    lookup = {"register_entry_id": register_entry_id, "tenant_id": str(tenant_id)}
+    row = conn.execute(_SELECT_ENTRY_FOR_AMENDMENT, lookup).fetchone()
     if row is None:
         return None
     previous = _entry_row_to_output(row)
-    now = datetime.now(timezone.utc)
-    conn.execute(_UPDATE_ENTRY, _build_update_params(register_entry_id, normalized, now))
-    updated = _output_from_input(register_entry_id, str(tenant_id), normalized, row[14], now)
+    params = _build_update_params(register_entry_id, normalized, datetime.now(timezone.utc))
+    stored = conn.execute(_UPDATE_ENTRY, {**params, "tenant_id": str(tenant_id)}).fetchone()
+    if stored is None:
+        raise RuntimeError("the locked register entry was not updated")
+    updated = _entry_row_to_output(stored)
     _record_register_ledger_entry(
         conn, tenant_id,
         actor_id=actor_id,
@@ -284,13 +335,26 @@ def _entry_to_ledger_state(entry: RegisterEntryOutput) -> dict:
     """Return a register entry as a dict the audit ledger can serialise.
 
     append_audit_entry json.dumps() its state fields, and json cannot encode a
-    date or a datetime, so both are rendered as ISO 8601 strings.
+    date or a datetime, so both are rendered as ISO 8601 strings. Timestamps
+    are converted to UTC first: values read back from PostgreSQL carry the
+    session's time zone, values generated here carry UTC, and one instant must
+    read the same in both (SEC-REMED-004). Every register timestamp column is
+    TIMESTAMPTZ, so a naive datetime here is a defect and raises TypeError.
     """
     state = dataclasses.asdict(entry)
     for field_name, value in state.items():
-        if isinstance(value, (datetime, date)):
+        if isinstance(value, datetime):
+            state[field_name] = _utc_isoformat(value)
+        elif isinstance(value, date):
             state[field_name] = value.isoformat()
     return state
+
+
+def _utc_isoformat(value: datetime) -> str:
+    """Return a timezone-aware datetime as an ISO 8601 string in UTC; refuse a naive one."""
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        raise TypeError("register timestamps must be timezone-aware")
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def get_register_entry(
@@ -537,9 +601,9 @@ def _output_from_input(
 ) -> RegisterEntryOutput:
     """Build a RegisterEntryOutput directly from normalized input and timestamps.
 
-    Used by create_register_entry (both timestamps = now) and update_register_entry
-    (created_at preserved from existing row, updated_at = now). Avoids a redundant
-    SELECT after INSERT or UPDATE.
+    Used by create_register_entry, where both timestamps are now, to avoid a
+    SELECT after the INSERT. update_register_entry does not use it: an
+    amendment returns and ledgers the row its UPDATE ... RETURNING stored.
     """
     return RegisterEntryOutput(
         register_entry_id=entry_id,

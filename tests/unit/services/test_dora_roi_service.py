@@ -2,12 +2,17 @@
 
 Plain-English summary
 ---------------------
-Fifteen tests verify the DORA RoI service without a live database. A spy
+These tests verify the DORA RoI service without a live database. A spy
 connection records every execute() call and returns configurable rows for
 SELECT queries. Tests cover: successful create and update, missing-row None
 return, ordering and criticality-filter SQL, active-only filter, all six
 validation rules, tenant context ordering (SET LOCAL first), the global
-windows query bypassing tenant context, and exit-strategy trimming/capping.
+windows query bypassing tenant context, exit-strategy trimming/capping, and
+the SEC-REMED-004 statement shapes: the amendment's tenant-scoped locking
+read, the tenant-scoped UPDATE ... RETURNING, the non-locking getter, and
+UTC ledger timestamps. Whether the lock actually serialises two amendments
+is proven against PostgreSQL in
+tests/integration/test_sec_remed_004_register_audit.py.
 
 How to run
 ----------
@@ -17,7 +22,7 @@ How to run
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -27,6 +32,7 @@ from src.models.dora_register_entry import CRITICALITY_CRITICAL, CRITICALITY_HIG
 from src.services.dora_roi_service import (
     RegisterEntryInput,
     RegisterEntryOutput,
+    _entry_to_ledger_state,
     create_register_entry,
     get_register_entry,
     list_active_register_entries,
@@ -161,16 +167,77 @@ def test_create_register_entry_success() -> None:
     assert len(insert_calls) == 1, "Exactly one INSERT expected"
 
 
+def _amendment_spy(stored_provider_name: str = "Azure") -> _SpyConn:
+    """Return a spy whose locking read finds the entry and whose UPDATE ... RETURNING stores it."""
+    return _SpyConn(responses=[
+        ("RETURNING", _SelectResult([_make_entry_row(provider_name=stored_provider_name)])),
+        ("FROM dora_register_entries", _SelectResult([_make_entry_row()])),
+    ])
+
+
 def test_update_register_entry_success() -> None:
-    """Update returns changed fields and issues an UPDATE SQL call."""
-    row = _make_entry_row()
-    spy = _SpyConn(responses=[("FROM dora_register_entries", _SelectResult([row]))])
+    """Update returns the stored row and issues exactly one UPDATE SQL call."""
+    spy = _amendment_spy()
     new_input = _valid_input(provider_name="Azure")
     result = update_register_entry(spy, _TENANT_ID, _ENTRY_ID, new_input, actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
     assert result is not None
     assert result.provider_name == "Azure"
     update_calls = [sql for sql, _ in spy.calls if "UPDATE dora_register_entries" in str(sql)]
     assert len(update_calls) == 1, "Exactly one UPDATE expected"
+
+
+def test_update_reads_and_writes_the_entry_under_a_tenant_scoped_row_lock() -> None:
+    spy = _amendment_spy()
+    update_register_entry(spy, _TENANT_ID, _ENTRY_ID, _valid_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
+    statements = [(" ".join(str(sql).split()), params) for sql, params in spy.calls]
+    assert "SET LOCAL" in statements[0][0]
+    read_sql, read_params = statements[1]
+    assert read_sql.startswith("SELECT") and read_sql.endswith("FOR NO KEY UPDATE")
+    assert "tenant_id = :tenant_id" in read_sql
+    assert read_params == {"register_entry_id": _ENTRY_ID, "tenant_id": _TENANT_ID}
+    update_sql, update_params = statements[2]
+    assert update_sql.startswith("UPDATE dora_register_entries")
+    assert "WHERE register_entry_id = :register_entry_id AND tenant_id = :tenant_id RETURNING" in update_sql
+    assert update_params["tenant_id"] == _TENANT_ID
+
+
+def test_update_does_not_ledger_a_value_the_update_did_not_store() -> None:
+    spy = _SpyConn(responses=[("FOR NO KEY UPDATE", _SelectResult([_make_entry_row()]))])
+    with pytest.raises(RuntimeError, match="was not updated"):
+        update_register_entry(spy, _TENANT_ID, _ENTRY_ID, _valid_input(), actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
+    assert not [sql for sql, _ in spy.calls if "audit_log" in str(sql)]
+
+
+def test_update_with_invalid_input_issues_no_sql() -> None:
+    spy = _amendment_spy()
+    with pytest.raises(ValueError):
+        update_register_entry(spy, _TENANT_ID, _ENTRY_ID, _valid_input(provider_type="carrier_pigeon"),
+                              actor_id=_LEDGER_ACTOR_ID, actor_role="vciso")
+    assert spy.calls == []
+
+
+def test_get_register_entry_takes_no_row_lock() -> None:
+    spy = _SpyConn(responses=[("FROM dora_register_entries", _SelectResult([_make_entry_row()]))])
+    get_register_entry(spy, _TENANT_ID, _ENTRY_ID)
+    selects = [str(sql) for sql, _ in spy.calls if "FROM dora_register_entries" in str(sql)]
+    assert len(selects) == 1
+    assert " FOR " not in " ".join(selects[0].split())
+
+
+def test_ledger_timestamps_read_the_same_whatever_their_time_zone() -> None:
+    berlin_summer = timezone(timedelta(hours=2))
+    in_utc = _entry_to_ledger_state(RegisterEntryOutput(*_make_entry_row()))
+    row_in_berlin = _make_entry_row()[:14] + (_NOW.astimezone(berlin_summer), _NOW.astimezone(berlin_summer))
+    in_berlin = _entry_to_ledger_state(RegisterEntryOutput(*row_in_berlin))
+    assert in_berlin == in_utc
+    assert in_utc["created_at"] == _NOW.isoformat()
+    assert in_utc["contract_start_date"] == _DATE.isoformat()
+
+
+def test_a_naive_ledger_timestamp_is_refused() -> None:
+    naive_row = _make_entry_row()[:14] + (_NOW.replace(tzinfo=None), _NOW)
+    with pytest.raises(TypeError, match="timezone-aware"):
+        _entry_to_ledger_state(RegisterEntryOutput(*naive_row))
 
 
 def test_get_register_entry_missing_returns_none() -> None:
