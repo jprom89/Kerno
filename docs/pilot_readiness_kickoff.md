@@ -534,17 +534,19 @@ Specified here; not implemented by this issue.
    reads, so existing tests are unchanged.
 7. **Redaction** covers both URLs and both passwords. Refusal messages never
    echo URL-derived values.
-8. **Safety refusals versus not-ready failures:**
-   - **Safety refusal → the whole run stops**, as today. Triggers: the wrong
-     database or role; elevated attributes; a membership; owned objects; a
-     missing marker; the lock not proven; a redirecting setting.
-   - **Not ready → only the runtime tests error**, with "runtime identity not
-     ready" and the reason. Triggers: the runtime pair is absent, the role does
-     not exist yet, password authentication fails, or CONNECT has not been
-     granted. Owner tests are unaffected.
-   - **A new flag, `--require-runtime-identity`,** turns runtime skips and
-     not-ready errors into a failed run. `--require-live-database` keeps its
-     current meaning (the owner target). Activation evidence uses both flags.
+8. **One behaviour table for runtime configuration.** It governs every setup
+   and acceptance instruction in this document (§2.7, §5).
+   - **New flag:** `--require-runtime-identity`.
+   - **Unchanged:** `--require-live-database` keeps its current meaning, the
+     owner target.
+
+   | Situation | Outcome |
+   |---|---|
+   | **Runtime pair absent**, without `--require-runtime-identity` | Each runtime test is skipped explicitly, with the reason "runtime identity not configured". Owner tests run unchanged. This is a **setup-stage owner regression run, not runtime acceptance**. |
+   | **Runtime pair absent**, with `--require-runtime-identity` | Nonzero failure |
+   | **Unsafe or incomplete configuration, unsafe identity, or a lock that is not proved.** This covers: one runtime variable without the other; a malformed pair; values from two sources; a wrong endpoint, role or approval; the wrong database, owner or marker; elevated attributes, a membership or owned objects; the workflow lock unproved or lost; a redirecting setting | **Fails closed**: the run stops. No skip, and never an owner fallback |
+   | **Runtime settings supplied and statically valid, but not ready.** The role does not exist, password authentication fails, or CONNECT is not yet granted | A reported **runtime-setup failure** with a nonzero outcome, with or without `--require-runtime-identity`. Owner tests may still execute and report, but they cannot make the failed run succeed |
+   | **Final acceptance** | `--require-live-database --require-runtime-identity`, with both owner and runtime targets verified and **zero skips** |
 9. **`KERNO_MIGRATION_DATABASE_URL` in guarded workflows.**
    - `bootstrap_test_process` and the migration wrapper treat it like
      `DATABASE_URL`, but more strictly.
@@ -675,9 +677,26 @@ owner connection.
 
 ### 2.7 Setup and activation sequence (`kerno_test`)
 
-Run only after PILOT-READY-002 is approved and merged. Each step names who runs
-it and which guarded operation performs it. Each step stops at its first
-failure and reports exactly what completed. **No step undoes anything
+**Two different PRs.** This preparation PR (draft PR #17, documentation only)
+authorises none of the steps below. They belong to the later PILOT-READY-002
+implementation PR, which proceeds in this order:
+
+1. **Approval of scope.** The owner approves the exact implementation and test
+   scope, including the §3 decisions.
+2. **Script review.** The provisioning script is written and reviewed on the
+   implementation branch before the administrator runs it.
+3. **Setup and acceptance from an unmerged branch.** The guarded setup and the
+   acceptance tests (steps 1–7 below) run from a recorded implementation-branch
+   SHA while the implementation PR is still unmerged. The evidence is recorded
+   against that SHA.
+4. **Independent review** of the code and of the actual results.
+5. **Merge only on explicit owner authorisation.**
+
+Non-test deployment is separate and is not authorised by either PR.
+
+Each step below names who runs it and which guarded operation performs it.
+Each step stops at its first failure and reports exactly what completed.
+Outcomes follow the behaviour table in §2.3 item 8. **No step undoes anything
 automatically:** no `DROP ROLE`, no revoke, no downgrade and no file deletion
 happen on failure.
 
@@ -690,9 +709,11 @@ happen on failure.
    - Commands: `python scripts/migrate_test_database.py upgrade head`, then
      `downgrade c4d5e6f7` and `upgrade head` for the round trip.
    - No runtime role is involved; the migration grants nothing.
-   - Then `python -m pytest --require-live-database`: the owner suite must
-     pass, with the runtime tests skipped as "not configured". That is allowed
-     because `--require-runtime-identity` is not given.
+   - Then `python -m pytest --require-live-database`, with no runtime settings
+     present anywhere. The owner suite must pass, and the runtime tests are
+     skipped explicitly as "runtime identity not configured" (§2.3 item 8,
+     row 1).
+   - This is a setup-stage owner regression run, **not** runtime acceptance.
 3. **Create the role (administrator, in the owner's own shell).**
    - Command: `python scripts/provision_test_runtime_role.py`. It reuses the
      existing provisioning helpers, and the administrator password is typed at
@@ -740,21 +761,31 @@ happen on failure.
 
      That `ALTER DATABASE … SET` is transactional is **[PG]**, to verify.
    - **Never connects as the runtime and never reads `.env.test.runtime`.**
-   - **This is the step that makes a positive runtime login possible.** Before
-     it, a runtime login fails with "not ready", not with a safety refusal.
+   - **This is the step that makes a positive runtime login possible.** Between
+     step 3 and this step, any pytest run ends as a reported runtime-setup
+     failure with a nonzero outcome (§2.3 item 8, row 4), not as a safety
+     refusal and not as a skip. No pytest run is needed in that window; this
+     wrapper subcommand does not read the runtime settings.
 6. **Verify the runtime identity (guarded pytest).**
    - Command:
      `python -m pytest tests/security/test_runtime_identity_boundary.py --require-live-database --require-runtime-identity`.
    - The first runtime connection runs the static checks, then the live
      identity checks and the same-lock proof, then a positive login. The
      negative and privilege probes of §2.5 follow.
-   - Any safety refusal stops the run; a login refusal is reported, and
-     `pg_hba.conf` is not edited.
-7. **Activate.**
+   - Outcomes follow §2.3 item 8:
+     - an unsafe configuration, an unsafe identity or an unproved lock fails
+       closed;
+     - a login, authentication or CONNECT refusal is a reported runtime-setup
+       failure with a nonzero outcome;
+     - `pg_hba.conf` is not edited.
+7. **Final acceptance.**
    - Command:
      `python -m pytest --require-live-database --require-runtime-identity`.
-   - Zero skips, recorded with the tested SHA.
-   - From then on, the runtime tests are part of the required live run.
+   - Both the owner and runtime targets are verified, there are zero skips,
+     and the result is recorded against the implementation-branch SHA it ran
+     at.
+   - That evidence goes to independent review before any merge (sequence
+     above).
 
 **Withdrawal:**
 
@@ -970,25 +1001,31 @@ It requires explicit approval, including the §3 decisions, before work starts.
    - fixed `kerno_test_app`, on the same endpoint apart from the user;
    - static validation at bootstrap; live validation on first use, including
      owns-nothing and the same-lock proof;
-   - safety refusals separated from not-ready failures;
-   - `--require-runtime-identity`;
+   - `--require-runtime-identity` and every row of the behaviour table in
+     §2.3 item 8, each with an offline unit test;
    - purpose `pytest` only; `DATABASE_URL` remains the owner;
    - offline unit tests for every refusal and for the
      `KERNO_MIGRATION_DATABASE_URL` cases;
    - the runbook updated with §2.7.
 6. **Runtime provisioning script** per §2.7 step 3, with offline tests. It is
-   run by the owner only, after written approval.
+   reviewed on the implementation branch, and the administrator runs it only
+   after written approval.
 7. **Runtime pool fixture** per §2.4. No dependency override of `get_conn`; a
    per-connection `session_user` check; no runtime evidence from owner paths.
-8. **Live evidence on `kerno_test`,** all through the guards, following §2.7:
+8. **Live evidence on `kerno_test`,** all through the guards, following §2.7.
+   It runs from a recorded implementation-branch SHA while the implementation
+   PR is still unmerged:
    - 029 upgrade, downgrade and upgrade;
    - `grant-runtime`;
    - the runtime identity check;
    - §2.4 (full profile) and §2.5, including the PUBLIC ACL and
      effective-privilege checks and the documented H1 residual;
-   - the full suite with `--require-live-database --require-runtime-identity`
-     at the tested SHA, with **zero skips**;
-   - `kerno_dev` untouched.
+   - final acceptance per §2.3 item 8: the full suite with
+     `--require-live-database --require-runtime-identity` at that SHA, both
+     targets verified, **zero skips**;
+   - `kerno_dev` untouched;
+   - independent review of the code and of these results, then merge only on
+     explicit owner authorisation.
 9. **Preserved:** every invariant in §1.9. The existing owner-role suite stays
    green. No DORA v2 table gains access. Every route mounted at the tested SHA
    keeps working under the full-profile grants.
