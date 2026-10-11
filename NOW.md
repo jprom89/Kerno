@@ -370,7 +370,7 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
 | C2 | Non-owner DB role + FORCE | **Held.** Own PR, real Postgres role |
-| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | **Preparation in progress** (documentation only) on branch `pilot/pilot-ready-001-c2-preparation`: `docs/pilot_readiness_kickoff.md`. C2 implementation, role provisioning, deployment and pilot acceptance are not started and each needs approval. |
+| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | **Preparation in progress** (documentation only) on branch `pilot/pilot-ready-001-c2-preparation`: `docs/pilot_readiness_kickoff.md`. Its PILOT-READY-002 contract, exceptions, risk acceptances and pilot exclusions are proposed, not approved. C2 implementation, role provisioning, deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
 

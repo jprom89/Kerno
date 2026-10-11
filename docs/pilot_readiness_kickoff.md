@@ -2,17 +2,20 @@
 
 Issue: [jprom89/Kerno#16](https://github.com/jprom89/Kerno/issues/16). Base:
 `08bddf34bbd3903c24fb4636d148928023d14e04` (origin/main, SEC-REMED-005 merged
-through PR #15). Branch: `pilot/pilot-ready-001-c2-preparation`. Written
-11 October 2026.
+through PR #15). Branch: `pilot/pilot-ready-001-c2-preparation`. First written
+11 October 2026 at `78a88e9`, then corrected the same day after review.
 
 **Status: preparation only.** This document is a specification, a validation
 plan and a release checklist. Nothing in it is implemented, provisioned,
 deployed or accepted:
 
-- **C2 implementation is still held** until the ticket in §5 is approved.
+- **The PILOT-READY-002 contract in §5 is proposed, not approved.**
+- **C2 implementation is still held.**
 - **No database was connected** in preparing this document, and no test or
   migration was run.
 - **No hosting, domain or budget choice is assumed.**
+- **Every risk acceptance, pilot exclusion and exception below is labelled
+  proposed until the owner approves it.**
 
 ## 0. Outcome, scope and how to read this
 
@@ -37,6 +40,7 @@ either; §6 records its proposed disposition.
 | **[PG]** | PostgreSQL behaviour the design relies on. Not verified here; the implementation ticket must prove it on `kerno_test` |
 | **[owner]** | An owner decision this document cannot make |
 | **[deploy]** | Can only be verified in a deployed environment |
+| **Proposed** | Not approved. Needs an explicit owner decision before it takes effect |
 
 ## 1. C2 implementation contract
 
@@ -83,7 +87,7 @@ Those stay on the owner connection (§2).
 ### 1.2 Pre-context reads, and why FORCE alone does not fix them
 
 These reads run before any tenant context exists. C2 must keep each one working
-without leaving them open to bulk reads.
+without leaving the tables open to bulk reads.
 
 | # | Path | Read | Policy today |
 |---|---|---|---|
@@ -120,11 +124,11 @@ no context is set. Consequences:
   RLS does not protect it today: the owner bypasses RLS, and every other role
   sees all rows before context is set.
 
-**A bootstrap design that actually closes the gap has to do both of these:**
-
-1. Stop giving the runtime role direct pre-context access to credential
-   columns.
-2. Make the `users` and `webhook_registrations` policies strict.
+**What the design in §1.5 does about it.** It removes the runtime role's
+*direct* table access to credential columns and makes the two policies strict.
+It does **not** stop the runtime from obtaining credential material: the helpers
+that replace direct access still return it, one exactly-keyed row per call.
+§1.5 and §1.8 state that residual precisely; accepting it is an owner decision.
 
 ### 1.3 Identities
 
@@ -132,8 +136,8 @@ Recommended. Names are placeholders; one set per database.
 
 | Identity | Test (`kerno_test`) | Pilot environment | Attributes | Purpose |
 |---|---|---|---|---|
-| **Owner / migrator** | `kerno_test` (exists, unchanged) | e.g. `kerno_owner` **[owner/deploy]** | LOGIN; no SUPERUSER, BYPASSRLS, CREATEROLE, CREATEDB or REPLICATION; owns the database and every schema object | Alembic, the helper functions, seeds and reference data, owner-only maintenance, test fixtures |
-| **Runtime** | `kerno_test_app` (new) | e.g. `kerno_app` **[owner/deploy]** | LOGIN; NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, NOCREATEDB, NOREPLICATION; **zero role memberships**, including predefined `pg_*` roles; **owns no object**; CONNECT on its one database only (no TEMP) | The API process. Also the nightly job if that job is ever re-enabled |
+| **Owner / migrator** | `kerno_test` (exists, unchanged) | e.g. `kerno_owner` **[owner/deploy]** | LOGIN; no SUPERUSER, BYPASSRLS, CREATEROLE, CREATEDB or REPLICATION; owns the database and every schema object | Alembic, the helper functions, the grant procedure, seeds and reference data, owner-only maintenance, test fixtures |
+| **Runtime** | `kerno_test_app` (new) | e.g. `kerno_app` **[owner/deploy]** | LOGIN; NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, NOCREATEDB, NOREPLICATION; **zero role memberships**, including predefined `pg_*` roles; **owns no object**; CONNECT on its one database only (no TEMP) | The API process. Also the nightly job, if that job is ever re-enabled |
 | Prune job | not created now | later, if needed | as runtime, plus `SELECT, DELETE` on `ai_decision_log` only | Retention prune. Not needed for the pilot: the first rows become prunable 180 days after the first decision |
 
 Design rules:
@@ -147,81 +151,107 @@ Design rules:
 - **The `kerno_test` owner must not gain** CREATEROLE, any membership or any
   bypass. Acceptance tests are never run as `postgres`.
 
-### 1.4 Runtime privilege matrix
+### 1.4 Runtime privilege matrix, by serving profile
 
-The matrix is derived from the wired routes and jobs, not from the service-only
-DORA v2 modules. Abbreviations: S = SELECT, I = INSERT, U = UPDATE,
-D = DELETE; a column list in parentheses means a column-level grant.
+**The rule:** the runtime's effective privileges must cover every route that is
+mounted, and nothing more. Today every router is mounted in every environment
+(`src/api/app.py:191-213`), so the grants depend on which routers are served.
 
-| Table | Runtime grants | RLS / FORCE after C2 | Notes |
+| Profile | Routers mounted | Used by |
+|---|---|---|
+| **Full** | Every router mounted today | PILOT-READY-002 (C2). No mounted route loses a grant, so "no route behaviour change" is true |
+| **Pilot** | Only the routers the supported pilot workflow uses (§4.1) | Applied only together with, or after, the serving profile that unmounts the other routers (gate G10). **Never before**, because applying pilot grants while the other routers are still mounted would break them silently |
+
+**Ordering:**
+
+1. **C2** (PILOT-READY-002) ships the **full** profile and is tested with every
+   router mounted.
+2. **The serving-profile ticket** (G10) introduces the pilot router set and
+   applies the **pilot** grant set in the same change. It also adds a startup
+   check that the app's serving profile matches the database's recorded
+   runtime profile (§1.4, "How grants are applied").
+3. **A pilot deployment goes live only after both.** The owner may combine the
+   two tickets; the pilot grant set must not land before the serving profile.
+
+Abbreviations: S = SELECT, I = INSERT, U = UPDATE, D = DELETE; a column list in
+parentheses means a column-level grant.
+
+| Table | Pilot profile | Added only in the full profile (for features excluded from the pilot) | RLS / FORCE after C2 |
 |---|---|---|---|
-| `tenants` | S(`tenant_id`, `tenant_slug`, `trust_center_public`, `is_active`); U(`trust_center_public`) | none (unchanged) | The legacy credential columns `email` and `password_hash` (`014:34-36`) are **never** granted. No I or D. |
-| `users` | **none** | ENABLE, strict policy, not FORCE (see §1.5) | Login reads it only through helper H1 |
-| `webhook_registrations` | S(`id`, `tenant_id`, `source_system`, `created_at`, `is_active`); I(`id`, `tenant_id`, `source_system`, `signing_secret`); U(`signing_secret`) | ENABLE, strict policy, not FORCE | The `signing_secret` column is never selectable; ingest reads it only through helper H2 |
-| `webhook_ingest_dedup` | S; I(`tenant_id`, `source_system`, `external_ref`); U(`received_at`) | E/F, unchanged | `ON CONFLICT DO UPDATE` privileges per **[PG]** |
-| `context_records` | S, I | E/F | |
-| `control_evidence_links` | S, I, U(the link columns written in `evidence_service.py:68-103`) | E/F, with the `EXISTS` policy | The policy subquery runs as the runtime role against `context_records` **[PG]** |
-| `compliance_controls` | S | none (global) | |
-| `control_crosswalks` | none | none | No live reader |
-| `recommendations` | S, I, U(`is_superseded`) | E/F | U also satisfies `FOR SHARE` **[PG]** |
-| `overrides` | S, I | E/F | |
-| `audit_log` | **S, I** + USAGE on `audit_log_sequence_number_seq` | E/F + triggers | No U, D or TRUNCATE: those fail with "permission denied" before any trigger runs |
-| `ai_decision_log` | **S, I** | E/F + triggers | No D for the API role (prune identity only); no U |
-| `retrieval_bias` | S | E/F | S for the coverage calibration date (`coverage_service.py:199-200`). I and U only if the recalculation endpoint or job stays mounted (excluded from the pilot, §4.3) |
-| `tenant_embeddings` | none (S only if recalculation stays) | E/F | |
-| `remediation_routing_rules`, `remediation_tasks` | none while remediation is excluded; otherwise S, and S/I/U(`closed_at`, `re_review_flagged_at`) | E/F | |
-| `dora_register_entries` | S, I, U(the columns in `dora_roi_service.py:175-194`) | E/F | U also satisfies `FOR NO KEY UPDATE` **[PG]** |
-| `dora_reporting_windows`, `dora_submission_windows` | S | none (global) | |
-| `dora_submission_runs` | S, I, U(`status`, `validation_overall_status`, `validation_issue_count`, `entry_count`, `frozen_package_json`, `updated_at`) | E/F | Exact list from `_UPDATE_RUN`, `dora_roi_submission_service.py:174-183` (insert at 163-172) |
-| DORA v2 tables (6) | **none** until a routed ticket grants them | E/F | No route imports these services; fail closed |
-| `alembic_version` | none | — | |
+| `tenants` | **none** | S(`tenant_id`, `tenant_slug`, `trust_center_public`, `is_active`); U(`trust_center_public`): Trust Center (B3) and nightly job (B4) | none (unchanged) |
+| `users` | none | none | ENABLE, strict policy, not FORCE (**proposed exception**, §1.5) |
+| `webhook_registrations` | none | S(`id`, `tenant_id`, `source_system`, `created_at`, `is_active`); I(`id`, `tenant_id`, `source_system`, `signing_secret`); U(`signing_secret`) | ENABLE, strict policy, not FORCE (**proposed exception**) |
+| `webhook_ingest_dedup` | none | S; I(`tenant_id`, `source_system`, `external_ref`); U(`received_at`) | E/F, unchanged |
+| `context_records` | S, I | — | E/F |
+| `control_evidence_links` | S, I, U(the link columns written in `evidence_service.py:68-103`) | — | E/F, with the `EXISTS` policy; its subquery runs as the runtime role against `context_records` **[PG]** |
+| `compliance_controls` | S | — | none (global) |
+| `control_crosswalks` | none | none | none (no live reader) |
+| `recommendations` | S, I, U(`is_superseded`) | — | E/F. The U grant also satisfies `FOR SHARE` **[PG]** |
+| `overrides` | S, I | — | E/F |
+| `audit_log` | S, I + USAGE on `audit_log_sequence_number_seq` | — | E/F + triggers. No U, D or TRUNCATE: those fail with "permission denied" before any trigger runs |
+| `ai_decision_log` | I (the insert has no `RETURNING`, `ai_decision_log_service.py:65-71`) | S: `GET /api/v1/ai-decisions` | E/F + triggers. No U, and no D (that belongs to a later prune identity) |
+| `retrieval_bias` | S (the coverage summary's calibration date, `coverage_service.py:199-200`) | I, U(`bias_vector`, `override_count`, `last_recalculated_at`): recalculation endpoint and job | E/F |
+| `tenant_embeddings` | none | S: recalculation | E/F |
+| `remediation_routing_rules` | none | S | E/F |
+| `remediation_tasks` | none | S, I, U(`closed_at`, `re_review_flagged_at`) | E/F |
+| `dora_register_entries` | S, I, U(the columns in `dora_roi_service.py:175-194`) | — | E/F. The U grant also satisfies `FOR NO KEY UPDATE` **[PG]** |
+| `dora_reporting_windows` | none | S: `GET /api/v1/register/windows` | none (global) |
+| `dora_submission_windows` | S | — | none (global) |
+| `dora_submission_runs` | S, I, U(`status`, `validation_overall_status`, `validation_issue_count`, `entry_count`, `frozen_package_json`, `updated_at`), the exact list from `_UPDATE_RUN` (`dora_roi_submission_service.py:174-183`; insert at 163-172) | — | E/F |
+| DORA v2 tables (6) | none | none | E/F. No route imports these services; fail closed |
+| `alembic_version` | none | none | — |
 
-**Shared grants:**
+**Grants shared by both profiles, plus the full-profile extra:**
 
 - CONNECT on the database; no TEMP.
 - USAGE on schema `public`, no CREATE.
-- USAGE on schema `kerno_bootstrap` and EXECUTE on exactly the two helpers
-  below.
+- USAGE on schema `kerno_bootstrap` and EXECUTE on H1.
+- **Full profile only:** EXECUTE on H2.
 
-**Never granted to the runtime:**
+**Tenant-isolation boundary of the `tenants` access the full profile
+retains.** `tenants` has no RLS. With full-profile grants, the runtime can read
+every tenant's id, slug, visibility flag and active flag, and can set *any*
+tenant's `trust_center_public`. The only thing that confines the visibility
+update to the caller's tenant is the application's
+`WHERE tenant_id = :tenant_id` with the JWT tenant (`trust_center.py:79-84,
+123-127`). That is application-enforced, not database-enforced. The pilot
+profile grants nothing on `tenants`: login reaches it only inside H1, as the
+owner.
+
+**Never granted to the runtime, in either profile:**
 
 - TRUNCATE, which ignores RLS **[PG]**; TRIGGER; REFERENCES; MAINTAIN (PG17+);
   CREATE on any schema or database;
 - ownership of any object;
 - membership in any role, including predefined `pg_*` roles.
 
-**Effective privileges, not just named grants.** The implementation must verify
-these for the runtime identity **[PG]**:
-
-- `has_table_privilege` / `has_column_privilege` / `has_sequence_privilege` /
-  `has_function_privilege` / `has_schema_privilege` / `has_database_privilege`
-  match the matrix exactly, in both directions.
-- PUBLIC holds EXECUTE on neither helper, because new functions grant EXECUTE
-  to PUBLIC by default.
-- PUBLIC has no CREATE on `public`. This is the PG15+ default; the server is
-  recorded as PostgreSQL 18.4 (`NOW.md:237`).
-- The runtime has CONNECT only on its own database. PUBLIC CONNECT is already
-  revoked on `kerno_test` (`provision_test_database.py:246-249`) but not on
-  `kerno_dev` (§2.3).
-- `pg_auth_members` shows no membership, and `pg_shdepend` shows no owned
-  object.
+**Effective privileges, not just named grants.** These checks are specified
+in §2.5. They inspect the runtime role's effective privileges, which include
+anything granted to PUBLIC, and separately read the ACLs for PUBLIC entries.
+PUBLIC is the universal ACL grantee, not a role that can log in.
 
 **How grants are applied.** No GRANT, REVOKE or default privilege exists in any
 migration today.
 
-- **Single source.** One declarative matrix, applied by migration 029 and by
-  every later table-creating migration through a shared helper.
-- **Grantee.** The role named in a per-database setting `kerno.runtime_role`,
-  set by the database owner with `ALTER DATABASE … SET` **[PG]**.
-- **Unset setting (owner-mode environments such as current development):** the
-  migration creates the helpers and the strict policies but skips grants, with
-  a notice.
-- **Invalid runtime role:** if the setting names a role that is the owner, or
-  has elevated attributes or memberships, the migration raises.
+- **Migration 029 (owner)** creates an owner-only procedure,
+  `kerno_bootstrap.apply_runtime_grants(p_role name, p_profile text)`. It
+  implements the two columns of the matrix above.
+  - It refuses a role that does not exist, cannot log in, is the owner, has
+    elevated attributes or memberships, or owns objects.
+  - It refuses any profile other than `full` or `pilot`.
+  - EXECUTE on it is revoked from PUBLIC. The migration itself grants nothing
+    to anyone.
+- **A separate guarded owner operation applies the grants.** On `kerno_test`
+  this is the new wrapper subcommand `grant-runtime` (§2.7, step 5); in the
+  pilot environment it is an owner-run step. It records the role and profile
+  as database settings, `kerno.runtime_role` and `kerno.runtime_profile`, set
+  with `ALTER DATABASE … SET` **[PG]**.
+- **Later table-creating migrations** call the procedure when those settings
+  are present. A new session reads database-level settings **[PG]**.
 - **No default privileges.** `ALTER DEFAULT PRIVILEGES` is not used, so a new
   table never inherits grants silently.
-- **Matrix test.** A live test compares the effective privileges of the runtime
-  identity with the matrix for every table, in both directions.
+- **Per-profile matrix tests** compare effective privileges with the matrix in
+  both directions.
 
 ### 1.5 Bootstrap design
 
@@ -242,21 +272,41 @@ GRANT EXECUTE ON FUNCTION kerno_bootstrap.resolve_login(text, text) TO <runtime>
 ```
 
 - **Owner:** the owner/migrator identity.
-- **Callable surface:** exact equality on the already-normalised slug and email
-  (`auth_service.py:168-169`) only. No pattern matching, no lookup by email
-  alone or by tenant, at most one row. An unknown slug and an unknown email
-  both return an empty set, so the dummy-verify path (177-185) and the uniform
-  401 are unchanged.
+- **Interface:** exact equality on the already-normalised slug and email
+  (`auth_service.py:168-169`); no pattern matching; no lookup by email alone or
+  by tenant; at most one row. The column types match `users` exactly
+  (`019:71-80`).
+- **Unknown inputs:** an unknown slug and an unknown email both return an empty
+  set, so the dummy-verify path (177-185) and the uniform 401 are unchanged.
 - **Why the hash leaves the database:** scrypt verification runs in Python
   (`auth_service.py:93-115`).
-- **What it removes:** the runtime can no longer select `users` at all. It
-  learns one hash only by naming the exact slug and email, so it cannot
-  enumerate credentials.
+
+**What H1 guarantees, and what it does not:**
+
+- **Guaranteed:** the runtime has **no direct access to `users`** (no grant).
+  It cannot select the table, list accounts or match emails by pattern. It can
+  obtain a row only by supplying an exact slug and email pair to H1. One call
+  returns at most one row, but one statement can call H1 once per row of a
+  list of pairs the caller supplies.
+- **Not guaranteed:** H1's own output stays available to the runtime, one row
+  per call. For any slug and email it supplies, H1 returns that account's id,
+  tenant, role, active flag and **password hash**. The runtime can call it
+  repeatedly, and nothing in the database limits or records those calls.
+- **Consequence:** a compromised runtime credential, or injected SQL running as
+  the runtime, can collect the hashes of every account it can name. Slugs are
+  not secret, and emails can be known or guessed. scrypt (`constants.py:296-314`)
+  slows offline cracking but does not prevent it.
+- **Residual risk, owner decision (proposed for acceptance):** accept this for
+  the pilot, or require a design that never returns the hash, such as
+  verification inside the database. That alternative is outside this
+  specification and is not designed here.
 - **`tenants.is_active` is still not checked by login,** as today
-  (`auth_service.py:52-57`). Whether it should be is a separate decision; the
-  offboarding procedure in §4.2 uses `users.is_active`.
+  (`auth_service.py:52-57`). Offboarding is described in §4.2 (G9) and its
+  limits in "Proposed risk acceptances".
 
 **H2 — webhook verification material.** It replaces `webhook_service.py:85-89`.
+It is needed **only in the full profile**; the pilot profile does not grant it,
+because webhooks are a proposed pilot exclusion.
 
 ```sql
 CREATE FUNCTION kerno_bootstrap.webhook_verification(p_registration_id uuid)
@@ -265,13 +315,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   SELECT r.tenant_id, r.signing_secret, r.is_active
   FROM public.webhook_registrations r WHERE r.id = p_registration_id
 $$;
--- REVOKE … FROM PUBLIC; GRANT EXECUTE … TO <runtime>
+-- REVOKE … FROM PUBLIC; GRANT EXECUTE … TO <runtime> (full profile only)
 ```
 
 - It takes the same input as today. The id is already canonicalised as a UUID
   (`webhook_service.py:348-357`).
 - It returns the same three columns, so the caller changes only its SQL string.
 - It exposes no listing, no lookup by tenant or source, and no other column.
+
+**What H2 guarantees, and what it does not:**
+
+- **Guaranteed:** the runtime can never select `signing_secret` directly (a
+  column grant), so ordinary queries and the registration GET never return it.
+- **Not guaranteed:** in the full profile, the runtime can list registration
+  ids under any tenant context it sets (it holds S(`id`) and controls the
+  setting), then call H2 for each. **Every signing secret therefore remains
+  obtainable by a compromised runtime.** H2 removes bulk pre-context reads; it
+  does not make secrets confidential from the runtime.
+- **Residual risk, owner decision (proposed for acceptance, full profile
+  only).** Encrypting secrets at rest stays backlog.
 
 **Helper requirements, both functions [PG]:**
 
@@ -290,72 +352,75 @@ to strict, with explicit `WITH CHECK`:
 tenant_id = NULLIF(current_setting('app.current_tenant_id', TRUE), '')::uuid
 ```
 
-No context, or an empty context, then yields no rows and no error. Because the
-runtime holds no grant on `users`, that policy is defence in depth there. For
-`webhook_registrations`, the management endpoints, which set context first
-(`webhook_service.py:144,174`; `src/api/webhooks.py:176`), keep working.
+No context, or an empty context, then yields no rows and no error. The runtime
+holds no grant on `users`, so that policy is defence in depth there. In the
+full profile, the `webhook_registrations` management endpoints keep working
+because they set context first (`webhook_service.py:144,174`;
+`src/api/webhooks.py:176`).
 
-**FORCE on these two tables: recommended *not* to add it.** This deliberately
-refines the backlog wording "FORCE on users and webhook_registrations"
-(`NOW.md:402-403`; CLAUDE.md §17).
+**Proposed exception, requiring owner approval: no FORCE on these two
+tables.** `users` and `webhook_registrations` would stay ENABLE without
+FORCE, deliberately departing from the backlog wording "FORCE on users and
+webhook_registrations" (`NOW.md:402-403`; CLAUDE.md §17). The FORCE flags on
+the other 19 tenant tables are unchanged.
 
-- **What FORCE would add:** for a non-owner runtime, FORCE adds nothing
-  **[PG]**. It binds only owner sessions: migrations, seeds and fixtures. The
-  owner can turn it off again (`ALTER TABLE … NO FORCE`).
-- **What it would break:** the helpers execute as that owner. Under FORCE plus a
-  strict policy they would see nothing before context is set, which breaks
-  login and ingest.
-- **What keeping FORCE would cost:** either a BYPASSRLS owner (superuser-granted,
-  rejected here) or a second NOLOGIN "definer" role. That role would need
-  column-scoped SELECT plus a role-targeted policy (`FOR SELECT TO <definer>
-  USING (true)`), which is one more admin-created role.
+- **What FORCE would add:** for a non-owner runtime, nothing **[PG]**. It binds
+  only owner sessions (migrations, seeds and fixtures), and the owner can turn
+  it off again with `ALTER TABLE … NO FORCE`.
+- **What it would break:** the helpers execute as that owner. Under FORCE and a
+  strict policy, they would see nothing before context is set, so login and
+  ingest would fail.
+- **What keeping FORCE would cost:** either a BYPASSRLS owner (superuser-granted;
+  rejected here) or **Alternative B**: a second NOLOGIN "definer" role with
+  column-scoped SELECT and a role-targeted policy
+  (`FOR SELECT TO <definer> USING (true)`). That costs one extra admin-created
+  role and one extra policy per table, and is stronger only against
+  owner-session mistakes.
 
-*Alternative B*, if the owner prefers FORCE on all tenant tables, is that
-definer-role design. It is stronger only against owner-session mistakes, and it
-costs one extra role and one extra policy per table.
+Neither the exception nor Alternative B is implemented by this preparation
+task.
 
-**`tenants`.** C2 leaves it without RLS and controls it with the column grants
-in §1.4:
-
-- the trust-center slug read (B3) and the cron list (B4) keep working;
-- the visibility update keeps working;
-- the legacy credential columns become unreadable.
-
-*Residual:* the runtime can list every tenant's id and slug, though no
-credentials. Adding RLS on `tenants` with helpers for slug and tenant-list
-resolution is a later option, not part of minimal C2.
+**`tenants`.** C2 leaves it without RLS. The pilot profile grants nothing on
+it. The full profile's column grants keep B3, B4 and the visibility update
+working, and leave the legacy credential columns unreadable. Their isolation
+boundary is stated in §1.4. Adding RLS on `tenants` is a later option, not part
+of minimal C2.
 
 ### 1.6 Migration, scheduler, seed and maintenance boundaries
 
 | Activity | Identity | Change needed |
 |---|---|---|
-| API process | runtime | `DATABASE_URL` carries the runtime identity. **A startup identity gate** (new): outside development the app refuses to start if its connection is superuser, BYPASSRLS, CREATEROLE or CREATEDB, has a membership, or owns the database or any table in `public`. In development it warns. |
-| Alembic | owner | `migrations/env.py` prefers a new `KERNO_MIGRATION_DATABASE_URL`. The app never receives the owner URL. |
-| Helpers, policies, grants | owner | Migration 029 (§5) |
+| API process | runtime | `DATABASE_URL` carries the runtime identity. **A startup identity gate** (new): outside development, the app refuses to start if its connection is superuser, BYPASSRLS, CREATEROLE or CREATEDB, has a membership, or owns the database or any table in `public`. In development it warns. The serving-profile ticket adds the profile-match check (§1.4). |
+| Alembic | owner | `migrations/env.py` prefers a new `KERNO_MIGRATION_DATABASE_URL`, falling back to `DATABASE_URL`. That fallback only succeeds in owner-mode development; with a runtime `DATABASE_URL`, the first DDL fails. The app never receives the owner URL. Guarded-workflow handling is in §2.3. |
+| Helpers, policies, grant procedure | owner | Migration 029 (§5) |
+| Applying grants | owner | `grant-runtime` on `kerno_test`; an owner-run step in the pilot environment (§1.4) |
 | Reference data (`compliance_controls`, filing windows) | owner | Owner-run load. `seed_nis2_controls.py` should gain an explicit target and environment confirmation before it is used for a pilot database. |
-| Pilot tenant and user creation | owner | **New bounded script** (§4.2 G9). No tenant-registration path exists in `src/`. `seed_dev_tenant.py` is development-only, sets no slug (`seed_dev_tenant.py:25-31` versus `021:104-107`), and still writes the legacy credential columns. |
-| Nightly bias job | runtime, if kept | Excluded from the pilot (§4.3). It needs only runtime grants plus the `tenants` column grant. |
+| Pilot tenant and user creation | owner | A new bounded script (gate G9). No tenant-registration path exists in `src/`. `seed_dev_tenant.py` is development-only, sets no slug (`seed_dev_tenant.py:25-31` versus `021:104-107`), and still writes the legacy credential columns. |
+| Nightly bias job | runtime, full profile, if kept | A proposed pilot exclusion (§4.3) |
 | Retention prune | prune identity (later) | Not needed within 180 days of the first decision. **[owner]** decides before then. |
 | DORA submission scheduler | — | Stays unwired. If it is wired later, it loops per tenant over B4 rather than using a BYPASSRLS identity. |
 | Backups and restores | provider/admin | See gate G5. A logical dump run as the owner meets FORCE-RLS tables **[PG]**, so backups need provider physical backups or a BYPASSRLS/superuser dump identity. Restores must re-verify RLS, FORCE, policies and grants. |
 | Test fixtures, trigger tests | owner (`kerno_test`) | Unchanged (§2) |
 
-### 1.7 Smallest change set
+### 1.7 Smallest change set (PILOT-READY-002, full profile)
 
 1. **Migration 029** (owner, reversible): the `kerno_bootstrap` schema, H1, H2,
-   the two strict policies, and grants per §1.4 to `kerno.runtime_role`.
+   the two strict policies, and the `apply_runtime_grants` procedure.
 2. **Two SQL-constant swaps** to call the helpers (`auth_service.py:52-57`,
    `webhook_service.py:85-89`). No other registration read selects
    `signing_secret`: the GET already names its columns
    (`src/api/webhooks.py:103-107`), and rotation returns only `id`.
-3. **`KERNO_MIGRATION_DATABASE_URL`** in `migrations/env.py`, and the startup
-   identity gate.
-4. **Guard support for `kerno_test_app`** (§2.3), the runtime provisioning
-   script, and the runbook update.
-5. **Runtime-identity live tests** (§2.4–2.5) and the privilege-matrix test.
+3. **`KERNO_MIGRATION_DATABASE_URL`** in `migrations/env.py`, with guard
+   handling, and the startup identity gate.
+4. **Guard support for `kerno_test_app`** (§2.3), the `grant-runtime` and
+   `revoke-runtime` wrapper subcommands, the runtime provisioning script, and
+   the runbook update.
+5. **Runtime-identity live tests** (§2.4–2.5), using a runtime pool, and the
+   full-profile privilege-matrix test.
 
-Nothing else changes: no other policy, no FORCE flag, no ledger code, no route
-behaviour.
+Nothing else changes: no other policy, no FORCE flag, no ledger code, no
+mounted route's behaviour. The pilot grant set and router set belong to the
+serving-profile ticket.
 
 ### 1.8 What C2 does and does not guarantee
 
@@ -363,9 +428,10 @@ behaviour.
 |---|---|
 | The application cannot disable the ledger or AI-log triggers, alter or drop policies, toggle RLS or FORCE, truncate, or run DDL | **Yes**: it is not the owner **[PG]** |
 | The application cannot UPDATE or DELETE `audit_log` rows, or UPDATE `ai_decision_log` | **Yes**: no grant, a second layer under the triggers |
-| The application cannot read `users` or webhook signing secrets in bulk, and cannot read the legacy `tenants` credentials | **Yes**: no grant, or a column grant; the exact-key helpers are the only path |
+| The application cannot SELECT from `users`, cannot SELECT `webhook_registrations.signing_secret`, and cannot read the legacy `tenants` credential columns | **Yes**: direct table or column access is denied |
+| Credential material is unavailable to a compromised runtime | **No.** H1 returns the password hash of any account whose slug and email are supplied, as often as it is called. In the full profile, H2 returns the secret of any registration id, and the runtime can list those ids under any context it sets. The residual is described in §1.5; accepting it is an owner decision. |
 | Tenant isolation holds even if the application sets the wrong tenant context | **No.** `app.current_tenant_id` is a setting any session may `SET` (`rls.py:43,57-60`). RLS protects against forgotten context, not against a compromised runtime credential or injected SQL that sets another tenant's id. |
-| Webhook secrets are confidential from the runtime | **No.** A compromised runtime can list registration ids under any context it sets, and then call H2. Encrypting secrets at rest stays backlog. |
+| The visibility flag on `tenants` is tenant-isolated by the database (full profile) | **No.** Only the application's `WHERE tenant_id` confines it (§1.4). |
 | All application data is immutable | **No.** Ordinary tables stay writable within the grants. Only the ledger tables gain a privilege layer. |
 | "Tamper-evident" may be extended to the AI log | **No.** CLAUDE.md §17 Ticket D still applies: no hash chain. "Database-enforced append-only for every non-owner role" becomes accurate; "tamper-resistant" still needs another layer. |
 
@@ -392,9 +458,10 @@ behaviour.
 | Work | Connection | Notes |
 |---|---|---|
 | Migrations, including 029 and its round trip | owner (`kerno_test`), guarded wrapper, purpose `migrate` | Unchanged |
+| Applying and revoking runtime grants | owner, guarded wrapper (`grant-runtime` / `revoke-runtime`), purpose `migrate` | New. Never connects as the runtime |
 | Fixtures: seeding tenants, users, registrations, controls and windows; teardown with trigger toggles | owner (`db_connection`) | Unchanged |
 | Owner-as-attacker tests (`test_audit_append_only.py:126-145`, the `test_ai_decision_log_append_only.py` and `test_ker203` trigger toggles) | owner | Unchanged; they assert owner capability by design |
-| Application requests under C2 | **runtime** (`kerno_test_app`) | The real FastAPI app, with its pool built from the runtime target |
+| Application requests under C2 | **runtime**, through a real runtime pool (§2.4) | Real FastAPI app and real JWTs |
 | Negative SQL probes | **runtime** | Direct statements on a runtime session |
 
 The existing green suite, all run as owner, stays **regression evidence**. It
@@ -404,36 +471,50 @@ is not proof of the non-owner boundary.
 
 | Need | Covered today? |
 |---|---|
-| Owner-side DDL, grants on objects `kerno_test` owns, `GRANT CONNECT` on `kerno_test`, `ALTER DATABASE kerno_test SET kerno.runtime_role` | **Yes.** These are database- and object-owner rights; `kerno_test` gains no attribute **[PG]**. |
-| Creating `kerno_test_app` and setting its password | **No.** This needs SUPERUSER or CREATEROLE, which `kerno_test` must not have. It is the owner action in §3. |
-| The guard accepting a second identity | **No.** The guard requires `session_user = current_user = database owner = kerno_test` (`tests/_database_safety.py:399-418`) and compares a single endpoint (`:632-653`). A code change needs approval. |
-| Confirming the new role can log in over `127.0.0.1` | **Unknown.** `pg_hba.conf` was never examined (`docs/test_database_runbook.md:239-241`). The provisioning script verifies it by logging in. |
+| Owner-side DDL; grants on objects `kerno_test` owns; `GRANT CONNECT` on `kerno_test`; `ALTER DATABASE kerno_test SET …` | **Yes.** These are database- and object-owner rights; `kerno_test` gains no attribute **[PG]**. |
+| Creating `kerno_test_app` and setting its password | **No.** This needs SUPERUSER or CREATEROLE, which `kerno_test` must not have. It is the administrator action in §2.7 step 3. |
+| The guard accepting a second identity | **No.** The guard requires `session_user = current_user = database owner = kerno_test` (`tests/_database_safety.py:399-418`) and compares a single endpoint (`:632-653`). The change needs approval. |
+| Confirming the new role can log in over `127.0.0.1` | **Unknown.** `pg_hba.conf` was never examined (`docs/test_database_runbook.md:239-241`). Step 6 of §2.7 is the first runtime login, and it reports a refusal rather than editing authentication. |
 
 ### 2.3 Guard support for the runtime identity
 
 Specified here; not implemented by this issue.
 
-1. **Separate settings.** Add `KERNO_TEST_RUNTIME_DATABASE_URL` and
-   `KERNO_TEST_RUNTIME_DATABASE_APPROVAL`.
-   - Both or neither must be present, from the same source as the owner pair.
-   - The `.env.test` allow-list grows from exactly two keys to exactly four
-     (`_database_safety.py:58-60,241-266`).
-   - Child-process stripping (`test_database_safety_processes.py:44-55`) and
-     provisioning preflight cover the new names.
+1. **Separate settings in a separate file.**
+   - **Names:** `KERNO_TEST_RUNTIME_DATABASE_URL` and
+     `KERNO_TEST_RUNTIME_DATABASE_APPROVAL`, read from the environment or from
+     a new gitignored file `.env.test.runtime` (`.gitignore:31` already ignores
+     `.env.*`).
+   - **One-source rule:** both or neither must be present, from one source.
+   - **The existing `.env.test` stays exactly as it is,** two keys under the
+     current allow-list (`_database_safety.py:58-60,241-266`), so the owner
+     credentials are never rewritten.
+   - **Child processes:** child-process stripping
+     (`test_database_safety_processes.py:44-55`) and provisioning preflight
+     cover the new names.
 2. **Fixed identity allow-list:** `TEST_ROLE_NAME = "kerno_test"` and
    `TEST_RUNTIME_ROLE_NAME = "kerno_test_app"`.
    - The runtime URL must name the same literal loopback host, port and
      database as the owner URL.
    - Its approval must equal `kerno_test_app@<host>:<port>/kerno_test`.
-3. **Runtime identity check** on the first runtime connection, after the
-   workflow lock is held:
-   - database `kerno_test`;
-   - `session_user = current_user = kerno_test_app`;
-   - database owner `kerno_test`;
-   - the disposable marker present; loopback; the same port;
-   - every elevated attribute false; zero memberships;
-   - **owns nothing** (`pg_shdepend` owner dependencies = 0);
-   - no CREATE on the database or on `public`.
+3. **Two levels of validation, so setup has no circular dependency.**
+   - **Static (pytest bootstrap only, when the runtime pair is present):** URL
+     form, the fixed name, the same endpoint as the owner, and the approval.
+     None of this depends on database state, so a correctly written pair always
+     passes it.
+   - **Live (only on the first runtime connection in a pytest run, after the
+     workflow lock is held):**
+     - database `kerno_test`;
+     - `session_user = current_user = kerno_test_app`;
+     - database owner `kerno_test`;
+     - the disposable marker present; loopback; the same port;
+     - every elevated attribute false; zero memberships;
+     - owns nothing (`pg_shdepend` owner dependencies = 0);
+     - no CREATE on the database or on `public`;
+     - the same-lock proof (item 4).
+   - **The migration wrapper never reads `.env.test.runtime`** and never
+     connects as the runtime. It applies grants with the fixed role-name
+     constant (§2.7 step 5).
 4. **Same workflow lock.** The runtime session proves the guard session holds
    the TEST-SAFETY lock in the same database:
 
@@ -445,45 +526,95 @@ Specified here; not implemented by this issue.
    ```
 
    It must return 1.
-5. **Authorisation.** The runtime endpoint is allowed only after step 3 passes,
-   and only for purpose `pytest`. The migration wrapper never authorises it.
-   Every runtime connect still re-proves the lock (`:630`).
+5. **Authorisation.** The runtime endpoint is allowed only after the live
+   check passes, and only for purpose `pytest`. Every runtime connect still
+   re-proves the lock (`:630`).
 6. **`DATABASE_URL` stays the owner URL** (`:741`). The runtime URL is reachable
    only as `state.runtime_target`, never through a variable the application
    reads, so existing tests are unchanged.
 7. **Redaction** covers both URLs and both passwords. Refusal messages never
    echo URL-derived values.
-8. **Fail closed:**
-   - runtime pair absent → runtime tests skip, or fail under
-     `--require-live-database`;
-   - pair present but invalid → the whole run fails at configure time;
-   - identity or lock proof fails → the run stops;
-   - lock lost → refused.
+8. **Safety refusals versus not-ready failures:**
+   - **Safety refusal → the whole run stops**, as today. Triggers: the wrong
+     database or role; elevated attributes; a membership; owned objects; a
+     missing marker; the lock not proven; a redirecting setting.
+   - **Not ready → only the runtime tests error**, with "runtime identity not
+     ready" and the reason. Triggers: the runtime pair is absent, the role does
+     not exist yet, password authentication fails, or CONNECT has not been
+     granted. Owner tests are unaffected.
+   - **A new flag, `--require-runtime-identity`,** turns runtime skips and
+     not-ready errors into a failed run. `--require-live-database` keeps its
+     current meaning (the owner target). Activation evidence uses both flags.
+9. **`KERNO_MIGRATION_DATABASE_URL` in guarded workflows.**
+   - `bootstrap_test_process` and the migration wrapper treat it like
+     `DATABASE_URL`, but more strictly.
+   - **An inherited value whose endpoint differs from the approved owner
+     target is refused** (exit before any connection), not silently
+     overridden. That includes a value naming the runtime user.
+   - A matching or absent value is set to the owner URL.
+   - `.env` loading stays disabled in the test process
+     (`_database_safety.py:677-692`).
+   - The guarded `psycopg2.connect` still authorises every connection Alembic
+     opens, so there is no unguarded fallback.
+   - **Offline tests:** a conflicting ambient value is refused; a value naming
+     `kerno_dev` is refused; a matching value is accepted; an absent value is
+     set; child processes strip it.
 
-**Why the runtime identity cannot reach `kerno_dev` or production:**
+**What the guard restricts, and what it does not:**
 
-- the database name is a fixed constant;
-- the host is a literal loopback, and redirecting URL keys and libpq variables
-  are refused at parse time and again at connect time;
-- both role names are fixed;
-- the live check requires the disposable marker and `kerno_test` as database
-  owner;
-- the session must see the guard's lock in its own database.
+- **The guard restricts where the test process connects.** The fixed database
+  name, literal loopback host, fixed role names, re-checked redirecting
+  settings, the disposable marker and the same-lock proof mean the test
+  process cannot open a runtime (or owner) connection to `kerno_dev` or to any
+  non-loopback host.
+- **The guard does not restrict the credential.** PostgreSQL decides where
+  `kerno_test_app` may log in. In source, `kerno_dev` is created without
+  revoking PUBLIC CONNECT (`.env.example:17-19`). Anyone holding the
+  `kerno_test_app` password could therefore connect to `kerno_dev` with
+  another client. There it would hold no table privileges, unless objects
+  there grant to PUBLIC, but it could read catalogs and use PUBLIC function
+  privileges.
+- **No `kerno_dev` change is authorised.** Revoking PUBLIC CONNECT there is
+  recorded as an owner option, not a step in this plan.
 
-*Hygiene recommendation* **[owner]**: `kerno_dev` keeps PUBLIC CONNECT
-(`.env.example:17-19`). A new cluster-wide login could therefore connect to it,
-though it holds no table privilege there. Revoking `CONNECT … FROM PUBLIC` on
-`kerno_dev` is the owner's call. Nothing here touches `kerno_dev`.
+### 2.4 Positive tests (runtime identity, live `kerno_test`, full profile)
 
-### 2.4 Positive tests (runtime identity, live `kerno_test`)
+**Supplying a real runtime pool to the application.** A `runtime_app`
+fixture:
+
+1. builds `psycopg2.pool.ThreadedConnectionPool(1, N, dsn=state.runtime_target.url)`.
+   Every connection goes through the guarded `psycopg2.connect`, which
+   authorises the runtime endpoint only after the live check;
+2. monkeypatches `src.api.dependencies._pool` **and** `_get_pool`. Both
+   `get_conn` and `pooled_transaction` (`dependencies.py:107-114,190-223`) then
+   lease from the runtime pool, even if the global is reset. The SEC-REMED-001
+   tests already replace `_pool` this way with an owner pool
+   (`tests/integration/test_sec_remed_001_webhook_intake.py:64-70`);
+3. does **not** override `get_conn`, `get_tenant_id`, `get_role` or
+   `get_reviewer_id`. Requests carry real JWTs, so the production dependencies,
+   commit-after-response, rollback and `putconn` paths all run;
+4. wraps `getconn` so that each new physical connection is checked once with
+   `SELECT session_user`, and fails the test unless it is `kerno_test_app`;
+5. after the test, asserts the module still holds the runtime pool, and closes
+   it.
+
+**Owner work stays visibly separate.**
+
+- Owner fixtures keep `db_connection` for seeding and for reading results.
+- `DATABASE_URL` stays the owner URL. Code that bypasses the pool (the cron
+  entrypoints, ad-hoc helper sessions) therefore runs as owner and never counts
+  as runtime evidence.
+- A runtime test of a cron path sets the runtime URL for that call only.
+
+**Scenarios:**
 
 - **Login through H1.** A valid user gets a token. A wrong password, unknown
-  slug, unknown email and inactive user each get the same 401.
-  - `/me` works with no database read.
+  slug, unknown email and inactive user each get the same 401. `/me` works
+  with no database read.
 - **Register.** Create and PATCH a register entry, each with a ledger append.
   This exercises sequence USAGE and the `FOR NO KEY UPDATE` grant.
-- **Submissions.** Start a run, read it, and download the frozen package
-  (`filing_package_downloaded` ledger entry).
+- **Submissions.** Start a run, repeat Start-run, read the run, and download the
+  frozen package (`filing_package_downloaded` ledger entry).
 - **Evidence.** Upload `.txt` and `.pdf` files, link, unlink (a soft delete
   through U(`removed_at`)), and list.
 - **Recommendations.** Generate with the LLM mocked; the review lock and
@@ -491,29 +622,44 @@ though it holds no table privilege there. Revoking `CONNECT … FROM PUBLIC` on
   through the SEC-REMED-005 binding, with ledger appends.
 - **Read paths.** Coverage summary and controls; evidence-pack export with its
   ledger append.
-- **Webhooks, only while they stay mounted outside the pilot.** Registration
-  create and rotate under context; ingest verification through H2.
+- **Full-profile features.** Every route still mounted in PILOT-READY-002 works
+  under the full grants:
+  - webhook registration create, get and rotate, and ingest verification
+    through H2;
+  - Trust Center status and visibility;
+  - remediation trigger and close-callback (Jira mocked);
+  - manual recalculation;
+  - `GET /api/v1/ai-decisions`;
+  - `GET /api/v1/register/windows`;
+  - the panel.
 - **Ledger.** `verify_audit_chain` is valid for each tenant after the
   workflow.
 
-### 2.5 Negative tests (runtime identity)
+The serving-profile ticket repeats the pilot scenarios under the **pilot**
+profile and asserts that every excluded path returns 404.
 
-| Probe | Expected |
+### 2.5 Negative and privilege tests (runtime identity)
+
+| Probe | Expected (what the design guarantees) |
 |---|---|
-| `SELECT * FROM users` with no context, and with tenant context | permission denied (no grant) |
+| `SELECT * FROM users`, with no context and with tenant context | permission denied (no grant) |
 | `SELECT signing_secret FROM webhook_registrations` | permission denied (column) |
 | `SELECT email, password_hash FROM tenants` | permission denied (column) |
-| Webhook registration rows with no context, or empty context | 0 rows (strict policy) |
+| Webhook registration rows with no context, or an empty context | 0 rows (strict policy) |
 | Tenant A context reading any FORCE-RLS table's tenant B rows | 0 rows |
 | `UPDATE` / `DELETE` / `TRUNCATE audit_log` | permission denied, not the trigger's "append-only" message |
 | `UPDATE` / `DELETE ai_decision_log` | permission denied |
 | `ALTER TABLE … DISABLE TRIGGER`, `NO FORCE`, `DISABLE ROW LEVEL SECURITY`, `CREATE`/`DROP POLICY` | must be owner |
 | `CREATE TABLE public.x`, `CREATE FUNCTION kerno_bootstrap.x` | permission denied |
 | `SET ROLE kerno_test` | permission denied |
+| `CALL kerno_bootstrap.apply_runtime_grants(…)` | permission denied |
 | H1 with case or whitespace variants, `%`, `_`, or an email without the slug | no row |
-| H1 and H2 | at most one row; `has_function_privilege('public', …, 'EXECUTE')` is false |
-| Privilege-matrix test | effective privileges equal §1.4 exactly, in both directions |
-| An ordinary strict-policy table on a pooled connection that reports context `''` | the existing pre-existing behaviour is documented, not changed (the pool-reset backlog item) |
+| H1 for an exact, existing slug and email | **returns that account's row, including the hash.** This pins the documented residual (§1.5) rather than hiding it |
+| H1 and H2, per call | never more than one row (a statement may still call them once per supplied key) |
+| **ACL entries for PUBLIC** | `aclexplode(coalesce(proacl, acldefault('f', proowner)))` on H1, H2 and the grant procedure has no row with `grantee = 0` and `privilege_type = 'EXECUTE'`. `acldefault` matters: a NULL ACL means PUBLIC holds EXECUTE. Likewise, the ACLs of `kerno_bootstrap`, `public` and the database have no PUBLIC CREATE or TEMP, and no PUBLIC CONNECT on `kerno_test` |
+| **Effective privileges of the runtime** | `has_table_privilege` / `has_column_privilege` / `has_sequence_privilege` / `has_function_privilege` / `has_schema_privilege` / `has_database_privilege` for `kerno_test_app` equal the full-profile matrix exactly, in both directions. These functions already count PUBLIC-derived privileges **[PG]** |
+| Memberships and ownership | `pg_auth_members` shows none; `pg_shdepend` shows no owned object |
+| An ordinary strict-policy table on a pooled connection reporting context `''` | the pre-existing behaviour is documented, not changed (the pool-reset backlog item) |
 
 The append-only tests that expect the trigger's message keep running on the
 owner connection.
@@ -522,56 +668,132 @@ owner connection.
 
 | Evidence | What it proves |
 |---|---|
-| Real PostgreSQL runtime validation | §2.4–2.5 on `kerno_test` as `kerno_test_app`; migration 029 apply, round trip and re-apply through the guarded wrapper; the privilege matrix |
-| Mocked | LLM responses (template or mocked client) and Jira, which is excluded from the pilot |
-| Static | This specification, the matrix's derivation from source, and code review of the helpers |
+| Real PostgreSQL runtime validation | §2.4–2.5 on `kerno_test` as `kerno_test_app`; migration 029 apply, round trip and re-apply through the guarded wrapper; `grant-runtime`; the privilege matrix |
+| Mocked | LLM responses (template or mocked client) and Jira |
+| Static | This specification, the matrix's derivation from source, and code review of the helpers and the grant procedure |
 | Deployment-only **[deploy]** | Role creation and `pg_hba` in the pilot database, TLS, platform body limits, backups and restores, alerting |
 
-### 2.7 Minimal provisioning request
+### 2.7 Setup and activation sequence (`kerno_test`)
 
-Run by the owner only, after approving the §5 ticket. The implementation ticket
-writes a reviewed script, e.g. `scripts/provision_test_runtime_role.py`, which
-reuses the provisioning helpers. It runs in the owner's own shell, with the
-administrator password typed at a hidden prompt, and executes exactly:
+Run only after PILOT-READY-002 is approved and merged. Each step names who runs
+it and which guarded operation performs it. Each step stops at its first
+failure and reports exactly what completed. **No step undoes anything
+automatically:** no `DROP ROLE`, no revoke, no downgrade and no file deletion
+happen on failure.
 
-```sql
-CREATE ROLE kerno_test_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
-  NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '<SCRAM-SHA-256 verifier>';
-```
+1. **Approvals (owner, in writing).**
+   - the `kerno_test_app` identity, confined to the approved disposable
+     `kerno_test` (mirroring the 26 September record, `NOW.md:214-220`);
+   - the proposed no-FORCE exception (§1.5);
+   - the H1/H2 residual for test use.
+2. **Apply migration 029 (owner; guarded wrapper, purpose `migrate`).**
+   - Commands: `python scripts/migrate_test_database.py upgrade head`, then
+     `downgrade c4d5e6f7` and `upgrade head` for the round trip.
+   - No runtime role is involved; the migration grants nothing.
+   - Then `python -m pytest --require-live-database`: the owner suite must
+     pass, with the runtime tests skipped as "not configured". That is allowed
+     because `--require-runtime-identity` is not given.
+3. **Create the role (administrator, in the owner's own shell).**
+   - Command: `python scripts/provision_test_runtime_role.py`. It reuses the
+     existing provisioning helpers, and the administrator password is typed at
+     a hidden prompt.
+   - **Preflight:** `kerno_test`, its database and its marker exist;
+     `kerno_test_app` does not; no runtime settings exist in the environment or
+     in `.env.test.runtime`; that file would be gitignored.
+   - **Writes `.env.test.runtime` first,** with exclusive create and only the
+     runtime pair. The password comes from `token_urlsafe(32)` and is never
+     printed or logged.
+   - **Then executes exactly:**
 
-The script must:
+     ```sql
+     CREATE ROLE kerno_test_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+       NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '<SCRAM-SHA-256 verifier>';
+     ```
 
-- refuse if `kerno_test_app` already exists, or if `kerno_test` or its marker is
-  missing;
-- grant no membership, in either direction;
-- verify the attributes, zero memberships and zero owned objects;
-- confirm a login over loopback;
-- write only the two runtime settings to the gitignored settings file, without
-  overwriting the existing pair.
+     The server receives only the verifier.
+   - **Verifies as administrator:** the attributes, zero memberships in either
+     direction, and zero owned objects.
+   - **Does not try a runtime login.** CONNECT is not yet granted, because
+     PUBLIC CONNECT is revoked on `kerno_test`
+     (`provision_test_database.py:246-249`).
+4. **Report partial states, owner decides.** No automatic recovery:
 
-Everything else is done by `kerno_test`, the owner, through migration 029 and
-the guarded wrapper:
+   | State | What the owner does |
+   |---|---|
+   | File written, role absent | Delete the file after confirming the role is absent |
+   | Role created, verification failed | Decide between `ALTER ROLE … NOLOGIN` and an administrator `DROP ROLE` |
 
-```sql
-GRANT CONNECT ON DATABASE kerno_test TO kerno_test_app;
-ALTER DATABASE kerno_test SET kerno.runtime_role = 'kerno_test_app';
-```
+   The existing `.env.test` is never touched.
+5. **Owner prerequisites (owner; guarded wrapper subcommand
+   `python scripts/migrate_test_database.py grant-runtime`, purpose
+   `migrate`).**
+   - **Checks, as `kerno_test`:** the head includes 029, and the fixed role
+     `kerno_test_app` exists with the expected attributes (a catalog read).
+   - **Then, in one transaction:**
+
+     ```sql
+     GRANT CONNECT ON DATABASE kerno_test TO kerno_test_app;
+     ALTER DATABASE kerno_test SET kerno.runtime_role = 'kerno_test_app';
+     ALTER DATABASE kerno_test SET kerno.runtime_profile = 'full';
+     CALL kerno_bootstrap.apply_runtime_grants('kerno_test_app', 'full');
+     ```
+
+     That `ALTER DATABASE … SET` is transactional is **[PG]**, to verify.
+   - **Never connects as the runtime and never reads `.env.test.runtime`.**
+   - **This is the step that makes a positive runtime login possible.** Before
+     it, a runtime login fails with "not ready", not with a safety refusal.
+6. **Verify the runtime identity (guarded pytest).**
+   - Command:
+     `python -m pytest tests/security/test_runtime_identity_boundary.py --require-live-database --require-runtime-identity`.
+   - The first runtime connection runs the static checks, then the live
+     identity checks and the same-lock proof, then a positive login. The
+     negative and privilege probes of §2.5 follow.
+   - Any safety refusal stops the run; a login refusal is reported, and
+     `pg_hba.conf` is not edited.
+7. **Activate.**
+   - Command:
+     `python -m pytest --require-live-database --require-runtime-identity`.
+   - Zero skips, recorded with the tested SHA.
+   - From then on, the runtime tests are part of the required live run.
+
+**Withdrawal:**
+
+- **Owner:** `python scripts/migrate_test_database.py revoke-runtime` revokes
+  the runtime's grants and CONNECT and resets both database settings.
+- **Administrator:** `ALTER ROLE kerno_test_app NOLOGIN`.
+- **Owner:** deletes `.env.test.runtime`.
+
+**Credentials.**
+
+- The administrator and runtime passwords are typed or generated only in the
+  owner's shell. Claude Code never sees them.
+- The runtime password exists in plaintext only in the gitignored
+  `.env.test.runtime`, written once with exclusive create.
 
 ## 3. Minimum owner approval and action
 
-1. **Approve the §5 ticket scope** as written, or amended.
-2. **Approve, in writing, a second identity `kerno_test_app`** confined to the
-   already-approved disposable `kerno_test`. This mirrors the 26 September
-   approval record (`NOW.md:214-220`).
-3. **Run the one-time role creation** (§2.7) after the reviewed script exists.
-   Claude Code does not see the administrator password.
-4. **Not blocking that ticket, but required before a pilot:**
+1. **Approve the §5 ticket scope** as written, or amended. It is currently
+   proposed only.
+2. **Decide the proposed items:**
+   - the no-FORCE exception for `users` and `webhook_registrations`, or
+     Alternative B (§1.5);
+   - acceptance of the H1 residual, and of the H2 residual in the full profile
+     (§1.5, §1.8);
+   - the profile ordering in §1.4.
+3. **Approve, in writing, the second identity `kerno_test_app`**, confined to
+   the already-approved disposable `kerno_test`.
+4. **Run the one-time role creation** (§2.7 step 3) after the reviewed script
+   exists. Everything else in §2.7 is run as `kerno_test` through guarded
+   workflows.
+5. **Before a pilot (not blocking that ticket):**
+   - approve or amend the proposed gate list (§4.2), the proposed pilot
+     exclusions (§4.3) and the proposed risk acceptances;
    - choose the hosting provider and region, the domain, and a budget
      **[owner]**;
    - say who creates the pilot database's owner and runtime roles (a managed
      PostgreSQL administrator, typically) **[owner/deploy]**;
-   - choose the backup provider and retention **[owner]**;
-   - make the partner-data handling decisions in §4.4 **[owner]**.
+   - choose the backup method and retention **[owner]**;
+   - make the partner-data decisions in §4.4 **[owner]**.
 
 ## 4. Controlled-pilot release gates
 
@@ -591,7 +813,11 @@ An explicitly supported workflow a buyer can be shown end to end:
    which is not an official ESA/xBRL submission.
 7. Export the evidence pack.
 
-### 4.2 Gate checklist
+### 4.2 Gate checklist (proposed)
+
+The gate list itself is proposed until the owner approves it. "Required when"
+keeps hosting-dependent and optional-capability conditions explicit; a gate
+whose condition does not hold does not apply.
 
 Status values:
 
@@ -600,41 +826,59 @@ Status values:
 - **Bounded** — needs a small, separately approved implementation.
 - **Owner** — needs a decision.
 
-| # | Gate | Status | What is already there, and what is required |
-|---|---|---|---|
-| G1 | **C2 runtime identity** in the pilot database | Bounded + [deploy] | §5 ticket. The pilot runs only as a non-owner runtime identity, enforced by the startup gate. |
-| G2 | **HTTPS and origins** | Evidenced in code; Validate [deploy]; Bounded (headers) | **In code:** startup refuses placeholder `ALLOWED_ORIGINS` outside development (`app.py:63-87`); empty origins fail closed (90-99); Next.js mutations require `KERNO_TRUSTED_ORIGINS` (503 otherwise, `lib/csrf.ts:42-62`); the session cookie is `secure` only when `NODE_ENV=production` (`auth/login/route.ts:41-47`). **Validate on the host:** HTTPS on both origins; `KERNO_ENV` ≠ development; `KERNO_ENABLE_DOCS` unset; exact `ALLOWED_ORIGINS`, `FRONTEND_URL`, `KERNO_TRUSTED_ORIGINS`; the cookie observed as Secure. **Bounded:** there are no security headers (`next.config.ts` is empty; no HSTS or CSP), so add them or confirm the platform sets them. The host and domain are **[owner]**. |
-| G3 | **Release and dependency reproducibility** | Bounded | `pyproject.toml:37` requires `pypdf`, but **`uv.lock` has no `pypdf` entry**. `uv.lock` pins fastapi 0.139.0 while the recorded runtime has 0.138.1 (CLAUDE.md §17). There is no Dockerfile, CI or deploy manifest, and no pinned Python version (`pyproject.toml:9` `>=3.11`). **Required:** regenerate and commit `uv.lock`; a recorded build recipe installing from the lock on a pinned Python; and the release SHA recorded with the deployment. The frontend `package-lock.json` already pins exactly (next 16.2.10). |
-| G4 | **Applied schema, including migration 028** (and 029 after C2) | Evidenced on `kerno_test`; Validate [deploy] | 028 apply and round trip on `kerno_test` are recorded in `docs/sec_remed_005_recommendation_approval.md`, with the final full run at `9c3b097` at head `c4d5e6f7`. **Validate in the pilot database:** a single head equal to the release SHA's head; a read-only catalog check of RLS/FORCE flags, policies, triggers and the runtime privilege matrix. |
-| G5 | **Backup and isolated restore** | Owner + Validate | Nothing exists in the repo. **Required:** a backup method and schedule; one restore into an isolated database; then, on the restore, verify the migration head, RLS/FORCE and grants, `verify_audit_chain` for every tenant, and a frozen package byte-identical to the original download. Logical dumps run as the owner meet FORCE-RLS tables **[PG]**: use provider physical backups or a dedicated BYPASSRLS/superuser dump identity, never the runtime. |
-| G6 | **Evidence upload limits** on the exposed path | Evidenced (size); Bounded (rest) | **Evidenced:** authentication before body, total/file/part limits, and a counted body (SEC-REMED-003, `evidence_upload_intake.py:86-232`). **Bounded:** a reception deadline (none today, unlike the webhook's); an upload concurrency cap; PDF page/decoded-output/time limits (`evidence_intake.py:123-135` reads every page); extraction moved before the pool lease (today it runs after `get_conn`, `evidence.py:146,159`); and the PDF error text kept out of the 422 detail (`evidence_intake.py:134`). **Validate [deploy]:** the hosting body limit; Vercel's documented 4.5 MB would be below the 10 MiB limit (`NOW.md:324-326`). |
-| G7 | **Login abuse and pool exhaustion** | Bounded | Login is anonymous, has no rate limit, and runs scrypt (~16 MiB, `constants.py:296-301`) while holding a pooled connection (`auth_service.py:173-187`; pool max 10, `dependencies.py:113`). **Required:** a login rate limit keyed on the real client address (requests arrive via the Next.js server, so the client address must be forwarded and trusted explicitly), and pool-exhaustion behaviour that is a controlled 503, not a 500. |
-| G8 | **LLM path** | Owner + Bounded | "Analyse" sends each linked record's title, source system and the first 600 characters of its body to Mistral's EU endpoint, without anonymisation (`recommendation_service.py:654-718`; `llm_client.py:52,73`). With `KERNO_LLM_MODEL` unset, the template rationale is used and nothing leaves (`recommendation_service.py:592-594`). **[owner]:** LLM on or off for partner data (§4.4). **Bounded if on:** an LLM client timeout (none configured, `llm_client.py:73`). Holding the pool connection across the call stays backlog, mitigated by the 10/min limit. |
-| G9 | **Pilot tenant and user provisioning** | Bounded | No tenant-registration path exists, and the development seed sets no slug. **Required:** an owner-run, auditable script that creates one tenant with an explicit slug and named users with scrypt hashes and roles, without writing the legacy `tenants.email/password_hash`. **Offboarding procedure:** set `users.is_active = false`; `tenants.is_active` is not checked by login. |
-| G10 | **Excluded surfaces unreachable** | Bounded | Every router is mounted in every environment (`app.py:191-213`). **Required:** a pilot serving profile that does not mount the excluded routers (§4.3), with a test asserting their paths return 404 under it, and the excluded UI controls removed (the Recalculate button). |
-| G11 | **Operational alerts** | Bounded + Owner | There is no health endpoint (`GET /` is a redirect or static JSON, `app.py:215-231`), no logging configuration (`LOG_LEVEL` is read by nothing), and no monitoring hook. **Required:** an unauthenticated health check that touches the database without tenant data; error logging with the existing correlation IDs; and uptime plus error-rate alerts to the owner. The tooling is **[owner]**. |
-| G12 | **Filing language** | Bounded | The UI says "Download filing" and shows internal validation status (`FilingDownloadButton.tsx:81`, `SubmissionRunView.tsx:51-61`). **Required:** copy stating that this is Kerno's internal frozen package and not an official ESA/xBRL submission, plus the same wording in demo material (NOW.md "Do not claim"). |
-| G13 | **Filing-download proxy gate** | Bounded (small) | The Next.js package proxy has no `Sec-Fetch-Site` gate, though the backend writes a ledger entry on success (`submissions/runs/[runId]/package/route.ts:16-31`; `submissions.py:100-102`). Mirror the export route's gate. |
-| G14 | **Synthetic browser-to-database walkthrough** before real data | Validate [deploy] | On the deployed pilot stack, with two synthetic tenants, run every §4.1 step through a browser. Then confirm: the ledger entries and chain per tenant; tenant B sees none of tenant A's data; the excluded paths return 404; the session cookie is Secure. This is recorded with the release SHA. |
+| # | Gate | Required when | Status | What is there, and what is required |
+|---|---|---|---|---|
+| G1 | **C2 runtime identity** (full profile, then pilot profile) in the pilot database | Always | Bounded + [deploy] | §5 ticket, then the pilot grants with G10. The pilot runs only as a non-owner runtime identity, enforced by the startup gate. |
+| G2 | **HTTPS and origins** | Always. The headers item applies unless the platform already sets them | Evidenced in code; Validate [deploy]; Bounded (headers, conditional) | **In code:** startup refuses placeholder `ALLOWED_ORIGINS` outside development (`app.py:63-87`); empty origins fail closed (90-99); Next.js mutations require `KERNO_TRUSTED_ORIGINS` (503 otherwise, `lib/csrf.ts:42-62`); the session cookie is `secure` only when `NODE_ENV=production` (`auth/login/route.ts:41-47`). **Validate on the host:** HTTPS on both origins; `KERNO_ENV` ≠ development; `KERNO_ENABLE_DOCS` unset; exact `ALLOWED_ORIGINS`, `FRONTEND_URL` and `KERNO_TRUSTED_ORIGINS`; the cookie observed as Secure. **Headers:** `next.config.ts` sets none (no HSTS or CSP); add them only if the chosen platform does not. Host and domain are **[owner]**. |
+| G3 | **Release and dependency reproducibility** | Always. The build recipe's form depends on hosting | Bounded + Owner | `pyproject.toml:37` requires `pypdf`, but **`uv.lock` has no `pypdf` entry**. `uv.lock` pins fastapi 0.139.0 while the recorded runtime has 0.138.1 (CLAUDE.md §17). There is no pinned Python (`pyproject.toml:9` `>=3.11`). **Required:** a regenerated, committed `uv.lock`; a recorded install-from-lock recipe on a pinned Python, in whatever form the host takes **[owner]**; and the release SHA recorded with the deployment. The frontend `package-lock.json` already pins exactly. |
+| G4 | **Applied schema, including migration 028** (and 029 after C2) | Always | Evidenced on `kerno_test`; Validate [deploy] | 028 apply and round trip on `kerno_test` are recorded in `docs/sec_remed_005_recommendation_approval.md`, with the final full run at `9c3b097` at head `c4d5e6f7`. **Validate in the pilot database:** a single head equal to the release SHA's head; a read-only catalog check of RLS/FORCE flags, policies, triggers and the runtime privilege matrix for the pilot profile. |
+| G5 | **Backup and isolated restore** | Always. The method depends on hosting | Owner + Validate | Nothing exists in the repo. **Required:** a backup method and schedule **[owner]**, and one restore into an isolated database. On the restore, verify the migration head, RLS/FORCE and grants, `verify_audit_chain` for every tenant, and a frozen package byte-identical to its earlier download. Logical dumps run as the owner meet FORCE-RLS tables **[PG]**: use provider physical backups or a dedicated BYPASSRLS/superuser dump identity, never the runtime. |
+| G6 | **Evidence upload limits** on the exposed path | Deadline and concurrency cap: always. PDF limits: only if PDF upload is enabled for the pilot; the owner may restrict the pilot to text formats. Body-limit check: only if the proxy runs on a platform with a request-body limit | Evidenced (size); Bounded; Validate [deploy] | **Evidenced:** authentication before body, total/file/part limits and a counted body (SEC-REMED-003, `evidence_upload_intake.py:86-232`). **Bounded:** a reception deadline (none today, unlike the webhook's); an upload concurrency cap; and, if PDF stays in: PDF page, decoded-output and time limits (`evidence_intake.py:123-135` reads every page), extraction moved before the pool lease (`evidence.py:146,159`), and the PDF error text kept out of the 422 detail (`evidence_intake.py:134`). **Validate:** the platform body limit; Vercel's documented 4.5 MB would be below 10 MiB (`NOW.md:324-326`). |
+| G7 | **Login abuse and pool exhaustion** | Always (login is anonymous) | Bounded | Login has no rate limit and runs scrypt (~16 MiB, `constants.py:296-301`) while holding a pooled connection (`auth_service.py:173-187`; pool max 10, `dependencies.py:113`). **Required:** a login rate limit keyed on the real client address (requests arrive through the Next.js server, so forwarding must be explicit and trusted), and pool exhaustion answered with a controlled 503, not a 500. |
+| G8 | **LLM path** | Only if the LLM is enabled for partner data | Owner + Bounded | "Analyse" sends each linked record's title, source system and the first 600 characters of its body to Mistral's EU endpoint, without anonymisation (`recommendation_service.py:654-718`; `llm_client.py:52,73`). With `KERNO_LLM_MODEL` unset, the template rationale is used and nothing leaves (`recommendation_service.py:592-594`). **[owner]:** on or off (§4.4). **If on:** an LLM client timeout (none configured, `llm_client.py:73`). |
+| G9 | **Pilot tenant and user provisioning; offboarding** | Always | Bounded | No tenant-registration path exists, and the development seed sets no slug. **Required:** an owner-run, auditable script that creates one tenant with an explicit slug and named users with scrypt hashes and roles, without writing the legacy `tenants.email/password_hash`. **Offboarding:** set `users.is_active = false`. This blocks **future** logins only (H1 returns the flag and login answers 401, `auth_service.py:183-185`). Tokens already issued stay valid; see "Proposed risk acceptances". `tenants.is_active` is not checked by login. |
+| G10 | **Serving profile: excluded surfaces unreachable, pilot grants applied** | Always | Bounded | Every router is mounted in every environment (`app.py:191-213`). **Required, in one change:** a pilot serving profile that does not mount the proposed exclusions (§4.3); the pilot grant set (§1.4); the startup profile-match check; a test asserting the excluded paths return 404 and the pilot scenarios pass under pilot grants; and the excluded UI control removed (the Recalculate button). |
+| G11 | **Operational alerts** | Always. The tooling depends on hosting | Bounded + Owner | There is no health endpoint (`GET /` is a redirect or static JSON, `app.py:215-231`), no logging configuration (`LOG_LEVEL` is read by nothing), and no monitoring hook. **Required:** a health check that touches the database without tenant data; error logging with the existing correlation IDs; and uptime and error-rate alerts to the owner. Tooling is **[owner]**. |
+| G12 | **Filing language** | Always | Bounded | The UI says "Download filing" and shows internal validation status (`FilingDownloadButton.tsx:81`, `SubmissionRunView.tsx:51-61`). **Required:** copy stating that this is Kerno's internal frozen package and not an official ESA/xBRL submission, and the same wording in demo material. |
+| G13 | **Filing-download proxy gate** | Recommended; the owner may instead accept the risk | Bounded (small) | The Next.js package proxy has no `Sec-Fetch-Site` gate, though the backend writes a ledger entry on success (`submissions/runs/[runId]/package/route.ts:16-31`; `submissions.py:100-102`). Mirror the export route's gate. |
+| G14 | **Synthetic browser-to-database walkthrough** before real data | Always | Validate [deploy] | On the deployed pilot stack, with two synthetic tenants, run every §4.1 step through a browser. Confirm: the ledger entries and chain per tenant; tenant B sees none of tenant A's data; excluded paths return 404; the session cookie is Secure. Recorded with the release SHA. |
+| G15 | **Evidence identity versus exact historical content and original files** | Always | Validate + Owner | Kerno keeps extracted text plus a SHA-256 of that text (`content_hash`), not the original file (`evidence_intake.py:11-13`). No application path updates a record's text (no `UPDATE context_records` in `src/`), but no database rule prevents the owner from doing so. A recommendation snapshot records evidence identity (id, title, score), not content (CLAUDE.md §15 KER-405 #4, on hold). **Before real data:** agree with the partner whether extracted text plus hash is acceptable pilot evidence, or whether they keep the originals; demo language says "extracted text", not "original document". Durable evidence versions and provenance stay in the existing architecture (`DORA_MODEL_V2.md` §21–§22, V2-011); no storage platform is added here. |
+| G16 | **Repeat Start-run replaces the stored package** | Always | Validate + Owner | A repeat Start-run for the same window and reporting year finds the existing run (`_find_existing_run`, `dora_roi_submission_service.py:395-411`) and overwrites its `frozen_package_json` and counts (467-485). The run's ledger entry records status and counts, not the package bytes or a hash (`_run_to_ledger_state`, 255-265). The earlier package is not recoverable from Kerno unless it was downloaded. **Before real data:** demonstrate this, and either agree a procedure (download and keep each package before re-running) or accept it. Immutable Register snapshots and package versioning are V2-006/V2-010 (`DORA_MODEL_V2.md` §24, §29) and are not built here. |
+| G17 | **Representative scoring judgments checked with a qualified reviewer** | Only if scores or recommendations are presented to the partner as meaningful | Validate | Uncurated evidence links default to 0.5 and produce a flat partial/medium result (NOW.md "Do not claim"; CLAUDE.md §15 pre-demo action 1). **Before scores are shown as meaningful:** a qualified compliance reviewer checks a representative sample of the partner's controls and records where they agree and disagree. No scoring change is authorised; calibration remains KER-403, report-only. |
+| G18 | **Representative performance measurements before optimisation** | Always (measure; optimise only if needed) | Validate [deploy] | Measure on the deployed pilot stack with representative data: login latency, upload and PDF extraction for representative documents, Analyse with the LLM on or off, export size and time, list endpoints at expected counts, and behaviour at expected concurrency against the 10-connection pool. Record the numbers with the release SHA; an optimisation ticket only follows a measured shortfall. |
 
-**Accepted for the pilot and documented, not gates:**
+**Proposed risk acceptances (each needs owner approval; not gates):**
 
-- 24-hour JWTs with no revocation. *Mitigation:* rotating `KERNO_JWT_SECRET`
-  revokes every token.
-- Unpaginated lists at pilot data volume.
-- The connection held across the LLM call (10/min).
-- `get_conn` committing after the response.
-- The KER-107 per-transaction deadlock limitation.
+- **Session lifetime and offboarding.** Tokens last up to 24 hours
+  (`JWT_EXPIRY_SECONDS`, `constants.py:291`). Request validation checks only
+  the token's signature and expiry and the claims inside it
+  (`dependencies.py:117-169`), never `users` or `tenants`. So:
+  - a deactivated user, or a user whose role was changed, keeps the old
+    token's access until it expires;
+  - nothing revokes a single token.
+- **Proposed emergency procedure** to end every session at once: replace
+  `KERNO_JWT_SECRET` in the backend's runtime configuration, then restart or
+  redeploy **every** API process. The secret is read from the process
+  environment on each request (`dependencies.py:100-104`), so editing a
+  configuration file does not change a running process. Every user must then
+  sign in again: the browser's cookie is rejected with 401, and the dashboard
+  redirects to login (`frontend/app/dashboard/layout.tsx:23-27`).
+- **Unpaginated lists** at pilot data volume.
+- **The pooled connection held across the LLM call,** if the LLM is on
+  (10/min limit).
+- **`get_conn` committing after the response.**
+- **The KER-107 per-transaction deadlock limitation.**
 
-### 4.3 Excluded from the pilot
+### 4.3 Proposed pilot exclusions (owner approval required)
 
-Exclusion is enforced on the serving path (G10), not by hiding UI.
+Exclusion is enforced on the serving path (G10), not by hiding UI. Until G10
+lands, the full profile serves every surface below.
 
-| Surface | Why excluded |
+| Surface | Why proposed for exclusion |
 |---|---|
 | `/api/v1/remediation/*` (Jira) | Outside the pilot workflow. Sends rationale to Jira with global credentials. |
-| `/api/v1/webhooks/*` (registration, rotation, ingest) | Outside the pilot workflow. Plaintext secrets. Anonymous ingest has no rate limit. |
-| `/trust-center/{slug}/status`, `/api/v1/trust-center/visibility` | Not part of the pilot ("no Trust Center polish", NOW.md). Anonymous surface. |
+| `/api/v1/webhooks/*` (registration, rotation, ingest) | Outside the pilot workflow. Plaintext secrets, the H2 residual, and anonymous ingest with no rate limit. |
+| `/trust-center/{slug}/status`, `/api/v1/trust-center/visibility` | Not part of the pilot ("no Trust Center polish", NOW.md). An anonymous surface, and the unprotected `tenants` grants (§1.4). |
 | `/api/v1/ai-decisions` | Not used by the UI; unpaginated |
 | `/api/v1/panel/*` | Legacy dashboard consumer only |
 | `/api/v1/scheduler/run-recalculation` and the nightly bias job | Reserved learning-loop machinery (NOW.md "Do not claim") |
@@ -651,7 +895,7 @@ None of these is resolved here, and no partner document was collected:
   identities exist (the owner, the runtime, the provider administrator).
 - **Retention and deletion.**
   - Evidence text is kept indefinitely in `context_records.body`; originals
-    are not stored (`evidence_intake.py:11-13`).
+    are not stored (`evidence_intake.py:11-13`; G15).
   - Ledger entries are append-only and kept forever.
   - `ai_decision_log` is kept for 180 days.
   - Decide what happens to each at pilot end, including in backups.
@@ -660,7 +904,7 @@ None of these is resolved here, and no partner document was collected:
     (G8). Choosing an EU endpoint does not by itself settle the processing
     terms, subprocessor listing or retention at the provider.
   - The **hosting provider and its subprocessors** need the same decision.
-  - **Jira** is excluded.
+  - **Jira** is a proposed exclusion.
 - **Isolation claims.** RLS is a correctness control inside one database, not a
   data-handling guarantee (§1.8). Whether a dedicated database or project per
   partner is required is **[owner]**.
@@ -670,84 +914,110 @@ None of these is resolved here, and no partner document was collected:
 - **Official reporting.** Projection (V2-008), versioned validation (V2-009) and
   the official reporting package (V2-010) follow the mandatory real-data
   checkpoint (`DORA_MODEL_V2.md` §36–§37).
-- **Data entry.** Import staging and provenance is V2-004; field-level evidence
-  provenance is V2-011.
+- **History.** Immutable Register snapshots (V2-006) and package versioning
+  stay in that order (G16).
+- **Data entry and provenance.** Import staging and provenance is V2-004;
+  field-level evidence provenance is V2-011 (G15).
 - **Next domain slice.** Contract costs (§7.4) remains the next DORA domain
   slice listed in NOW.md and is not implemented here.
 - **Frozen package.** The current frozen JSON stays "valid transitional
   infrastructure" (`DORA_MODEL_V2.md` §29). It must not be presented as
   regulator-accepted output.
 
-## 5. Next implementation ticket: acceptance criteria
+## 5. Next implementation ticket: acceptance criteria (proposed)
 
-**Proposed:** PILOT-READY-002, "C2 runtime role". It requires explicit approval
-before work starts.
+**PILOT-READY-002, "C2 runtime role (full profile)". Proposed, not approved.**
+It requires explicit approval, including the §3 decisions, before work starts.
 
 1. **Migration 029** (`d5e6f7g8` style id, parent `c4d5e6f7`, reversible),
    applied as the owner:
-   - It creates the `kerno_bootstrap` schema and H1 and H2 exactly as in §1.5:
+   - It creates the `kerno_bootstrap` schema, H1 and H2 exactly as in §1.5:
      SECURITY DEFINER, pinned `search_path`, schema-qualified, exact match, at
      most one row, EXECUTE revoked from PUBLIC.
+   - It creates the owner-only `apply_runtime_grants(role, profile)` procedure
+     implementing both columns of §1.4. The procedure validates the role and
+     the profile, and EXECUTE on it is revoked from PUBLIC.
    - It replaces the `users` and `webhook_registrations` policies with the
-     strict `NULLIF` form, with `USING` and `WITH CHECK`, without FORCE.
-   - It applies §1.4 to the role named in `kerno.runtime_role`. It skips grants
-     with a notice when the setting is unset, and raises when the named role is
-     the owner or has elevated attributes or memberships.
-   - It changes no other policy, no FORCE flag and no table. Its downgrade
-     restores the 019 and 022 policies and removes the helpers, the schema and
-     every grant.
-2. **Code**:
+     strict `NULLIF` form, with `USING` and `WITH CHECK`, and **without FORCE,
+     subject to the owner approving that exception**.
+   - The migration itself grants nothing to any role. Later table-creating
+     migrations call the procedure when `kerno.runtime_role` is set.
+   - It changes no other policy, no FORCE flag and no table.
+   - Its downgrade restores the 019 and 022 policies, removes the helpers, the
+     procedure and the schema, and revokes runtime grants.
+2. **Guarded owner subcommands** `grant-runtime` and `revoke-runtime` in
+   `scripts/migrate_test_database.py`, as in §2.7 steps 5 and "Withdrawal":
+   - purpose `migrate`, holding the workflow lock;
+   - the fixed role name; profile `full` in this ticket;
+   - one transaction; refusal if 029 is absent or the role is missing or
+     invalid;
+   - never connects as the runtime.
+3. **Code:**
    - `auth_service` and `webhook_service` call the helpers;
    - behaviour is otherwise unchanged, including the uniform 401s and dummy
      verification;
    - no runtime code selects `webhook_registrations.signing_secret` or reads
      `users` directly.
-3. **Configuration**:
+4. **Configuration:**
    - `migrations/env.py` prefers `KERNO_MIGRATION_DATABASE_URL`;
+   - the guard refuses a conflicting inherited value and sets it to the owner
+     URL (§2.3 item 9);
    - the API startup identity gate refuses an owner, elevated or member
      identity outside development, and warns in development;
-   - `.env.example` documents both URLs, with the owner/runtime split for
-     development.
-4. **Test guard** per §2.3:
-   - fixed `kerno_test_app`;
-   - the same endpoint apart from the user;
-   - the runtime identity check, including owns-nothing;
-   - the same-lock proof;
-   - purpose `pytest` only;
-   - `DATABASE_URL` remains the owner;
-   - offline unit tests for every refusal;
-   - runbook updated.
-5. **Runtime provisioning script** per §2.7, with offline tests. It is run by
-   the owner only, after written approval.
-6. **Live evidence on `kerno_test`**, all through the guards:
-   - 029 upgrade, downgrade and upgrade through the wrapper;
-   - §2.4 and §2.5 on the runtime identity;
-   - the privilege-matrix test in both directions;
-   - the full suite with `--require-live-database` at the tested SHA, with
-     **zero skips** including the runtime tests;
+   - `.env.example` documents the owner and runtime URLs.
+5. **Test guard** per §2.3:
+   - the separate `.env.test.runtime`;
+   - fixed `kerno_test_app`, on the same endpoint apart from the user;
+   - static validation at bootstrap; live validation on first use, including
+     owns-nothing and the same-lock proof;
+   - safety refusals separated from not-ready failures;
+   - `--require-runtime-identity`;
+   - purpose `pytest` only; `DATABASE_URL` remains the owner;
+   - offline unit tests for every refusal and for the
+     `KERNO_MIGRATION_DATABASE_URL` cases;
+   - the runbook updated with §2.7.
+6. **Runtime provisioning script** per §2.7 step 3, with offline tests. It is
+   run by the owner only, after written approval.
+7. **Runtime pool fixture** per §2.4. No dependency override of `get_conn`; a
+   per-connection `session_user` check; no runtime evidence from owner paths.
+8. **Live evidence on `kerno_test`,** all through the guards, following §2.7:
+   - 029 upgrade, downgrade and upgrade;
+   - `grant-runtime`;
+   - the runtime identity check;
+   - §2.4 (full profile) and §2.5, including the PUBLIC ACL and
+     effective-privilege checks and the documented H1 residual;
+   - the full suite with `--require-live-database --require-runtime-identity`
+     at the tested SHA, with **zero skips**;
    - `kerno_dev` untouched.
-7. **Preserved:** every invariant in §1.9. The existing owner-role suite stays
-   green. No DORA v2 table gains access.
-8. **Documentation:**
-   - CLAUDE.md §17 C2 row and NOW.md updated after merge;
-   - the C2 decision record: no FORCE on the two bootstrap tables, and why;
-   - the claims in §1.8 adopted verbatim.
+9. **Preserved:** every invariant in §1.9. The existing owner-role suite stays
+   green. No DORA v2 table gains access. Every route mounted at the tested SHA
+   keeps working under the full-profile grants.
+10. **Documentation:**
+    - CLAUDE.md §17 C2 row and NOW.md updated after merge;
+    - the decision record of the approved FORCE choice, and of the accepted or
+      rejected H1/H2 residuals;
+    - the claims in §1.8 adopted verbatim.
 
-**Out of scope for that ticket:** G2–G14, `tenants` RLS, webhook secret
-encryption, pool reset, the prune identity, the DORA submission scheduler, and
-any deployment.
+**Out of scope for that ticket:**
 
-**Later bounded tickets.** Each is proposed and each needs its own approval:
+- the pilot grant set and router set (the serving-profile ticket, G10);
+- G2–G9 and G11–G18;
+- `tenants` RLS; webhook secret encryption; a no-hash login design;
+- pool reset; the prune identity; the DORA submission scheduler;
+- any deployment.
 
-- serving profile and exclusions (G10);
+**Later tickets.** Each is proposed and each needs its own approval:
+
+- the serving profile with the pilot grants (G10, completing G1);
 - intake and login limits (G6, G7);
 - reproducibility (G3);
 - operations and health (G11);
 - pilot tenant provisioning (G9);
-- filing language and proxy gate (G12, G13);
+- filing language and the proxy gate (G12, G13);
 - an LLM timeout if the LLM stays on (G8).
 
-Validation and owner items: G2, G4, G5 and G14, and the §4.4 decisions.
+**Validation and owner items:** G2, G4, G5, G14 to G18, and the §4.4
+decisions.
 
 ## 6. PR #6 disposition
 
@@ -802,7 +1072,7 @@ implement branding.
 
 ## 7. Status reconciliation
 
-**Verified merges, recorded in NOW.md by this change:**
+**Verified merges, recorded in NOW.md:**
 
 - **DORA-V2-002B** merged via PR #10 at `75f2bf18`, 3 October 2026 (reviewed
   head `778153fb`). This is also the revision the security assessment analysed.
@@ -854,7 +1124,8 @@ call.
   trust_center}.py`, `src/scheduler/*`.
 - **Migrations:** `migrations/versions/001`–`028`, `migrations/env.py`.
 - **Scripts and tests:** `scripts/*`, `tests/_database_safety.py`,
-  `tests/conftest.py`, and the safety unit tests.
+  `tests/conftest.py`, the safety unit tests, and
+  `tests/integration/test_sec_remed_001_webhook_intake.py`.
 - **Frontend:** `frontend/app/**`, `frontend/lib/*`, `frontend/next.config.ts`.
 - **Build and configuration:** `pyproject.toml`, `uv.lock`, `.env.example`.
 - **PR #6:** branch `origin/cursor/rename-grunnbok-971b`, diff against
