@@ -8,11 +8,20 @@ What:  Runs genuine pytest processes (conftest loading in its real order) and
        stops the run instead of skipping; parallel workers are refused; a
        skipped live test fails a required live run; and no child ever prints
        the password. Also checks the wrapper's decisions, its lock re-proofs
-       and its release on every path, including its printed output.
+       and its release on every path, including its printed output. For the
+       C2 runtime identity: --require-runtime-identity needs
+       --require-live-database and configured runtime settings; runtime
+       settings naming another role stop the run before any test; without
+       runtime settings a runtime test is skipped by name and the run passes;
+       an inherited KERNO_MIGRATION_DATABASE_URL naming anything but the owner
+       target stops pytest and the wrapper before any connection; and the
+       wrapper never reads the runtime settings.
 Why:   A boundary that is only unit-tested could still be bypassed by the
        real startup order. Every URL a child sees is fake and points at
        127.0.0.1 port 1, where nothing listens, and children never inherit a
-       real .env.test (KERNO_TEST_ENV_FILE points at a missing file).
+       real .env.test or .env.test.runtime (KERNO_TEST_ENV_FILE and
+       KERNO_TEST_RUNTIME_ENV_FILE point at missing files) or any database,
+       runtime or migration URL from the parent.
 How:   pytest tests/unit/test_database_safety_processes.py -v
 """
 
@@ -22,6 +31,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -41,15 +51,27 @@ _UNREACHABLE_SETTINGS = {
 }
 
 
+_STRIPPED_FROM_CHILDREN = frozenset({
+    "DATABASE_URL", "PYTHON_DOTENV_DISABLED", "PYTEST_ADDOPTS",
+    safety.TEST_DATABASE_URL_VARIABLE, safety.TEST_DATABASE_APPROVAL_VARIABLE,
+    safety.TEST_RUNTIME_DATABASE_URL_VARIABLE, safety.TEST_RUNTIME_DATABASE_APPROVAL_VARIABLE,
+    # A live parent pins this to its own owner URL; a child must start clean.
+    safety.MIGRATION_DATABASE_URL_VARIABLE,
+    *safety.TARGET_CHANGING_LIBPQ_VARIABLES,
+})
+_RUNTIME_PROBE = "runtime_fixture_outcome"
+_UNREACHABLE_RUNTIME_URL = f"postgresql://kerno_test_app:{SECRET}@127.0.0.1:1/kerno_test"
+
+
 def _child_environment(tmp_path, overrides: dict | None) -> dict:
-    """The parent's environment without any database settings, plus the given overrides."""
-    stripped = {
-        "DATABASE_URL", "PYTHON_DOTENV_DISABLED", "PYTEST_ADDOPTS",
-        safety.TEST_DATABASE_URL_VARIABLE, safety.TEST_DATABASE_APPROVAL_VARIABLE,
-        *safety.TARGET_CHANGING_LIBPQ_VARIABLES,
-    }
-    child = {name: value for name, value in os.environ.items() if name not in stripped}
+    """The parent's environment without any database or runtime settings, plus the given overrides.
+
+    Both settings files point at missing paths, so a child never reads a real
+    .env.test or .env.test.runtime.
+    """
+    child = {name: value for name, value in os.environ.items() if name not in _STRIPPED_FROM_CHILDREN}
     child[safety.TEST_ENV_FILE_VARIABLE] = str(tmp_path / "absent.env.test")
+    child[safety.TEST_RUNTIME_ENV_FILE_VARIABLE] = str(tmp_path / "absent.env.test.runtime")
     child["KERNO_PROBE_DEVELOPMENT_URL"] = FAKE_DEVELOPMENT_URL
     child.update(overrides or {})
     return child
@@ -80,6 +102,35 @@ def _report(completed: subprocess.CompletedProcess) -> dict:
         if line.startswith("KERNO_PROBE_REPORT="):
             return json.loads(line.split("=", 1)[1])
     raise AssertionError(f"no probe report; exit {completed.returncode}:\n{completed.stdout[-2000:]}")
+
+
+def _skip_reported(output: str) -> bool:
+    """True when pytest reported a skipped test: an -rs line, a skip reason, or a count in the stats line.
+
+    Not a bare search for "skipped": the terminal summary's runtime-identity
+    line says "runtime-identity tests were skipped" whenever no runtime
+    identity is configured, even in a run that selected no runtime test.
+    """
+    lines = output.splitlines()
+    return (
+        any(line.startswith("SKIPPED") for line in lines)
+        or "live database test skipped" in output
+        or re.search(r"\b\d+ skipped\b", output) is not None
+    )
+
+
+def _wrapper(tmp_path, overrides: dict | None, *arguments: str) -> subprocess.CompletedProcess:
+    """Run scripts/migrate_test_database.py as a real child process."""
+    return _run([sys.executable, str(_WRAPPER), *arguments], tmp_path, overrides)
+
+
+def test_children_inherit_no_database_runtime_or_migration_settings(tmp_path, monkeypatch):
+    for name in _STRIPPED_FROM_CHILDREN:
+        monkeypatch.setenv(name, "1")
+    child = _child_environment(tmp_path, None)
+    assert sorted(_STRIPPED_FROM_CHILDREN & set(child)) == []
+    assert not pathlib.Path(child[safety.TEST_RUNTIME_ENV_FILE_VARIABLE]).exists()
+    assert not pathlib.Path(child[safety.TEST_ENV_FILE_VARIABLE]).exists()
 
 
 # ── Real pytest processes ───────────────────────────────────────────────────
@@ -144,7 +195,7 @@ def test_an_unreachable_approved_target_stops_the_run_instead_of_skipping(tmp_pa
     assert report["outcomes"]["psycopg2_connect"] == "DatabaseTargetRejected"
     assert report["outcomes"]["application_pool"] == "DatabaseTargetRejected"
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR, output[-2000:]
-    assert "test database refused" in output and "skipped" not in output
+    assert "test database refused" in output and not _skip_reported(output)
     assert SECRET not in output
 
 
@@ -160,6 +211,134 @@ def test_a_required_live_run_fails_when_a_live_test_skips(tmp_path):
     completed = _pytest_probe(tmp_path, _UNREACHABLE_SETTINGS, "skips_itself", "--require-live-database")
     assert completed.returncode == pytest.ExitCode.TESTS_FAILED, _output(completed)[-2000:]
     assert "FAILED: 1 integration test(s) skipped in a required live run" in completed.stdout
+
+
+# ── The runtime identity (C2) in real pytest processes ──────────────────────
+
+
+@pytest.mark.slow
+def test_the_runtime_flag_without_the_live_flag_is_a_usage_error(tmp_path):
+    completed = _pytest_probe(tmp_path, {}, "reports", "--require-runtime-identity")
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR, output[-2000:]
+    assert "--require-runtime-identity must be combined with --require-live-database" in output
+    assert "KERNO_PROBE_REPORT" not in completed.stdout
+
+
+@pytest.mark.slow
+def test_requiring_the_runtime_identity_without_runtime_settings_fails_naming_the_variables(tmp_path):
+    completed = _pytest_probe(
+        tmp_path, _UNREACHABLE_SETTINGS, "reports", "--require-live-database", "--require-runtime-identity"
+    )
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR, output[-2000:]
+    assert "--require-runtime-identity was given but no runtime identity is configured" in output
+    assert safety.TEST_RUNTIME_DATABASE_URL_VARIABLE in output
+    assert safety.TEST_RUNTIME_DATABASE_APPROVAL_VARIABLE in output
+    assert "KERNO_PROBE_REPORT" not in completed.stdout and SECRET not in output
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "url, approval",
+    [
+        (_UNREACHABLE_URL, _UNREACHABLE_APPROVAL),
+        (f"postgresql://kerno_dev:{SECRET}@127.0.0.1:1/kerno_test", "kerno_dev@127.0.0.1:1/kerno_test"),
+    ],
+    ids=["the owner role", "kerno_dev"],
+)
+def test_runtime_settings_naming_another_role_fail_the_run_before_any_test(tmp_path, url, approval):
+    overrides = {
+        **_UNREACHABLE_SETTINGS,
+        safety.TEST_RUNTIME_DATABASE_URL_VARIABLE: url,
+        safety.TEST_RUNTIME_DATABASE_APPROVAL_VARIABLE: approval,
+    }
+    completed = _pytest_probe(tmp_path, overrides, "reports")
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR, output[-2000:]
+    assert "test database configuration refused" in output
+    assert "the runtime role must be exactly 'kerno_test_app'" in output
+    assert "KERNO_PROBE_REPORT" not in completed.stdout and SECRET not in output
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "owner, flags",
+    [({}, ()), (_UNREACHABLE_SETTINGS, ("--require-live-database",))],
+    ids=["ordinary run", "setup-stage owner regression run"],
+)
+def test_without_runtime_settings_a_runtime_test_skips_by_name_and_the_run_passes(tmp_path, owner, flags):
+    # -m proves the collection hook marked the probe: unmarked, nothing is selected.
+    completed = _pytest_probe(tmp_path, owner, _RUNTIME_PROBE, "-m", "runtime_identity", *flags)
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.OK, output[-2000:]
+    assert "1 skipped" in completed.stdout and "FAILED" not in completed.stdout
+    skip_lines = [line for line in completed.stdout.splitlines() if line.startswith("SKIPPED")]
+    assert len(skip_lines) == 1 and skip_lines[0].endswith("runtime identity not configured")
+    assert "runtime identity: not configured" in completed.stdout and SECRET not in output
+
+
+# ── KERNO_MIGRATION_DATABASE_URL, and the wrapper never reading runtime settings ─
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "inherited", [FAKE_DEVELOPMENT_URL, _UNREACHABLE_RUNTIME_URL], ids=["development database", "runtime user"]
+)
+def test_an_inherited_conflicting_migration_url_stops_pytest_and_the_wrapper_before_any_connection(tmp_path, inherited):
+    overrides = {**_UNREACHABLE_SETTINGS, safety.MIGRATION_DATABASE_URL_VARIABLE: inherited}
+    tested = _pytest_probe(tmp_path, overrides, "reports")
+    assert tested.returncode == pytest.ExitCode.USAGE_ERROR, _output(tested)[-2000:]
+    assert "test database configuration refused: unset KERNO_MIGRATION_DATABASE_URL" in _output(tested)
+    assert "KERNO_PROBE_REPORT" not in tested.stdout
+    migrated = _wrapper(tmp_path, overrides, "current")
+    assert migrated.returncode == 2, _output(migrated)[-2000:]
+    # No "test database:" line: the wrapper refused before opening its guard session.
+    assert "refused: unset KERNO_MIGRATION_DATABASE_URL" in migrated.stdout and "test database:" not in migrated.stdout
+    assert SECRET not in _output(tested) + _output(migrated)
+
+
+@pytest.mark.slow
+def test_a_matching_inherited_migration_url_is_accepted_by_the_wrapper_process(tmp_path):
+    matching = "host=127.0.0.1 port=1 dbname=kerno_test user=kerno_test"
+    completed = _wrapper(tmp_path, {**_UNREACHABLE_SETTINGS, safety.MIGRATION_DATABASE_URL_VARIABLE: matching}, "current")
+    # 3, not 2: the configuration was accepted and only the unreachable target refused.
+    assert completed.returncode == 3, _output(completed)[-2000:]
+    assert f"test database: {_UNREACHABLE_APPROVAL}" in completed.stdout and SECRET not in _output(completed)
+
+
+def _invalid_runtime_settings(tmp_path) -> dict:
+    """Runtime settings that break every rule at once: half a pair in the environment plus a file with extra keys."""
+    runtime_file = tmp_path / "invalid.env.test.runtime"
+    runtime_file.write_text(
+        f"{safety.TEST_RUNTIME_DATABASE_URL_VARIABLE}=postgresql://kerno_dev:{SECRET}@10.0.0.5:5432/kerno_dev\n"
+        f"DATABASE_URL={FAKE_DEVELOPMENT_URL}\n",
+        encoding="utf-8",
+    )
+    return {
+        safety.TEST_RUNTIME_DATABASE_URL_VARIABLE: f"postgresql://kerno_dev:{SECRET}@10.0.0.5:5432/kerno_dev",
+        safety.TEST_RUNTIME_ENV_FILE_VARIABLE: str(runtime_file),
+    }
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("command", ["current", "grant-runtime"])
+def test_the_wrapper_process_never_reads_runtime_settings(tmp_path, command):
+    baseline = _wrapper(tmp_path, _UNREACHABLE_SETTINGS, command)
+    with_runtime = _wrapper(tmp_path, {**_UNREACHABLE_SETTINGS, **_invalid_runtime_settings(tmp_path)}, command)
+    output = _output(with_runtime)
+    assert baseline.returncode == 3 and with_runtime.returncode == 3, output[-2000:]
+    assert f"test database: {_UNREACHABLE_APPROVAL}" in with_runtime.stdout
+    assert "KERNO_TEST_RUNTIME" not in output and SECRET not in output
+
+
+@pytest.mark.slow
+def test_the_wrapper_process_without_owner_settings_refuses_for_the_owner_and_ignores_runtime_settings(tmp_path):
+    completed = _wrapper(tmp_path, _invalid_runtime_settings(tmp_path), "current")
+    output = _output(completed)
+    assert completed.returncode == 2, output[-2000:]
+    assert "requires KERNO_TEST_DATABASE_URL" in completed.stdout
+    assert "KERNO_TEST_RUNTIME" not in output and SECRET not in output
 
 
 # ── The migration wrapper as a real process ─────────────────────────────────

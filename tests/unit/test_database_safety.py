@@ -13,7 +13,8 @@ What:  Proves, with no real database, that a test process can only ever
 Why:   These safeguards must be demonstrable without pointing a destructive
        fixture at any database. Everything here uses in-memory fakes and
        temporary files. Child-process and migration-wrapper proofs are in
-       tests/unit/test_database_safety_processes.py.
+       tests/unit/test_database_safety_processes.py; the C2 runtime-identity
+       proofs are in tests/unit/test_database_safety_runtime.py.
 How:   pytest tests/unit/test_database_safety.py -v
 """
 
@@ -680,6 +681,19 @@ def test_dotenv_loading_stays_disabled_in_this_test_process_after_the_app_is_imp
 # ── The fixture and hooks: stop, re-prove, release ──────────────────────────
 
 
+def isolate_skip_accounting(monkeypatch, require_live: bool = False, require_runtime: bool = False) -> None:
+    """Give conftest fresh skip lists and flags, so a hook test never writes into the real run's accounting.
+
+    A fake skip left in the real module-level lists would fail a real
+    --require-live-database or --require-runtime-identity run.
+    """
+    monkeypatch.setattr(conftest, "_LIVE_TEST_SKIPS", [])
+    monkeypatch.setattr(conftest, "_RUNTIME_TEST_SKIPS", [])
+    monkeypatch.setattr(conftest, "_OTHER_SKIPS", [])
+    monkeypatch.setattr(conftest, "_REQUIRE_LIVE", {"enabled": require_live})
+    monkeypatch.setattr(conftest, "_REQUIRE_RUNTIME", {"enabled": require_runtime})
+
+
 class _Config:
     """The one pytest config call the fixture helpers make."""
 
@@ -771,6 +785,7 @@ def test_the_session_end_reproves_the_lock_and_a_loss_is_not_a_success(monkeypat
     safety.ensure_exclusive_session("pytest", state=state, connect=fake_connect(server, opened))
     monkeypatch.setattr(conftest, "_TEST_DATABASE", state)
     monkeypatch.setattr(conftest, "_FINAL_EXCLUSIVITY_PROBLEMS", [])
+    isolate_skip_accounting(monkeypatch)
     held = types.SimpleNamespace(exitstatus=pytest.ExitCode.OK)
     conftest.pytest_sessionfinish(held, pytest.ExitCode.OK)
     assert held.exitstatus == pytest.ExitCode.OK
@@ -783,8 +798,7 @@ def test_the_session_end_reproves_the_lock_and_a_loss_is_not_a_success(monkeypat
 
 def test_a_required_live_run_in_which_an_integration_test_skipped_fails(monkeypatch):
     monkeypatch.setattr(conftest, "_TEST_DATABASE", safety.ProcessState())
-    monkeypatch.setattr(conftest, "_REQUIRE_LIVE", {"enabled": True})
-    monkeypatch.setattr(conftest, "_LIVE_TEST_SKIPS", [])
+    isolate_skip_accounting(monkeypatch, require_live=True)
     conftest.pytest_runtest_logreport(types.SimpleNamespace(skipped=True, keywords={"integration": 1}, nodeid="live"))
     conftest.pytest_runtest_logreport(types.SimpleNamespace(skipped=True, keywords={}, nodeid="unit"))
     assert conftest._LIVE_TEST_SKIPS == ["live"]
