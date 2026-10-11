@@ -82,10 +82,15 @@ INSERT INTO webhook_registrations (id, tenant_id, source_system, signing_secret)
 VALUES (:id, :tenant_id, :source_system, :signing_secret)
 """
 
+# C2 (PILOT-READY-002, migration 029): the runtime login cannot SELECT
+# signing_secret, so the pre-context verification read runs inside the
+# owner-owned SECURITY DEFINER helper kerno_bootstrap.webhook_verification,
+# which takes the same canonical id and returns the same three columns, at
+# most one row. It does not make secrets confidential from the runtime
+# (docs/pilot_readiness_kickoff.md §1.5, H2).
 _SELECT_REGISTRATION_FOR_VERIFY = """
 SELECT tenant_id, signing_secret, is_active
-FROM webhook_registrations
-WHERE id = :id
+FROM kerno_bootstrap.webhook_verification(:id)
 """
 
 _UPDATE_SECRET = """

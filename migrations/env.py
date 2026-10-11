@@ -1,5 +1,14 @@
 """Alembic migration environment — connects the migration engine to the live database.
-Reads DATABASE_URL from the environment and runs migrations online or offline."""
+
+Reads KERNO_MIGRATION_DATABASE_URL (the owner/migrator identity), falling back
+to DATABASE_URL, and runs migrations online or offline. Under C2 the API's
+DATABASE_URL is the non-owner runtime login, which cannot run DDL, so the
+owner URL lives in its own variable that the API never receives
+(src/api/runtime_identity.py refuses it outside development). The fallback
+keeps owner-mode development working unchanged. In guarded test workflows
+tests/_database_safety.py refuses an inherited value naming anything but the
+approved test database and pins it to that database.
+Run with: alembic upgrade head (or scripts/migrate_test_database.py for kerno_test)."""
 
 from __future__ import annotations
 
@@ -45,10 +54,12 @@ import src.models.webhook_registration  # noqa: F401
 
 config = context.config
 
-database_url = os.environ.get("DATABASE_URL")
+# A blank or whitespace-only value counts as unset, as it does for the test
+# guard and the API's startup gate.
+database_url = (os.environ.get("KERNO_MIGRATION_DATABASE_URL") or "").strip() or os.environ.get("DATABASE_URL")
 if not database_url:
     raise RuntimeError(
-        "DATABASE_URL must be set before running Alembic migrations. "
+        "KERNO_MIGRATION_DATABASE_URL or DATABASE_URL must be set before running Alembic migrations. "
         "Copy .env.example to .env and fill in the connection string."
     )
 config.set_main_option("sqlalchemy.url", database_url)

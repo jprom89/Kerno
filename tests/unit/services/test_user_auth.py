@@ -74,7 +74,9 @@ def test_login_queries_users_table_by_email():
     spy = _UserSpyConn(_user_row())
     authenticate_and_issue_token(spy, "Admin@Example.com ", _PASSWORD, "acme")
     sql, params = spy.calls[0]
-    assert "FROM users" in sql
+    # C2: the lookup goes through the bootstrap helper; the runtime has no grant on users.
+    assert "FROM kerno_bootstrap.resolve_login(:tenant_slug, :email)" in sql
+    assert "FROM users" not in sql
     assert params["email"] == "admin@example.com"  # normalised (lowercased/stripped)
     # KER-408: the organisation is part of the lookup, and the query must not
     # fall back to picking one row out of several by age.

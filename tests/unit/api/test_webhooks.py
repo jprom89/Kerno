@@ -58,7 +58,7 @@ class _SpyConn:
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
-        if "FROM webhook_registrations" in sql and "signing_secret" in sql:
+        if "FROM kerno_bootstrap.webhook_verification" in sql:
             return _RowResult(self._registration_row)
         if "FROM webhook_registrations" in sql:  # management read (no secret column)
             row = self._registration_row
