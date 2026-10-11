@@ -369,8 +369,8 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | A | `require_role` on six routes + structural sweep | `7b6738b` on `main` |
 | B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
-| C2 | Non-owner DB role + FORCE | **Held.** Own PR, real Postgres role |
-| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | **Preparation in progress** (documentation only) on branch `pilot/pilot-ready-001-c2-preparation`: `docs/pilot_readiness_kickoff.md`. Its PILOT-READY-002 contract, exceptions, risk acceptances and pilot exclusions are proposed, not approved. C2 implementation, role provisioning, deployment and pilot acceptance are not started and each needs approval. |
+| C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Checkpoint A, unmerged** on branch `pilot/pilot-ready-002-c2-runtime`: migration 029, helpers, grant procedures, guard, wrapper subcommands, provisioning script and tests written; offline checks only. **Live acceptance pending** owner approval: no role created, no grant applied, 029 not applied to `kerno_test`. The no-FORCE exception and the H1/H2 residuals remain proposed, not accepted. |
+| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | Merged via PR #17 (`a849708`): `docs/pilot_readiness_kickoff.md`. Its exceptions, risk acceptances and pilot exclusions are proposed, not approved. Deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
 
