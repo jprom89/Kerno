@@ -49,11 +49,16 @@ from config.constants import (
 #
 # Email is deliberately NOT globally unique: one vCISO or consultant legitimately
 # holds accounts across several client organisations, which is the core persona.
+#
+# C2 (PILOT-READY-002, migration 029): the runtime login holds no grant on
+# users, so the same exact (slug, email) join runs inside the owner-owned
+# SECURITY DEFINER helper kerno_bootstrap.resolve_login, which returns at most
+# one row. It limits the query interface, not the material: for a slug and
+# email the caller supplies, it still returns that account's password hash
+# (docs/pilot_readiness_kickoff.md §1.5, H1).
 _SELECT_USER_BY_SLUG_AND_EMAIL = """
-SELECT u.user_id, u.tenant_id, u.password_hash, u.role, u.is_active
-FROM users u
-JOIN tenants t ON t.tenant_id = u.tenant_id
-WHERE t.tenant_slug = :tenant_slug AND u.email = :email
+SELECT user_id, tenant_id, password_hash, role, is_active
+FROM kerno_bootstrap.resolve_login(:tenant_slug, :email)
 """
 
 # Dummy hash used when the email is not found, so that the verification path

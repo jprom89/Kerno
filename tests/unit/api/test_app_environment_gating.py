@@ -35,6 +35,7 @@ from config.constants import (
     EXAMPLE_ALLOWED_ORIGINS,
     SUPERSEDED_EXAMPLE_ALLOWED_ORIGIN,
 )
+from src.api import runtime_identity
 from src.api.app import _allowed_origins, create_app
 
 DOC_PATHS = ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc")
@@ -44,13 +45,27 @@ DASHBOARD_PATHS = ("/dashboard/login.html", "/dashboard/")
 @pytest.fixture
 def env(monkeypatch):
     """Clear every variable these tests depend on so each one states its own environment."""
-    for name in ("KERNO_ENV", "FRONTEND_URL", "ALLOWED_ORIGINS", "KERNO_ENABLE_DOCS"):
+    # KERNO_MIGRATION_DATABASE_URL too: the test bootstrap pins it to the owner
+    # test URL, and the startup identity gate refuses it outside development.
+    for name in ("KERNO_ENV", "FRONTEND_URL", "ALLOWED_ORIGINS", "KERNO_ENABLE_DOCS", "KERNO_MIGRATION_DATABASE_URL"):
         monkeypatch.delenv(name, raising=False)
     # The lifespan requires these before it reaches anything under test here, so
     # a startup test would otherwise fail for an unrelated reason.
     monkeypatch.setenv("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused/for-startup-checks-only")
+    # The startup identity gate (C2) reads the pool's login; these tests are
+    # about other startup checks, so it sees a restricted runtime identity.
+    # Its own behaviour is tested in tests/unit/api/test_runtime_identity_gate.py.
+    monkeypatch.setattr(runtime_identity, "read_connection_identity", _restricted_runtime_identity)
     return monkeypatch
+
+
+def _restricted_runtime_identity() -> runtime_identity.ConnectionIdentity:
+    """A non-owner login with no elevated attribute, membership or owned object."""
+    return runtime_identity.ConnectionIdentity(
+        session_user="kerno_app", superuser=False, bypass_rls=False, create_role=False,
+        create_database=False, replication=False, memberships=0, owns_database=False, owned_objects=0,
+    )
 
 
 # ── Documentation surface ───────────────────────────────────────────────────

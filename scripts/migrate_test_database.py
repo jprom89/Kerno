@@ -17,10 +17,24 @@ Why:   TEST-SAFETY-001. Plain `alembic` reads DATABASE_URL, and
 How:   python scripts/migrate_test_database.py current
        python scripts/migrate_test_database.py upgrade head
        python scripts/migrate_test_database.py downgrade <revision|base>
-       Exit codes: 0 done; 1 a migration failed; 2 bad command, bad
-       destination, or configuration missing or refused; 3 target refused,
-       busy, or exclusivity lost.
-       Offline tests: pytest tests/unit/test_database_safety.py -v
+       python scripts/migrate_test_database.py grant-runtime
+       python scripts/migrate_test_database.py revoke-runtime
+       Exit codes: 0 done; 1 a migration or grant change failed; 2 bad
+       command, bad destination, configuration missing or refused, or a
+       grant precondition unmet; 3 target refused, busy, or exclusivity lost.
+       Offline tests: pytest tests/unit/test_database_safety_processes.py
+       tests/unit/test_runtime_grant_commands.py -v
+
+Runtime grants (C2, PILOT-READY-002). grant-runtime and revoke-runtime run as
+the owner kerno_test under the same lock (purpose "migrate"), in one
+transaction, for the fixed role kerno_test_app and the fixed profile "full".
+grant-runtime refuses unless migration 029 is applied and the role exists
+with no elevated attribute, no membership in either direction and no owned
+object; it then grants CONNECT and calls
+kerno_bootstrap.apply_runtime_grants, which records the assignment.
+revoke-runtime calls kerno_bootstrap.revoke_runtime_grants and revokes
+CONNECT. Neither reads the runtime settings or connects as the runtime, and
+neither creates, alters or drops a role.
 """
 
 from __future__ import annotations
@@ -46,8 +60,55 @@ _COMMAND_AND_DESTINATION = 2
 _USAGE = (
     "usage: python scripts/migrate_test_database.py current\n"
     "       python scripts/migrate_test_database.py upgrade <revision|head>\n"
-    "       python scripts/migrate_test_database.py downgrade <revision|base>"
+    "       python scripts/migrate_test_database.py downgrade <revision|base>\n"
+    "       python scripts/migrate_test_database.py grant-runtime\n"
+    "       python scripts/migrate_test_database.py revoke-runtime"
 )
+
+GRANT_RUNTIME = "grant-runtime"
+REVOKE_RUNTIME = "revoke-runtime"
+RUNTIME_GRANT_COMMANDS = (GRANT_RUNTIME, REVOKE_RUNTIME)
+# The only profile this ticket applies. The pilot profile arrives only with
+# the serving profile that unmounts the routers it does not cover (G10).
+RUNTIME_PROFILE = "full"
+# Migration 029 creates the procedures these commands call.
+RUNTIME_MECHANISM_REVISION = "d5e6f7g8"
+
+_RUNTIME_ROLE = test_database_safety.TEST_RUNTIME_ROLE_NAME
+_DATABASE = test_database_safety.TEST_DATABASE_NAME
+
+# Fixed statements: the role, database and profile are module constants and
+# plain lowercase identifiers, never input.
+GRANT_RUNTIME_STATEMENTS = (
+    f"GRANT CONNECT ON DATABASE {_DATABASE} TO {_RUNTIME_ROLE}",
+    f"CALL kerno_bootstrap.apply_runtime_grants('{_RUNTIME_ROLE}', '{RUNTIME_PROFILE}')",
+)
+REVOKE_RUNTIME_STATEMENTS = (
+    f"CALL kerno_bootstrap.revoke_runtime_grants('{_RUNTIME_ROLE}')",
+    f"REVOKE CONNECT ON DATABASE {_DATABASE} FROM {_RUNTIME_ROLE}",
+)
+
+_MECHANISM_PRESENT_SQL = """
+SELECT to_regprocedure('kerno_bootstrap.apply_runtime_grants(name,text)') IS NOT NULL
+   AND to_regprocedure('kerno_bootstrap.revoke_runtime_grants(name)') IS NOT NULL
+   AND to_regclass('kerno_bootstrap.runtime_assignment') IS NOT NULL
+"""
+_RUNTIME_ROLE_SQL = """
+SELECT r.rolcanlogin, r.rolsuper, r.rolbypassrls, r.rolcreatedb, r.rolcreaterole, r.rolreplication,
+       (SELECT count(*) FROM pg_auth_members AS m WHERE m.member = r.oid OR m.roleid = r.oid),
+       (SELECT count(*) FROM pg_shdepend AS s
+        WHERE s.refclassid = 'pg_authid'::regclass AND s.refobjid = r.oid AND s.deptype = 'o')
+FROM pg_roles AS r WHERE r.rolname = %s
+"""
+_RUNTIME_ROLE_FIELDS = (
+    "can_login", "superuser", "bypass_rls", "create_database", "create_role", "replication",
+    "memberships", "owned_objects",
+)
+_ASSIGNMENT_SQL = "SELECT role_name, profile FROM kerno_bootstrap.runtime_assignment"
+
+
+class RuntimeGrantRefused(Exception):
+    """A grant-runtime or revoke-runtime precondition is unmet; nothing was changed."""
 
 
 def main(argv: list[str], safety=test_database_safety) -> int:
@@ -80,6 +141,8 @@ def parse_arguments(argv: list[str]) -> tuple[str, str | None] | None:
     """Return (command, destination) for a well-formed command line, else None."""
     if argv == ["current"]:
         return "current", None
+    if len(argv) == 1 and argv[0] in RUNTIME_GRANT_COMMANDS:
+        return argv[0], None
     if len(argv) == _COMMAND_AND_DESTINATION and argv[0] in ("upgrade", "downgrade") and argv[1]:
         return argv[0], argv[1]
     return None
@@ -89,8 +152,11 @@ def run_command(command: str, destination: str | None, session, target, safety) 
     """Report the current revision, or apply the planned steps one at a time under the held lock.
 
     The lock is re-proved before every step and after the last one, so a loss
-    during the final revision is not reported as success.
+    during the final revision is not reported as success. grant-runtime and
+    revoke-runtime are handed to run_runtime_grant_command.
     """
+    if command in RUNTIME_GRANT_COMMANDS:
+        return run_runtime_grant_command(command, session, target, safety)
     try:
         config = alembic_config()
         current = current_revision(target)
@@ -169,6 +235,117 @@ def plan_steps(config, command: str, current: str | None, destination: str) -> l
         return []
     resolved = None if destination == "base" else script.get_revision(destination).revision
     return [revision.down_revision or "base" for revision in script.iterate_revisions(current, resolved)]
+
+
+def run_runtime_grant_command(command: str, session, target, safety, connect=None) -> int:
+    """Apply or withdraw the fixed runtime role's grants as the owner, in one transaction, under the held lock.
+
+    Refuses (exit 2, nothing changed) unless migration 029 is in the current
+    revision's history and its objects exist, and, for grant-runtime, unless
+    the fixed role exists with no elevated attribute, membership or owned
+    object. The lock is re-proved before the commit and after it.
+    """
+    try:
+        session.assert_held()
+        if not includes_revision(alembic_config(), current_revision(target), RUNTIME_MECHANISM_REVISION):
+            raise RuntimeGrantRefused(
+                f"migration {RUNTIME_MECHANISM_REVISION} (029) is not applied; run 'upgrade head' first."
+            )
+        connection = open_owner_connection(target, command, connect)
+        try:
+            change_runtime_grants(connection, command, session)
+        finally:
+            connection.close()
+        session.assert_held()
+        say(f"done: {command} {_RUNTIME_ROLE} on {target.identity} (profile {RUNTIME_PROFILE})")
+        return EXIT_DONE
+    except RuntimeGrantRefused as exc:
+        say(f"refused: {exc}")
+        return EXIT_CONFIGURATION_REFUSED
+    except safety.DatabaseExclusivityLost as exc:
+        say(f"stopped: {exc}")
+        return EXIT_TARGET_REFUSED
+    except safety.KernoTestDatabaseError as exc:
+        say(f"refused: {exc}")
+        return EXIT_TARGET_REFUSED
+    except Exception as exc:  # noqa: BLE001 — reported without credentials, then a non-zero exit
+        say(f"{command} failed: {type(exc).__name__}: {safety.redact(str(exc), target)}")
+        return EXIT_MIGRATION_FAILED
+
+
+def includes_revision(config, current: str | None, required: str) -> bool:
+    """True when required is current or one of its ancestors in the migration history."""
+    from alembic.script import ScriptDirectory
+
+    if current is None:
+        return False
+    script = ScriptDirectory.from_config(config)
+    return any(revision.revision == required for revision in script.iterate_revisions(current, "base"))
+
+
+def open_owner_connection(target, command: str, connect=None):
+    """Open one owner connection through the guarded psycopg2.connect, which re-proves the lock."""
+    import psycopg2
+
+    connect = connect or psycopg2.connect
+    return connect(target.url, application_name=f"kerno-test-guard:{command}")
+
+
+def change_runtime_grants(connection, command: str, session) -> None:
+    """Check preconditions, run the fixed statements, verify the assignment, re-prove the lock, then commit.
+
+    Any failure rolls the whole transaction back, so a refusal or an error
+    leaves the grants and the assignment exactly as they were.
+    """
+    connection.autocommit = False
+    cursor = connection.cursor()
+    try:
+        require_runtime_mechanism(cursor)
+        require_runtime_role(cursor, command)
+        statements = GRANT_RUNTIME_STATEMENTS if command == GRANT_RUNTIME else REVOKE_RUNTIME_STATEMENTS
+        for statement in statements:
+            cursor.execute(statement)
+        require_assignment(cursor, command)
+        session.assert_held()
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+
+
+def require_runtime_mechanism(cursor) -> None:
+    """Refuse unless migration 029's procedures and assignment record exist."""
+    cursor.execute(_MECHANISM_PRESENT_SQL)
+    if not cursor.fetchone()[0]:
+        raise RuntimeGrantRefused("the kerno_bootstrap grant procedures are missing; apply migration 029 first.")
+
+
+def require_runtime_role(cursor, command: str) -> None:
+    """Refuse unless the fixed role exists; for grant-runtime, also unless it is unelevated and isolated."""
+    cursor.execute(_RUNTIME_ROLE_SQL, (_RUNTIME_ROLE,))
+    row = cursor.fetchone()
+    if row is None:
+        raise RuntimeGrantRefused(
+            f"role {_RUNTIME_ROLE} does not exist; the administrator creates it with "
+            "scripts/provision_test_runtime_role.py."
+        )
+    if command != GRANT_RUNTIME:
+        return
+    role = dict(zip(_RUNTIME_ROLE_FIELDS, row))
+    problems = [name for name in _RUNTIME_ROLE_FIELDS[1:] if role[name]]
+    if not role["can_login"]:
+        problems.insert(0, "cannot log in")
+    if problems:
+        raise RuntimeGrantRefused(f"role {_RUNTIME_ROLE} is not a valid runtime role: {', '.join(problems)}.")
+
+
+def require_assignment(cursor, command: str) -> None:
+    """Refuse to commit unless the assignment record now says exactly what this command did."""
+    cursor.execute(_ASSIGNMENT_SQL)
+    rows = cursor.fetchall()
+    expected = [(_RUNTIME_ROLE, RUNTIME_PROFILE)] if command == GRANT_RUNTIME else []
+    if [tuple(row) for row in rows] != expected:
+        raise RuntimeGrantRefused(f"the runtime assignment after {command} is not what was applied; rolled back.")
 
 
 def apply_step(config, command: str, step: str) -> None:

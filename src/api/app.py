@@ -15,7 +15,9 @@ Why:   one factory builds the whole app so tests can construct isolated
        deployed host never becomes a reason to set KERNO_ENV=development there,
        which would also remount the dashboard and unlock the seed scripts.
        Startup additionally refuses a shipped .env.example CORS placeholder
-       outside development.
+       outside development, and refuses an owner, elevated or member database
+       login, or the owner's KERNO_MIGRATION_DATABASE_URL, outside development
+       (src/api/runtime_identity.py; a warning in development).
 How:   run locally with: uvicorn src.api.app:app --reload --port 8000
        exercised by every test under tests/unit/api/.
 """
@@ -41,7 +43,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from config.constants import EXAMPLE_ALLOWED_ORIGINS
-from src.api import trust_center, webhooks
+from src.api import runtime_identity, trust_center, webhooks
 from src.api.rate_limit import limiter
 from src.api.routers import ai_decisions, coverage, evidence, export, overrides, panel, recommendations, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
@@ -57,6 +59,7 @@ async def _lifespan(app: FastAPI):
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL environment variable is not set")
     _reject_example_origins()
+    runtime_identity.enforce_runtime_identity(development=_is_development())
     yield
 
 

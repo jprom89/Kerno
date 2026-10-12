@@ -26,6 +26,8 @@ authorisation:
 
     python -m pytest                            # unit tests; live tests skip, named
     python -m pytest --require-live-database    # live validation; fails if not configured
+    python -m pytest --require-live-database --require-runtime-identity
+                                                # C2 acceptance: owner and runtime, zero skips
 
 The first thing this file does, before any repository import, is establish
 that boundary (tests/_database_safety.py). Before its first write the run
@@ -37,6 +39,19 @@ parameters match the approved target and the guard connection re-proves the
 lock; the catalog check is not repeated per connection. The lock is also
 re-proved before db_connection's own seeding and cleanup, and once more at
 the end of the session.
+
+Runtime identity (C2, PILOT-READY-002). Tests that use ``runtime_connection``
+or ``runtime_pool`` run as the non-owner login kerno_test_app, configured with
+KERNO_TEST_RUNTIME_DATABASE_URL and KERNO_TEST_RUNTIME_DATABASE_APPROVAL (or
+the gitignored .env.test.runtime). They are marked ``runtime_identity`` and
+follow one behaviour table (docs/pilot_readiness_kickoff.md §2.3 item 8):
+not configured skips them by name, or fails under --require-runtime-identity;
+configured but refused at login fails them (a runtime-setup failure, nonzero);
+anything unsafe stops the run. A --require-runtime-identity run passes only if
+it skipped nothing, held the owner's exclusive session and verified the
+runtime identity live. Owner fixtures keep db_connection, and
+DATABASE_URL stays the owner URL, so nothing an owner path does can count as
+runtime evidence.
 """
 
 from __future__ import annotations
@@ -51,12 +66,13 @@ import pytest
 # ── Test-database boundary — must precede every repository import ──────────
 from tests import _database_safety as test_database_safety
 
-_TEST_DATABASE = test_database_safety.bootstrap_test_process()
+_TEST_DATABASE = test_database_safety.bootstrap_test_process(read_runtime=True)
 
 from config.constants import EMBEDDING_DIMENSION  # noqa: E402 — after the boundary on purpose
 
 try:
     import psycopg2  # noqa: E402
+    import psycopg2.pool  # noqa: E402
     _PSYCOPG2_AVAILABLE = True
 except ImportError:
     _PSYCOPG2_AVAILABLE = False
@@ -64,8 +80,19 @@ except ImportError:
 # Integration-marked tests that skipped in a --require-live-database run.
 _LIVE_TEST_SKIPS: list[str] = []
 _REQUIRE_LIVE = {"enabled": False}
+# Runtime-identity tests that skipped, and every other skip: under
+# --require-runtime-identity (final acceptance) any skip at all fails the run.
+_RUNTIME_TEST_SKIPS: list[str] = []
+_OTHER_SKIPS: list[str] = []
+_REQUIRE_RUNTIME = {"enabled": False}
+_RUNTIME_FIXTURES = frozenset({"runtime_connection", "runtime_pool"})
+# One TestClient request at a time, plus headroom for a nested lease.
+RUNTIME_POOL_MAX_CONNECTIONS = 4
 # Set when the lock could not be re-proved at the end of the session.
 _FINAL_EXCLUSIVITY_PROBLEMS: list[str] = []
+# Live proof a --require-runtime-identity run never completed (owner session,
+# runtime verification); any entry fails an otherwise passing run.
+_MISSING_REQUIRED_PROOF: list[str] = []
 
 # Fixed deterministic UUIDv4 identifiers for the two test tenants.
 # Using constants (not uuid4()) makes test failure messages readable:
@@ -305,6 +332,105 @@ def _skip_or_fail(config, reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Runtime identity (C2): the non-owner login, never an owner fallback
+# ---------------------------------------------------------------------------
+
+
+def require_runtime_identity(config, state=None):
+    """Return the verified runtime target, or skip, fail or stop the run per the §2.3 item 8 behaviour table.
+
+    Not configured: skip by name, or fail under --require-runtime-identity.
+    Configured but the login is refused: fail this test (a runtime-setup
+    failure, nonzero with or without the flag). Unsafe identity, unsafe
+    settings or an unproved lock: stop the run. Must be called after the
+    pytest workflow's exclusive session is held (db_connection first).
+    """
+    state = state or _TEST_DATABASE
+    if state.runtime_target is None:
+        if config.getoption("require_runtime_identity"):
+            pytest.fail("runtime identity required but not configured")
+        pytest.skip("runtime identity not configured")
+    try:
+        return test_database_safety.verify_runtime_identity(state=state)
+    except test_database_safety.RuntimeIdentityNotReady as exc:
+        pytest.fail(f"runtime identity setup failure: {exc}")
+    except test_database_safety.DatabaseExclusivityLost as exc:
+        pytest.exit(f"test database exclusivity lost: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
+    except test_database_safety.KernoTestDatabaseError as exc:
+        pytest.exit(f"runtime identity refused: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def _require_runtime_session_user(raw_conn) -> None:
+    """Fail unless this physical connection's session_user is the fixed runtime role; leave no transaction open."""
+    cursor = raw_conn.cursor()
+    try:
+        cursor.execute("SELECT session_user, current_user")
+        session_user, current_user = cursor.fetchone()
+    finally:
+        raw_conn.rollback()
+    expected = test_database_safety.TEST_RUNTIME_ROLE_NAME
+    if session_user != expected or current_user != expected:
+        pytest.fail(f"a runtime connection reported session_user {session_user!r}, not {expected!r}")
+
+
+if _PSYCOPG2_AVAILABLE:
+
+    class RuntimeIdentityPool(psycopg2.pool.ThreadedConnectionPool):
+        """The application's pool type, opened as kerno_test_app, checking each new physical connection once."""
+
+        def _connect(self, key=None):
+            """Open one physical connection through the guarded psycopg2.connect, then check its identity."""
+            raw_conn = super()._connect(key)
+            _require_runtime_session_user(raw_conn)
+            return raw_conn
+
+
+@pytest.fixture
+def runtime_connection(request):
+    """Yield a raw-SQL connection as kerno_test_app, for negative probes; owner seeding uses db_connection.
+
+    Requests db_connection first, so the owner fixture seeds and the
+    exclusive session is held before the runtime identity is verified, and
+    the runtime connection is closed before the owner's cleanup runs.
+    """
+    request.getfixturevalue("db_connection")
+    runtime = require_runtime_identity(request.config)
+    raw_conn = psycopg2.connect(runtime.url, application_name="kerno-test-runtime")
+    raw_conn.autocommit = False
+    _require_runtime_session_user(raw_conn)
+    yield _DbConnection(raw_conn)
+    raw_conn.rollback()
+    raw_conn.close()
+
+
+@pytest.fixture
+def runtime_pool(request, monkeypatch):
+    """Point the application at a real runtime pool, so get_conn and pooled_transaction run as kerno_test_app.
+
+    Replaces both src.api.dependencies._pool and _get_pool, so a reset of the
+    global still leases from the runtime pool; no dependency (get_conn,
+    get_tenant_id, get_role, get_reviewer_id) is overridden, so requests need
+    real JWTs. Afterwards asserts the application still held this pool.
+    """
+    request.getfixturevalue("db_connection")
+    runtime = require_runtime_identity(request.config)
+    from src.api import dependencies
+
+    pool = RuntimeIdentityPool(1, RUNTIME_POOL_MAX_CONNECTIONS, dsn=runtime.url)
+
+    def runtime_pool_only():
+        """Return the runtime pool, whatever the module global holds."""
+        return pool
+
+    monkeypatch.setattr(dependencies, "_pool", pool)
+    monkeypatch.setattr(dependencies, "_get_pool", runtime_pool_only)
+    yield pool
+    still_runtime = dependencies._pool is pool
+    pool.closeall()
+    assert still_runtime, "the application pool was replaced during a runtime-identity test"
+
+
+# ---------------------------------------------------------------------------
 # Test-database boundary hooks
 # ---------------------------------------------------------------------------
 
@@ -318,11 +444,21 @@ def pytest_addoption(parser) -> None:
         help="fail, rather than skip, when the approved kerno_test database is not configured, "
         "and fail the run if any integration-marked test is skipped",
     )
+    parser.addoption(
+        "--require-runtime-identity",
+        action="store_true",
+        default=False,
+        help="C2 acceptance: with --require-live-database, fail unless the kerno_test_app runtime "
+        "identity is configured and verified, and fail the run if any test at all is skipped",
+    )
 
 
 def pytest_configure(config) -> None:
     """Fail the run on invalid test settings, missing required settings, or parallel workers."""
     _REQUIRE_LIVE["enabled"] = bool(config.getoption("require_live_database"))
+    _REQUIRE_RUNTIME["enabled"] = bool(config.getoption("require_runtime_identity"))
+    if _REQUIRE_RUNTIME["enabled"] and not _REQUIRE_LIVE["enabled"]:
+        raise pytest.UsageError("--require-runtime-identity must be combined with --require-live-database.")
     if _TEST_DATABASE.problem:
         raise pytest.UsageError(f"test database configuration refused: {_TEST_DATABASE.problem}")
     if _REQUIRE_LIVE["enabled"] and _TEST_DATABASE.target is None:
@@ -330,6 +466,12 @@ def pytest_configure(config) -> None:
             "--require-live-database was given but no approved test database is configured: set "
             f"{test_database_safety.TEST_DATABASE_URL_VARIABLE} and "
             f"{test_database_safety.TEST_DATABASE_APPROVAL_VARIABLE} (docs/test_database_runbook.md)."
+        )
+    if _REQUIRE_RUNTIME["enabled"] and _TEST_DATABASE.runtime_target is None:
+        raise pytest.UsageError(
+            "--require-runtime-identity was given but no runtime identity is configured: set "
+            f"{test_database_safety.TEST_RUNTIME_DATABASE_URL_VARIABLE} and "
+            f"{test_database_safety.TEST_RUNTIME_DATABASE_APPROVAL_VARIABLE} (docs/test_database_runbook.md)."
         )
     if _TEST_DATABASE.target is not None and _parallel_workers_requested(config):
         raise pytest.UsageError(
@@ -345,17 +487,40 @@ def _parallel_workers_requested(config) -> bool:
     return bool(os.environ.get("PYTEST_XDIST_WORKER") or workers or distribution not in (None, "no"))
 
 
+def pytest_collection_modifyitems(config, items) -> None:
+    """Mark every test that uses a runtime fixture as runtime_identity and integration, so its skips are counted."""
+    for item in items:
+        if _RUNTIME_FIXTURES & set(item.fixturenames):
+            item.add_marker(pytest.mark.runtime_identity)
+            item.add_marker(pytest.mark.integration)
+
+
 def pytest_runtest_logreport(report) -> None:
-    """Remember integration-marked tests that skipped, so a required live run cannot hide them."""
-    if report.skipped and "integration" in report.keywords:
+    """Remember every skip by kind, so a required live or runtime run cannot hide one.
+
+    Runtime-identity skips are kept apart from owner integration skips: a
+    --require-live-database run without runtime settings is the setup-stage
+    owner regression run, in which runtime tests skip by name (row 1).
+    """
+    if not report.skipped:
+        return
+    if "runtime_identity" in report.keywords:
+        _RUNTIME_TEST_SKIPS.append(report.nodeid)
+    elif "integration" in report.keywords:
         _LIVE_TEST_SKIPS.append(report.nodeid)
+    else:
+        _OTHER_SKIPS.append(report.nodeid)
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:
-    """Re-prove the lock one last time, and fail a required live run in which an integration test skipped.
+    """Re-prove the lock one last time, then fail a required run that skipped a test or never completed its live proof.
 
     Every fixture cleanup has run by now. If exclusivity cannot be proved,
     the last cleanups ran without it, so the run is not reported as a success.
+    Under --require-runtime-identity a passing run must also have held the
+    owner's exclusive session and verified the runtime identity live; that is
+    read from the recorded state, and no connection is opened here to supply
+    it. An outcome that is already nonzero is never changed.
     """
     exclusive = _TEST_DATABASE.session
     if exclusive is not None:
@@ -365,25 +530,68 @@ def pytest_sessionfinish(session, exitstatus) -> None:
             _FINAL_EXCLUSIVITY_PROBLEMS.append(str(exc))
             session.exitstatus = pytest.ExitCode.INTERRUPTED
             return
-    if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS and exitstatus == pytest.ExitCode.OK:
+    _MISSING_REQUIRED_PROOF[:] = _missing_required_proof(_TEST_DATABASE)
+    if exitstatus == pytest.ExitCode.OK and (_MISSING_REQUIRED_PROOF or _required_run_skipped_tests()):
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
+def _missing_required_proof(state) -> list[str]:
+    """Under --require-runtime-identity, name each live proof this run never completed; empty without the flag."""
+    if not _REQUIRE_RUNTIME["enabled"]:
+        return []
+    missing = []
+    if state.session is None:
+        missing.append(
+            "the owner's exclusive test-database session was never opened, so the owner target was never "
+            "verified live"
+        )
+    if not state.runtime_verified:
+        missing.append("the runtime identity was never verified live (no runtime-identity test reached it)")
+    return missing
+
+
+def _required_run_skipped_tests() -> list[str]:
+    """Return the skips that make a required run fail: owner integration skips, and under the runtime flag, every skip."""
+    if _REQUIRE_RUNTIME["enabled"]:
+        return _LIVE_TEST_SKIPS + _RUNTIME_TEST_SKIPS + _OTHER_SKIPS
+    if _REQUIRE_LIVE["enabled"]:
+        return list(_LIVE_TEST_SKIPS)
+    return []
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
-    """Say which database, if any, this run was allowed to touch — identity only, never credentials."""
+    """Say which database and identities, if any, this run was allowed to touch — identities only, never credentials."""
     target = _TEST_DATABASE.target
     if target is None:
         terminalreporter.write_line("test database: none configured - live-database tests were skipped")
     else:
         terminalreporter.write_line(f"test database: {target.identity} (settings from {_TEST_DATABASE.source})")
+    terminalreporter.write_line(_runtime_identity_summary(), red=bool(_TEST_DATABASE.runtime_not_ready))
     for problem in _FINAL_EXCLUSIVITY_PROBLEMS:
         terminalreporter.write_line(f"FAILED: test database exclusivity lost at the end of the run: {problem}", red=True)
-    if _REQUIRE_LIVE["enabled"] and _LIVE_TEST_SKIPS:
-        terminalreporter.write_line(
-            f"FAILED: {len(_LIVE_TEST_SKIPS)} integration test(s) skipped in a required live run:", red=True
-        )
-        for nodeid in _LIVE_TEST_SKIPS:
+    for problem in _MISSING_REQUIRED_PROOF:
+        terminalreporter.write_line(f"FAILED: required runtime-identity run incomplete: {problem}", red=True)
+    skipped = _required_run_skipped_tests()
+    if skipped:
+        if _REQUIRE_RUNTIME["enabled"]:
+            heading = f"FAILED: {len(skipped)} test(s) skipped in a required runtime-identity run (zero allowed):"
+        else:
+            heading = f"FAILED: {len(skipped)} integration test(s) skipped in a required live run:"
+        terminalreporter.write_line(heading, red=True)
+        for nodeid in skipped:
             terminalreporter.write_line(f"  {nodeid}", red=True)
+
+
+def _runtime_identity_summary() -> str:
+    """One line on the runtime identity: not configured, verified, not ready, or configured but unused."""
+    runtime = _TEST_DATABASE.runtime_target
+    if runtime is None:
+        return "runtime identity: not configured - runtime-identity tests were skipped"
+    if _TEST_DATABASE.runtime_verified:
+        return f"runtime identity: {runtime.identity} verified (settings from {_TEST_DATABASE.runtime_source})"
+    if _TEST_DATABASE.runtime_not_ready:
+        return f"FAILED: runtime identity setup failure: {_TEST_DATABASE.runtime_not_ready}"
+    return f"runtime identity: {runtime.identity} configured, not used in this run"
 
 
 def pytest_unconfigure(config) -> None:

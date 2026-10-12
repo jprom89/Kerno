@@ -401,6 +401,181 @@ In both exclusion directions, every refusal named the holder and came before
 any change. After each release, the next workflow ran. `NOW.md` records the
 details.
 
+## 8. Runtime identity `kerno_test_app` (C2, PILOT-READY-002)
+
+**Status (12 October 2026): Checkpoint B run on the unmerged branch
+`pilot/pilot-ready-002-c2-runtime`; final acceptance passed at
+`fb9f506812fcf43f8f0d56f854348ff6ac113d99`, pending independent review.**
+Migration 029 is applied to `kerno_test`, `kerno_test_app` exists and holds
+the full-profile grants. This was synthetic, disposable-test validation under
+the owner's written authorization on PR #19; it is not customer or production
+acceptance. The record is at the end of this section.
+
+The C2 tests run the application as a second, non-owner login on the same
+database, so that row-level security, the column grants and the ledger's
+privilege layer are tested as they bind a non-owner. The owner role
+`kerno_test` keeps doing everything it does today: migrations, fixtures,
+seeding, cleanup, and the owner-as-attacker trigger tests.
+
+### Settings — `.env.test.runtime`, never committed
+
+The administrator's provisioning script writes `J:\Kerno\.env.test.runtime`
+once, with exclusive create, containing exactly:
+
+```text
+KERNO_TEST_RUNTIME_DATABASE_URL=postgresql://kerno_test_app:<password>@127.0.0.1:5432/kerno_test
+KERNO_TEST_RUNTIME_DATABASE_APPROVAL=kerno_test_app@127.0.0.1:5432/kerno_test
+```
+
+- `.env.test` is never rewritten; the owner's two keys stay where they are.
+- **One source.** The pair comes from the environment or from this file.
+  Values in both, one variable without the other, or any other key in the
+  file fail the run. `KERNO_TEST_RUNTIME_ENV_FILE` overrides the path, under
+  the same rules, so the safety tests can point children at a missing file.
+- **Same endpoint, fixed role.** The runtime URL must name the owner URL's
+  literal host, port and database, and log in as exactly `kerno_test_app`;
+  the approval must equal that identity.
+- **Never the application's variable.** `DATABASE_URL` stays the owner URL. The
+  runtime URL reaches only the runtime fixtures, so no owner code path can
+  pass for runtime evidence.
+- **Only pytest reads it.** The migration wrapper (including `grant-runtime`
+  and `revoke-runtime`) never reads these settings and never connects as the
+  runtime.
+- `KERNO_MIGRATION_DATABASE_URL` (Alembic's owner URL) is refused in a test or
+  migration process if it names anything but the approved owner target, and
+  is otherwise pinned to it.
+
+### Two checks before any runtime connection
+
+1. **Static, at pytest startup:** the rules above. Nothing here depends on the
+   database, so correct settings always pass.
+2. **Live, on the first runtime connection, after the workflow lock is held:**
+   on a one-off connection as `kerno_test_app`, read-only — database
+   `kerno_test`; `session_user = current_user = kerno_test_app`; database
+   owner `kerno_test`; the disposable comment; a loopback address and the
+   approved port; no elevated attribute; no membership in either direction;
+   no owned object; no CREATE on the database or `public` and no TEMP; and
+   the owner's guard connection (by pid) visibly holding the workflow lock in
+   this same database. Only then are runtime connections allowed, only for
+   the pytest workflow, and each one still re-proves the lock.
+
+| Situation | Outcome |
+|---|---|
+| Runtime pair absent, no `--require-runtime-identity` | Each runtime test is skipped as "runtime identity not configured". Owner tests run. This is an owner regression run, **not** runtime acceptance |
+| Runtime pair absent, with `--require-runtime-identity` | Usage error before any test (nonzero) |
+| Unsafe or incomplete settings, an unsafe live identity, or a lock that is not proved | The run stops. Never a skip, never an owner fallback |
+| Settings valid but the login is refused (role missing, wrong password, CONNECT not granted yet) | Each runtime test fails as a "runtime identity setup failure"; the run is nonzero with or without the flag |
+| Final acceptance | `--require-live-database --require-runtime-identity`; both identities verified and **no test skipped at all** |
+
+`--require-runtime-identity` is accepted only together with
+`--require-live-database`. Configuration and zero skips are not enough under
+it: the run must also have held the owner's exclusive session and verified the
+runtime identity live, or it fails and the summary names the missing proof. A
+selection containing no runtime test therefore cannot pass under both flags.
+Nothing is opened at the end of a run to supply the proof.
+
+### Setup sequence (pending approval; run from the recorded branch SHA)
+
+1. **Approvals, in writing (owner):** the identity `kerno_test_app` confined to
+   `kerno_test`; the proposed no-FORCE exception on `users` and
+   `webhook_registrations`; the H1/H2 credential residual for synthetic test
+   use; the reviewed script revision.
+2. **Migration 029 and its round trip (owner, guarded):**
+
+   ```text
+   python scripts/migrate_test_database.py upgrade head
+   python scripts/migrate_test_database.py downgrade c4d5e6f7
+   python scripts/migrate_test_database.py upgrade head
+   python -m pytest --require-live-database
+   ```
+
+   No runtime settings exist yet, so runtime tests skip by name (row 1).
+3. **Create the role (administrator, own PowerShell console, hidden prompt):**
+
+   ```text
+   cd J:\Kerno
+   python scripts\provision_test_runtime_role.py
+   ```
+
+   It refuses, changing nothing, if `.env.test.runtime` or any runtime
+   variable (including `KERNO_TEST_RUNTIME_ENV_FILE`) already exists, the
+   file would be tracked, a redirecting libpq variable is set, the
+   administrator is not a superuser (on PostgreSQL 16+ a CREATEROLE creator is
+   implicitly made an ADMIN member of the role it creates), the owner role,
+   database, database owner or marker is not as provisioned, PUBLIC holds
+   CONNECT on `kerno_test`, or `kerno_test_app` already exists. It then writes `.env.test.runtime` first, runs exactly
+   `CREATE ROLE kerno_test_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
+   NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '<SCRAM verifier>'`, verifies the
+   attributes, zero memberships in either direction, zero owned objects, no
+   CONNECT yet, and that the stored verifier is exactly the one sent, and does
+   **not** try a runtime login. On a partial failure it reports what
+   exists and deletes nothing (file only: delete the file once the role is
+   confirmed absent; role created but unverified: the owner chooses `ALTER
+   ROLE kerno_test_app NOLOGIN` or an administrator `DROP ROLE`).
+4. **Grant (owner, guarded):**
+
+   ```text
+   python scripts/migrate_test_database.py grant-runtime
+   ```
+
+   One transaction as `kerno_test`, under the workflow lock: refuses unless
+   029 is applied and the role is valid; then `GRANT CONNECT ON DATABASE
+   kerno_test TO kerno_test_app` and `CALL
+   kerno_bootstrap.apply_runtime_grants('kerno_test_app', 'full')`, which
+   also writes the one-row record `kerno_bootstrap.runtime_assignment`; the
+   record is checked before commit. (The kickoff proposed recording the role
+   and profile with `ALTER DATABASE … SET kerno.runtime_role/profile`; a
+   non-superuser owner cannot set or reset custom placeholder settings, so
+   029 uses the owner-only record instead.) Between step 3 and this step any
+   pytest run ends as a runtime-setup failure (row 4).
+5. **Verify the runtime identity:**
+
+   ```text
+   python -m pytest tests/security/test_runtime_identity_boundary.py --require-live-database --require-runtime-identity
+   ```
+
+   `pg_hba.conf` is never edited; a refused login is reported, not worked
+   around.
+6. **Final acceptance:**
+
+   ```text
+   python -m pytest --require-live-database --require-runtime-identity
+   ```
+
+   Zero failures, errors and skips, recorded against the branch SHA, then
+   independent review before any merge.
+
+**Withdrawal:** owner `python scripts/migrate_test_database.py revoke-runtime`
+(calls `kerno_bootstrap.revoke_runtime_grants`, which clears the record, and
+revokes CONNECT, in one transaction); administrator `ALTER ROLE kerno_test_app
+NOLOGIN`; owner deletes `.env.test.runtime`. Nothing in the repository drops
+the role.
+
+The migration wrapper's exit code 2 now also covers an unmet `grant-runtime`
+or `revoke-runtime` precondition (029 missing, the role missing or invalid);
+exit 1 covers a failed grant change, which is rolled back whole.
+
+### Checkpoint B record (12 October 2026)
+
+Every command targeted `kerno_test@127.0.0.1:5432/kerno_test` (owner) or
+`kerno_test_app@127.0.0.1:5432/kerno_test` (runtime) through the guard; no
+credential was displayed.
+
+| Step | Who, at which SHA | Command | Exit | Result |
+|---|---|---|---|---|
+| Migration round trip | Claude Code, `98513958` | `migrate_test_database.py upgrade head`, `downgrade c4d5e6f7`, `upgrade head` | 0, 0, 0 | `c4d5e6f7` → `d5e6f7g8` → `c4d5e6f7` → `d5e6f7g8` |
+| Owner regression | Claude Code, `98513958` | `pytest --require-live-database -rs` | 0 | 2145 passed, 67 skipped, all "runtime identity not configured" (not runtime acceptance) |
+| Role creation | the owner, privately on MSI; script blob `16d0cbbe` | `python scripts\provision_test_runtime_role.py` | 0 | `.env.test.runtime` written; role created and verified (attributes, zero memberships either way, no owned objects, no CONNECT yet, stored verifier matches); no runtime login (reported by the owner, not observed by Claude Code) |
+| Grants | Claude Code, `98513958` | `migrate_test_database.py grant-runtime` | 0 | full profile applied as `kerno_test`; assignment recorded |
+| Boundary, run 1 | Claude Code, `98513958` | `pytest tests/security/test_runtime_identity_boundary.py --require-live-database --require-runtime-identity -rs` | **1** | 2 failed, 56 passed: both `DROP POLICY` probes were refused with SQLSTATE 42501 as intended, but PostgreSQL 18 says "must be owner of relation …" where the test expected "… of table …" |
+| Correction | `fb9f5068` | expected text of those two cases only | — | reviewed and approved by the owner |
+| Boundary, run 2 | Claude Code, `fb9f5068` | same command | 0 | 58 passed, 0 skipped |
+| Final acceptance | Claude Code, `fb9f5068` | `pytest --require-live-database --require-runtime-identity -rs` | 0 | **2212 passed, 0 failed, 0 errors, 0 skipped**; owner target and lock verified; runtime identity verified |
+
+Afterwards `migrate_test_database.py current` reported `d5e6f7g8`. Nothing was
+revoked, and the role, the assignment record and both settings files remain in
+place.
+
 ## What never happens
 
 - **Nothing in the repository drops, recreates or resets `kerno_test`.**
@@ -413,6 +588,10 @@ details.
   change. Renaming the database, or setting up a copy under another name,
   just makes every run refuse.
 - Nothing connects to `kerno_dev` from a test or test-migration process.
+- **The runtime role is never altered or dropped by the repository.** Only
+  `scripts/provision_test_runtime_role.py`, run by an administrator, creates
+  `kerno_test_app`, and it refuses if the role already exists. Grants change
+  only through `grant-runtime` and `revoke-runtime`.
 - Plain `alembic` and the application are unchanged. Only
   `scripts/migrate_test_database.py` targets `kerno_test`.
 - **Unsupported pytest options:** `pytest --noconftest`, and `--confcutdir`

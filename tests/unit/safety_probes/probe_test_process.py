@@ -8,13 +8,20 @@ What:  Reports, as one JSON line on stdout, whether DATABASE_URL survived the
        asks for the db_connection fixture, so a run can show whether that
        fixture skipped, failed or stopped, and a third skips itself so a
        --require-live-database run can show that a skipped live test fails
-       the run.
+       the run. A fourth uses nothing at all, so a run selecting only it
+       shows that both flags and valid settings are not enough to pass a
+       --require-runtime-identity run. A fifth, in TestRuntimeProbe, asks
+       for runtime_connection (C2) with the owner fixture replaced inside
+       that class only, so a run
+       with no database can show the runtime fixture's own decision — skipped
+       as "runtime identity not configured", failed, or stopped — and how its
+       skip is counted.
 Why:   TEST-SAFETY-001 must prove the boundary holds in a genuine pytest
        process, with conftest loading in its real order, not only in unit
        tests of the helper. The development URL used here is fake and points
        at 127.0.0.1 port 1, where nothing listens: if the guard ever failed,
        the attempt would end in OperationalError, never in a real database.
-How:   Run only as a child process by tests/unit/test_database_safety.py.
+How:   Run only as a child process by tests/unit/test_database_safety_processes.py.
        The file name does not match python_files, so an ordinary pytest run
        never collects it.
 """
@@ -84,3 +91,28 @@ def test_probe_skips_itself():
     # Selected only by the required-live accounting check, which must turn
     # this skip into a failed run.
     pytest.skip("probe integration test skipping on purpose")
+
+
+def test_probe_harmless_unit_check():
+    # Uses no fixture and touches no database: a run selecting only this
+    # cannot have verified anything, so --require-runtime-identity must fail it.
+    assert "kerno_test_app".startswith("kerno_test")
+
+
+class TestRuntimeProbe:
+    """The runtime fixture's own outcome in a real process, with no database behind the owner fixture.
+
+    runtime_connection asks for db_connection first, and offline that fixture
+    has nothing to reach, so it is replaced here — for this class only — by a
+    stand-in that touches nothing. The real ordering and the owner seeding are
+    proved in-process by tests/unit/test_database_safety_runtime.py. Not marked
+    by hand: conftest's collection hook must mark it runtime_identity.
+    """
+
+    @pytest.fixture
+    def db_connection(self):
+        """Stand in for the owner fixture without opening any connection."""
+        return None
+
+    def test_probe_runtime_fixture_outcome(self, runtime_connection):
+        assert runtime_connection is not None

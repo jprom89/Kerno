@@ -369,8 +369,8 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | A | `require_role` on six routes + structural sweep | `7b6738b` on `main` |
 | B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
-| C2 | Non-owner DB role + FORCE | **Held.** Own PR, real Postgres role |
-| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | **Preparation in progress** (documentation only) on branch `pilot/pilot-ready-001-c2-preparation`: `docs/pilot_readiness_kickoff.md`. Its PILOT-READY-002 contract, exceptions, risk acceptances and pilot exclusions are proposed, not approved. C2 implementation, role provisioning, deployment and pilot acceptance are not started and each needs approval. |
+| C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Checkpoint B passed on the unmerged branch** `pilot/pilot-ready-002-c2-runtime` (draft PR #19), pending independent review: final acceptance at `fb9f5068` with both identities verified, 2212 passed, 0 failed, 0 skipped (record in `docs/test_database_runbook.md` §8). On `kerno_test` only: 029 applied, `kerno_test_app` created by the owner and granted the full profile. The no-FORCE exception and the H1/H2 residuals are approved for synthetic disposable-test validation only, not for customer data. Not merged. |
+| PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | Merged via PR #17 (`a849708`): `docs/pilot_readiness_kickoff.md`. Its exceptions, risk acceptances and pilot exclusions are proposed, not approved. Deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
 
