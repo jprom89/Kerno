@@ -77,6 +77,15 @@ KERNO_TRUSTED_ORIGINS=http://localhost:3000
   That is deliberate fail-closed behaviour, not an outage to debug elsewhere:
   set the variable and restart `npm run dev`. Details and the full policy are
   in `docs/sec_remed_002_login_csrf.md`.
+- `KERNO_SERVING_PROFILE` (optional locally; PILOT-READY-003) is this Next.js
+  server's own serving profile, `full` or `pilot`, set the same way and never
+  as `NEXT_PUBLIC_*`. Unset or blank means `full`. Under `pilot` the dashboard
+  does not offer Recalculate and `/api/recalculate` answers 404 without calling
+  the API; any other value makes that route answer **503 "serving profile is
+  not configured"** and the dashboard home fail to render. The frontend and the
+  API are separate processes, each reading its own environment, and must be
+  deployed with the same value: the shared name does not make them match, and
+  the API (not this setting) is what actually refuses excluded routes.
 
 - Dashboard login: `http://localhost:3000/login`
 - Organisation: `dev-tenant` (required since KER-408 — an email is unique only
