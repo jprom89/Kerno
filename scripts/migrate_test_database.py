@@ -17,7 +17,7 @@ Why:   TEST-SAFETY-001. Plain `alembic` reads DATABASE_URL, and
 How:   python scripts/migrate_test_database.py current
        python scripts/migrate_test_database.py upgrade head
        python scripts/migrate_test_database.py downgrade <revision|base>
-       python scripts/migrate_test_database.py grant-runtime
+       python scripts/migrate_test_database.py grant-runtime [--profile full|pilot]
        python scripts/migrate_test_database.py revoke-runtime
        Exit codes: 0 done; 1 a migration or grant change failed; 2 bad
        command, bad destination, configuration missing or refused, or a
@@ -25,16 +25,20 @@ How:   python scripts/migrate_test_database.py current
        Offline tests: pytest tests/unit/test_database_safety_processes.py
        tests/unit/test_runtime_grant_commands.py -v
 
-Runtime grants (C2, PILOT-READY-002). grant-runtime and revoke-runtime run as
-the owner kerno_test under the same lock (purpose "migrate"), in one
-transaction, for the fixed role kerno_test_app and the fixed profile "full".
-grant-runtime refuses unless migration 029 is applied and the role exists
-with no elevated attribute, no membership in either direction and no owned
-object; it then grants CONNECT and calls
-kerno_bootstrap.apply_runtime_grants, which records the assignment.
-revoke-runtime calls kerno_bootstrap.revoke_runtime_grants and revokes
-CONNECT. Neither reads the runtime settings or connects as the runtime, and
-neither creates, alters or drops a role.
+Runtime grants (C2, PILOT-READY-002; profiles PILOT-READY-003). grant-runtime
+and revoke-runtime run as the owner kerno_test under the same lock (purpose
+"migrate"), in one transaction, for the fixed role kerno_test_app.
+grant-runtime applies the "full" profile unless --profile names "pilot"; no
+other value, role, target or SQL is accepted. It refuses unless migration 030
+(the profile lookup) is applied and the role exists with no elevated
+attribute, no membership in either direction and no owned object; it then
+grants CONNECT and calls kerno_bootstrap.apply_runtime_grants, which revokes
+the role's previous set, applies the chosen one and records the assignment.
+revoke-runtime (029 or later) calls kerno_bootstrap.revoke_runtime_grants and
+revokes CONNECT. Neither reads the runtime settings or connects as the
+runtime, and neither creates, alters or drops a role. A profile switch changes
+grants for every session of that login: stop the app first and restart it
+with the matching KERNO_SERVING_PROFILE after.
 """
 
 from __future__ import annotations
@@ -56,33 +60,45 @@ EXIT_TARGET_REFUSED = 3
 
 # "upgrade <revision>" and "downgrade <revision>" are a command and a destination.
 _COMMAND_AND_DESTINATION = 2
+# "grant-runtime --profile <profile>" is a command, an option and its value.
+_COMMAND_OPTION_AND_VALUE = 3
 
 _USAGE = (
     "usage: python scripts/migrate_test_database.py current\n"
     "       python scripts/migrate_test_database.py upgrade <revision|head>\n"
     "       python scripts/migrate_test_database.py downgrade <revision|base>\n"
-    "       python scripts/migrate_test_database.py grant-runtime\n"
+    "       python scripts/migrate_test_database.py grant-runtime [--profile full|pilot]\n"
     "       python scripts/migrate_test_database.py revoke-runtime"
 )
 
 GRANT_RUNTIME = "grant-runtime"
 REVOKE_RUNTIME = "revoke-runtime"
 RUNTIME_GRANT_COMMANDS = (GRANT_RUNTIME, REVOKE_RUNTIME)
-# The only profile this ticket applies. The pilot profile arrives only with
-# the serving profile that unmounts the routers it does not cover (G10).
-RUNTIME_PROFILE = "full"
-# Migration 029 creates the procedures these commands call.
+PROFILE_OPTION = "--profile"
+# The two grant profiles of docs/pilot_readiness_kickoff.md §1.4. Without
+# --profile, grant-runtime applies "full", exactly as it did before profiles.
+RUNTIME_PROFILES = ("full", "pilot")
+DEFAULT_RUNTIME_PROFILE = "full"
+# Migration 029 creates the procedures; 030 adds the profile lookup that the
+# grant set now includes, so grant-runtime needs 030 and revoke-runtime 029.
 RUNTIME_MECHANISM_REVISION = "d5e6f7g8"
+PROFILE_LOOKUP_REVISION = "e6f7g8h9"
 
 _RUNTIME_ROLE = test_database_safety.TEST_RUNTIME_ROLE_NAME
 _DATABASE = test_database_safety.TEST_DATABASE_NAME
 
-# Fixed statements: the role, database and profile are module constants and
-# plain lowercase identifiers, never input.
-GRANT_RUNTIME_STATEMENTS = (
-    f"GRANT CONNECT ON DATABASE {_DATABASE} TO {_RUNTIME_ROLE}",
-    f"CALL kerno_bootstrap.apply_runtime_grants('{_RUNTIME_ROLE}', '{RUNTIME_PROFILE}')",
-)
+# Fixed statements: the role, database and profiles are module constants and
+# plain lowercase identifiers, never input; --profile only chooses a key.
+GRANT_RUNTIME_STATEMENTS = {
+    "full": (
+        f"GRANT CONNECT ON DATABASE {_DATABASE} TO {_RUNTIME_ROLE}",
+        f"CALL kerno_bootstrap.apply_runtime_grants('{_RUNTIME_ROLE}', 'full')",
+    ),
+    "pilot": (
+        f"GRANT CONNECT ON DATABASE {_DATABASE} TO {_RUNTIME_ROLE}",
+        f"CALL kerno_bootstrap.apply_runtime_grants('{_RUNTIME_ROLE}', 'pilot')",
+    ),
+}
 REVOKE_RUNTIME_STATEMENTS = (
     f"CALL kerno_bootstrap.revoke_runtime_grants('{_RUNTIME_ROLE}')",
     f"REVOKE CONNECT ON DATABASE {_DATABASE} FROM {_RUNTIME_ROLE}",
@@ -93,6 +109,7 @@ SELECT to_regprocedure('kerno_bootstrap.apply_runtime_grants(name,text)') IS NOT
    AND to_regprocedure('kerno_bootstrap.revoke_runtime_grants(name)') IS NOT NULL
    AND to_regclass('kerno_bootstrap.runtime_assignment') IS NOT NULL
 """
+_PROFILE_LOOKUP_PRESENT_SQL = "SELECT to_regprocedure('kerno_bootstrap.session_runtime_profile()') IS NOT NULL"
 _RUNTIME_ROLE_SQL = """
 SELECT r.rolcanlogin, r.rolsuper, r.rolbypassrls, r.rolcreatedb, r.rolcreaterole, r.rolreplication,
        (SELECT count(*) FROM pg_auth_members AS m WHERE m.member = r.oid OR m.roleid = r.oid),
@@ -138,11 +155,20 @@ def main(argv: list[str], safety=test_database_safety) -> int:
 
 
 def parse_arguments(argv: list[str]) -> tuple[str, str | None] | None:
-    """Return (command, destination) for a well-formed command line, else None."""
+    """Return (command, argument) for a well-formed command line, else None.
+
+    The argument is the destination revision for upgrade and downgrade, the
+    allow-listed grant profile for grant-runtime ("full" when --profile is
+    absent), and None otherwise.
+    """
     if argv == ["current"]:
         return "current", None
-    if len(argv) == 1 and argv[0] in RUNTIME_GRANT_COMMANDS:
-        return argv[0], None
+    if argv == [REVOKE_RUNTIME]:
+        return REVOKE_RUNTIME, None
+    if argv == [GRANT_RUNTIME]:
+        return GRANT_RUNTIME, DEFAULT_RUNTIME_PROFILE
+    if len(argv) == _COMMAND_OPTION_AND_VALUE and argv[:2] == [GRANT_RUNTIME, PROFILE_OPTION]:
+        return (GRANT_RUNTIME, argv[2]) if argv[2] in RUNTIME_PROFILES else None
     if len(argv) == _COMMAND_AND_DESTINATION and argv[0] in ("upgrade", "downgrade") and argv[1]:
         return argv[0], argv[1]
     return None
@@ -153,10 +179,12 @@ def run_command(command: str, destination: str | None, session, target, safety) 
 
     The lock is re-proved before every step and after the last one, so a loss
     during the final revision is not reported as success. grant-runtime and
-    revoke-runtime are handed to run_runtime_grant_command.
+    revoke-runtime are handed to run_runtime_grant_command, with the parsed
+    profile for grant-runtime.
     """
     if command in RUNTIME_GRANT_COMMANDS:
-        return run_runtime_grant_command(command, session, target, safety)
+        profile = destination if command == GRANT_RUNTIME else DEFAULT_RUNTIME_PROFILE
+        return run_runtime_grant_command(command, session, target, safety, profile=profile)
     try:
         config = alembic_config()
         current = current_revision(target)
@@ -237,27 +265,32 @@ def plan_steps(config, command: str, current: str | None, destination: str) -> l
     return [revision.down_revision or "base" for revision in script.iterate_revisions(current, resolved)]
 
 
-def run_runtime_grant_command(command: str, session, target, safety, connect=None) -> int:
-    """Apply or withdraw the fixed runtime role's grants as the owner, in one transaction, under the held lock.
+def run_runtime_grant_command(
+    command: str, session, target, safety, connect=None, profile: str = DEFAULT_RUNTIME_PROFILE
+) -> int:
+    """Apply (grant-runtime, the given profile) or withdraw the fixed runtime role's grants as the owner.
 
-    Refuses (exit 2, nothing changed) unless migration 029 is in the current
-    revision's history and its objects exist, and, for grant-runtime, unless
-    the fixed role exists with no elevated attribute, membership or owned
-    object. The lock is re-proved before the commit and after it.
+    One transaction under the held lock. Refuses (exit 2, nothing changed) for
+    a profile outside the allow-list, unless the required migration is in the
+    current revision's history and its objects exist (030 for grant-runtime,
+    029 for revoke-runtime), and, for grant-runtime, unless the fixed role
+    exists with no elevated attribute, membership or owned object. The lock is
+    re-proved before the commit and after it.
     """
     try:
         session.assert_held()
-        if not includes_revision(alembic_config(), current_revision(target), RUNTIME_MECHANISM_REVISION):
-            raise RuntimeGrantRefused(
-                f"migration {RUNTIME_MECHANISM_REVISION} (029) is not applied; run 'upgrade head' first."
-            )
+        if profile not in RUNTIME_PROFILES:
+            raise RuntimeGrantRefused("the grant profile must be 'full' or 'pilot'.")
+        required = PROFILE_LOOKUP_REVISION if command == GRANT_RUNTIME else RUNTIME_MECHANISM_REVISION
+        if not includes_revision(alembic_config(), current_revision(target), required):
+            raise RuntimeGrantRefused(f"migration {required} is not applied; run 'upgrade head' first.")
         connection = open_owner_connection(target, command, connect)
         try:
-            change_runtime_grants(connection, command, session)
+            change_runtime_grants(connection, command, session, profile)
         finally:
             connection.close()
         session.assert_held()
-        say(f"done: {command} {_RUNTIME_ROLE} on {target.identity} (profile {RUNTIME_PROFILE})")
+        say(_done_message(command, target, profile))
         return EXIT_DONE
     except RuntimeGrantRefused as exc:
         say(f"refused: {exc}")
@@ -271,6 +304,13 @@ def run_runtime_grant_command(command: str, session, target, safety, connect=Non
     except Exception as exc:  # noqa: BLE001 — reported without credentials, then a non-zero exit
         say(f"{command} failed: {type(exc).__name__}: {safety.redact(str(exc), target)}")
         return EXIT_MIGRATION_FAILED
+
+
+def _done_message(command: str, target, profile: str) -> str:
+    """The success line: which command, role and target, and for grant-runtime which profile."""
+    if command == GRANT_RUNTIME:
+        return f"done: {command} {_RUNTIME_ROLE} on {target.identity} (profile {profile})"
+    return f"done: {command} {_RUNTIME_ROLE} on {target.identity}"
 
 
 def includes_revision(config, current: str | None, required: str) -> bool:
@@ -291,7 +331,7 @@ def open_owner_connection(target, command: str, connect=None):
     return connect(target.url, application_name=f"kerno-test-guard:{command}")
 
 
-def change_runtime_grants(connection, command: str, session) -> None:
+def change_runtime_grants(connection, command: str, session, profile: str = DEFAULT_RUNTIME_PROFILE) -> None:
     """Check preconditions, run the fixed statements, verify the assignment, re-prove the lock, then commit.
 
     Any failure rolls the whole transaction back, so a refusal or an error
@@ -300,12 +340,12 @@ def change_runtime_grants(connection, command: str, session) -> None:
     connection.autocommit = False
     cursor = connection.cursor()
     try:
-        require_runtime_mechanism(cursor)
+        require_runtime_mechanism(cursor, command)
         require_runtime_role(cursor, command)
-        statements = GRANT_RUNTIME_STATEMENTS if command == GRANT_RUNTIME else REVOKE_RUNTIME_STATEMENTS
+        statements = GRANT_RUNTIME_STATEMENTS[profile] if command == GRANT_RUNTIME else REVOKE_RUNTIME_STATEMENTS
         for statement in statements:
             cursor.execute(statement)
-        require_assignment(cursor, command)
+        require_assignment(cursor, command, profile)
         session.assert_held()
         connection.commit()
     except BaseException:
@@ -313,11 +353,16 @@ def change_runtime_grants(connection, command: str, session) -> None:
         raise
 
 
-def require_runtime_mechanism(cursor) -> None:
-    """Refuse unless migration 029's procedures and assignment record exist."""
+def require_runtime_mechanism(cursor, command: str = GRANT_RUNTIME) -> None:
+    """Refuse unless 029's procedures and assignment record exist, and for grant-runtime 030's profile lookup too."""
     cursor.execute(_MECHANISM_PRESENT_SQL)
     if not cursor.fetchone()[0]:
         raise RuntimeGrantRefused("the kerno_bootstrap grant procedures are missing; apply migration 029 first.")
+    if command != GRANT_RUNTIME:
+        return
+    cursor.execute(_PROFILE_LOOKUP_PRESENT_SQL)
+    if not cursor.fetchone()[0]:
+        raise RuntimeGrantRefused("the kerno_bootstrap profile lookup is missing; apply migration 030 first.")
 
 
 def require_runtime_role(cursor, command: str) -> None:
@@ -339,11 +384,11 @@ def require_runtime_role(cursor, command: str) -> None:
         raise RuntimeGrantRefused(f"role {_RUNTIME_ROLE} is not a valid runtime role: {', '.join(problems)}.")
 
 
-def require_assignment(cursor, command: str) -> None:
+def require_assignment(cursor, command: str, profile: str = DEFAULT_RUNTIME_PROFILE) -> None:
     """Refuse to commit unless the assignment record now says exactly what this command did."""
     cursor.execute(_ASSIGNMENT_SQL)
     rows = cursor.fetchall()
-    expected = [(_RUNTIME_ROLE, RUNTIME_PROFILE)] if command == GRANT_RUNTIME else []
+    expected = [(_RUNTIME_ROLE, profile)] if command == GRANT_RUNTIME else []
     if [tuple(row) for row in rows] != expected:
         raise RuntimeGrantRefused(f"the runtime assignment after {command} is not what was applied; rolled back.")
 

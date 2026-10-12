@@ -497,3 +497,12 @@ EXAMPLE_ALLOWED_ORIGINS: frozenset[str] = frozenset(
 # Migration 026 writes the same number into ck_dora_contracts_reference_length;
 # tests/unit/models/test_dora_contract_models.py fails on drift.
 CONTRACT_REFERENCE_MAX_CHARACTERS: int = 255
+
+# ---------------------------------------------------------------------------
+# Serving profile (PILOT-READY-003)
+# ---------------------------------------------------------------------------
+
+# The exit status of a scheduled job that refuses to run because the serving
+# profile excludes it (or the profile is missing or invalid). Nonzero so the
+# platform scheduler reports it, and distinct from 1, an ordinary crash.
+SCHEDULED_JOB_REFUSED_EXIT_CODE: int = 2
