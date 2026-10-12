@@ -47,7 +47,9 @@ the gitignored .env.test.runtime). They are marked ``runtime_identity`` and
 follow one behaviour table (docs/pilot_readiness_kickoff.md §2.3 item 8):
 not configured skips them by name, or fails under --require-runtime-identity;
 configured but refused at login fails them (a runtime-setup failure, nonzero);
-anything unsafe stops the run. Owner fixtures keep db_connection, and
+anything unsafe stops the run. A --require-runtime-identity run passes only if
+it skipped nothing, held the owner's exclusive session and verified the
+runtime identity live. Owner fixtures keep db_connection, and
 DATABASE_URL stays the owner URL, so nothing an owner path does can count as
 runtime evidence.
 """
@@ -88,6 +90,9 @@ _RUNTIME_FIXTURES = frozenset({"runtime_connection", "runtime_pool"})
 RUNTIME_POOL_MAX_CONNECTIONS = 4
 # Set when the lock could not be re-proved at the end of the session.
 _FINAL_EXCLUSIVITY_PROBLEMS: list[str] = []
+# Live proof a --require-runtime-identity run never completed (owner session,
+# runtime verification); any entry fails an otherwise passing run.
+_MISSING_REQUIRED_PROOF: list[str] = []
 
 # Fixed deterministic UUIDv4 identifiers for the two test tenants.
 # Using constants (not uuid4()) makes test failure messages readable:
@@ -508,10 +513,14 @@ def pytest_runtest_logreport(report) -> None:
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:
-    """Re-prove the lock one last time, and fail a required live run in which an integration test skipped.
+    """Re-prove the lock one last time, then fail a required run that skipped a test or never completed its live proof.
 
     Every fixture cleanup has run by now. If exclusivity cannot be proved,
     the last cleanups ran without it, so the run is not reported as a success.
+    Under --require-runtime-identity a passing run must also have held the
+    owner's exclusive session and verified the runtime identity live; that is
+    read from the recorded state, and no connection is opened here to supply
+    it. An outcome that is already nonzero is never changed.
     """
     exclusive = _TEST_DATABASE.session
     if exclusive is not None:
@@ -521,8 +530,24 @@ def pytest_sessionfinish(session, exitstatus) -> None:
             _FINAL_EXCLUSIVITY_PROBLEMS.append(str(exc))
             session.exitstatus = pytest.ExitCode.INTERRUPTED
             return
-    if exitstatus == pytest.ExitCode.OK and _required_run_skipped_tests():
+    _MISSING_REQUIRED_PROOF[:] = _missing_required_proof(_TEST_DATABASE)
+    if exitstatus == pytest.ExitCode.OK and (_MISSING_REQUIRED_PROOF or _required_run_skipped_tests()):
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def _missing_required_proof(state) -> list[str]:
+    """Under --require-runtime-identity, name each live proof this run never completed; empty without the flag."""
+    if not _REQUIRE_RUNTIME["enabled"]:
+        return []
+    missing = []
+    if state.session is None:
+        missing.append(
+            "the owner's exclusive test-database session was never opened, so the owner target was never "
+            "verified live"
+        )
+    if not state.runtime_verified:
+        missing.append("the runtime identity was never verified live (no runtime-identity test reached it)")
+    return missing
 
 
 def _required_run_skipped_tests() -> list[str]:
@@ -544,6 +569,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     terminalreporter.write_line(_runtime_identity_summary(), red=bool(_TEST_DATABASE.runtime_not_ready))
     for problem in _FINAL_EXCLUSIVITY_PROBLEMS:
         terminalreporter.write_line(f"FAILED: test database exclusivity lost at the end of the run: {problem}", red=True)
+    for problem in _MISSING_REQUIRED_PROOF:
+        terminalreporter.write_line(f"FAILED: required runtime-identity run incomplete: {problem}", red=True)
     skipped = _required_run_skipped_tests()
     if skipped:
         if _REQUIRE_RUNTIME["enabled"]:

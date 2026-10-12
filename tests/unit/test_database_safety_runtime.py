@@ -1013,18 +1013,96 @@ def test_each_skip_is_counted_once_under_its_own_kind(monkeypatch, keywords, buc
     assert buckets.pop(bucket) == ["probe::test"] and list(buckets.values()) == [[], []]
 
 
+_NEVER_VERIFIED = "the runtime identity was never verified live (no runtime-identity test reached it)"
+_NO_SESSION = "exclusive test-database session was never opened"
+
+
+def _required_runtime_run(monkeypatch, state) -> None:
+    """Isolate conftest for a --require-live-database --require-runtime-identity run over state."""
+    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=state)
+
+
+def _configured_but_unproved() -> safety.ProcessState:
+    """Both identities configured and valid, but no session opened and nothing verified."""
+    return safety.ProcessState(target=make_target(), runtime_target=make_runtime_target())
+
+
 @pytest.mark.parametrize("keywords, bucket", _SKIP_KINDS)
-def test_under_the_runtime_flag_any_skip_turns_a_passing_run_into_a_failure(monkeypatch, keywords, bucket):
-    isolate_conftest(monkeypatch, require_live=True, require_runtime=True)
+def test_under_the_runtime_flag_any_skip_turns_a_passing_run_into_a_failure(workflow, monkeypatch, keywords, bucket):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state)
     conftest.pytest_runtest_logreport(_report(keywords))
     assert _finish() == pytest.ExitCode.TESTS_FAILED
+    assert conftest._MISSING_REQUIRED_PROOF == []
 
 
-def test_under_the_runtime_flag_a_run_without_skips_stays_ok_and_a_failure_stays_a_failure(monkeypatch):
-    isolate_conftest(monkeypatch, require_live=True, require_runtime=True)
-    assert _finish() == pytest.ExitCode.OK
+def test_under_the_runtime_flag_a_verified_run_without_skips_passes_and_a_failure_stays_a_failure(workflow, monkeypatch):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state)
+    assert _finish() == pytest.ExitCode.OK and conftest._MISSING_REQUIRED_PROOF == []
     conftest.pytest_runtest_logreport(_report({}))
     assert _finish(pytest.ExitCode.TESTS_FAILED) == pytest.ExitCode.TESTS_FAILED
+
+
+def test_under_the_runtime_flag_an_unverified_runtime_identity_fails_a_run_without_skips(workflow, monkeypatch):
+    _required_runtime_run(monkeypatch, workflow.state)
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    assert conftest._MISSING_REQUIRED_PROOF == [_NEVER_VERIFIED]
+
+
+def test_under_the_runtime_flag_a_run_that_never_opened_the_exclusive_session_fails(monkeypatch):
+    state = safety.ProcessState(target=make_target(), runtime_target=make_runtime_target(), runtime_verified=True)
+    _required_runtime_run(monkeypatch, state)
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    assert len(conftest._MISSING_REQUIRED_PROOF) == 1 and _NO_SESSION in conftest._MISSING_REQUIRED_PROOF[0]
+
+
+def test_under_the_runtime_flag_configured_targets_alone_name_both_missing_proofs(monkeypatch):
+    _required_runtime_run(monkeypatch, _configured_but_unproved())
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    missing = conftest._MISSING_REQUIRED_PROOF
+    assert len(missing) == 2 and _NO_SESSION in missing[0] and missing[1] == _NEVER_VERIFIED
+
+
+def test_under_the_runtime_flag_a_verified_run_whose_lock_was_lost_is_interrupted(workflow, monkeypatch):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state)
+    workflow.server.locks.clear()
+    assert _finish() == pytest.ExitCode.INTERRUPTED
+    assert conftest._FINAL_EXCLUSIVITY_PROBLEMS
+
+
+@pytest.mark.parametrize(
+    "prior",
+    [pytest.ExitCode.TESTS_FAILED, pytest.ExitCode.INTERRUPTED, pytest.ExitCode.USAGE_ERROR,
+     pytest.ExitCode.NO_TESTS_COLLECTED],
+    ids=["failed", "interrupted", "usage error", "nothing collected"],
+)
+def test_missing_live_proof_is_reported_but_never_replaces_a_nonzero_outcome(monkeypatch, prior):
+    _required_runtime_run(monkeypatch, _configured_but_unproved())
+    assert _finish(prior) == prior
+    assert len(conftest._MISSING_REQUIRED_PROOF) == 2
+
+
+@pytest.mark.parametrize("require_live", [False, True], ids=["no flag", "live flag only"])
+def test_without_the_runtime_flag_no_live_proof_is_required(monkeypatch, require_live):
+    isolate_conftest(monkeypatch, require_live=require_live, state=_configured_but_unproved())
+    assert _finish() == pytest.ExitCode.OK and conftest._MISSING_REQUIRED_PROOF == []
+
+
+def test_finishing_a_required_run_opens_no_connection_to_supply_missing_proof(workflow, monkeypatch):
+    def must_not_verify(state=None, connect=None):
+        """Fail loudly: the finish hook must read recorded state, never prove anything itself."""
+        raise AssertionError("the finish hook tried to verify the runtime identity")
+
+    monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _must_not_reach_libpq)
+    monkeypatch.setattr(safety, "verify_runtime_identity", must_not_verify)
+    _required_runtime_run(monkeypatch, workflow.state)
+    already_run = len(workflow.guard.executed)
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    # The only database work at finish is the existing guard connection re-proving its lock.
+    at_finish = workflow.guard.executed[already_run:]
+    assert at_finish and all("pid = pg_backend_pid()" in text for text in at_finish)
 
 
 @pytest.mark.parametrize(
@@ -1285,6 +1363,18 @@ def test_the_terminal_summary_states_the_runtime_identity_without_credentials(mo
     conftest.pytest_terminal_summary(reporter, pytest.ExitCode.OK, None)
     assert (expected, red) in reporter.lines
     assert _credential_free("\n".join(entry[0] for entry in reporter.lines))
+
+
+def test_the_summary_names_each_live_proof_a_required_runtime_run_never_completed(monkeypatch):
+    _required_runtime_run(monkeypatch, _configured_but_unproved())
+    _finish()
+    reporter = _Reporter()
+    conftest.pytest_terminal_summary(reporter, pytest.ExitCode.TESTS_FAILED, None)
+    incomplete = [line for line, red in reporter.lines if red and "required runtime-identity run incomplete" in line]
+    assert incomplete == [
+        f"FAILED: required runtime-identity run incomplete: {problem}" for problem in conftest._MISSING_REQUIRED_PROOF
+    ]
+    assert len(incomplete) == 2 and _credential_free("\n".join(incomplete))
 
 
 def test_the_summary_under_the_runtime_flag_lists_every_skip_and_allows_none(monkeypatch):

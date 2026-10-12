@@ -4,8 +4,8 @@ What:  At startup, reads the identity of the application's own pooled
        connection (session_user, its role attributes, its memberships, and
        whether it owns the database or any object in it) and refuses to start
        outside development if that identity is superuser, BYPASSRLS,
-       CREATEROLE or CREATEDB, is a member of another role, or owns the
-       database or any object. It also refuses when KERNO_MIGRATION_DATABASE_URL
+       CREATEROLE, CREATEDB or REPLICATION, is a member of another role, or
+       owns the database or any object. It also refuses when KERNO_MIGRATION_DATABASE_URL
        (the owner/migrator URL) is present in the API's environment, and when
        the identity cannot be read at all. In development every problem is
        logged as a warning instead.
@@ -37,7 +37,7 @@ MIGRATION_DATABASE_URL_VARIABLE = "KERNO_MIGRATION_DATABASE_URL"
 # (dbid 0 — databases, tablespaces), which covers "owns the database".
 _IDENTITY_SQL = """
 SELECT session_user,
-       roles.rolsuper, roles.rolbypassrls, roles.rolcreaterole, roles.rolcreatedb,
+       roles.rolsuper, roles.rolbypassrls, roles.rolcreaterole, roles.rolcreatedb, roles.rolreplication,
        (SELECT count(*) FROM pg_auth_members WHERE member = roles.oid),
        databases.datdba = roles.oid,
        (SELECT count(*) FROM pg_shdepend
@@ -57,6 +57,7 @@ class ConnectionIdentity:
     bypass_rls: bool
     create_role: bool
     create_database: bool
+    replication: bool
     memberships: int
     owns_database: bool
     owned_objects: int
@@ -65,7 +66,7 @@ class ConnectionIdentity:
 def identity_problems(identity: ConnectionIdentity) -> list[str]:
     """Return every way the identity is an owner or elevated login (empty for a restricted runtime)."""
     problems = []
-    for attribute in ("superuser", "bypass_rls", "create_role", "create_database"):
+    for attribute in ("superuser", "bypass_rls", "create_role", "create_database", "replication"):
         if getattr(identity, attribute):
             problems.append(f"the login has the {attribute} attribute")
     if identity.memberships:

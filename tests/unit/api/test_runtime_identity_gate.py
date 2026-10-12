@@ -36,7 +36,7 @@ _GATE_LOGGER = "src.api.runtime_identity"
 
 RESTRICTED = runtime_identity.ConnectionIdentity(
     session_user="kerno_test_app", superuser=False, bypass_rls=False, create_role=False,
-    create_database=False, memberships=0, owns_database=False, owned_objects=0,
+    create_database=False, replication=False, memberships=0, owns_database=False, owned_objects=0,
 )
 
 # One elevated or owning property at a time, and the phrase the problem must contain.
@@ -45,6 +45,8 @@ ELEVATIONS = [
     pytest.param({"bypass_rls": True}, "bypass_rls", id="bypass_rls"),
     pytest.param({"create_role": True}, "create_role", id="create_role"),
     pytest.param({"create_database": True}, "create_database", id="create_database"),
+    # An otherwise restricted, non-owning login that may stream the whole cluster's WAL.
+    pytest.param({"replication": True}, "replication", id="replication"),
     pytest.param({"memberships": 1}, "member of another role", id="membership"),
     pytest.param({"owns_database": True}, "owns the database", id="owns_database"),
     pytest.param({"owned_objects": 3}, "owns database objects", id="owned_objects"),
@@ -110,7 +112,7 @@ def test_each_elevated_or_owning_property_is_named(change, phrase):
 def test_every_problem_is_named_when_all_are_present():
     everything = dataclasses.replace(
         RESTRICTED, superuser=True, bypass_rls=True, create_role=True, create_database=True,
-        memberships=2, owns_database=True, owned_objects=9,
+        replication=True, memberships=2, owns_database=True, owned_objects=9,
     )
     assert len(runtime_identity.identity_problems(everything)) == len(ELEVATIONS)
 
@@ -251,7 +253,10 @@ class _FakePool:
         self.connection.calls.append("putconn")
 
 
-_IDENTITY_ROW = ("kerno_test_app", False, False, False, False, 0, False, 0)
+# Columns in _IDENTITY_SQL order: session_user, rolsuper, rolbypassrls,
+# rolcreaterole, rolcreatedb, rolreplication, memberships, owns database, owned objects.
+_IDENTITY_ROW = ("kerno_test_app", False, False, False, False, False, 0, False, 0)
+_REPLICATION_ROW = ("kerno_test_app", False, False, False, False, True, 0, False, 0)
 
 
 def _lend(monkeypatch, connection) -> None:
@@ -273,6 +278,13 @@ def test_read_connection_identity_reads_read_only_and_returns_the_connection(mon
         "getconn", "execute:SET TRANSACTION READ ONLY", f"execute:{runtime_identity._IDENTITY_SQL}",
         "fetchone", "rollback", "putconn",
     ]
+
+
+def test_the_replication_column_is_read_into_the_replication_attribute_alone(monkeypatch):
+    _lend(monkeypatch, _FakeRawConnection([], _REPLICATION_ROW))
+    identity = runtime_identity.read_connection_identity()
+    assert identity == dataclasses.replace(RESTRICTED, replication=True)
+    assert runtime_identity.identity_problems(identity) == ["the login has the replication attribute"]
 
 
 def test_a_failing_identity_query_still_rolls_back_and_returns_the_connection(monkeypatch):
@@ -307,6 +319,7 @@ def test_the_identity_query_is_a_single_catalog_read():
     assert ";" not in query
     for catalog in ("pg_roles", "pg_auth_members", "pg_shdepend", "pg_database"):
         assert catalog in query
+    assert "roles.rolcreatedb, roles.rolreplication," in query
     assert "dbid IN (0, databases.oid)" in query
 
 

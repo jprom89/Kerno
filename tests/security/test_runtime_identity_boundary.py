@@ -25,6 +25,7 @@ How:   python -m pytest tests/security/test_runtime_identity_boundary.py --requi
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import psycopg2
@@ -132,7 +133,9 @@ FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
 WHERE n.nspname = 'kerno_bootstrap'
 """
 # PUBLIC is grantee 0 in aclexplode. acldefault supplies the implicit ACL when
-# the stored one is NULL — a NULL function ACL means PUBLIC may EXECUTE.
+# the stored one is NULL — a NULL function ACL means PUBLIC may EXECUTE. Its
+# first argument is PostgreSQL's internal "char": a quoted one-letter literal
+# resolves to it, but a CASE of literals resolves to text, so that one is cast.
 _PUBLIC_ACL_ENTRIES_SQL = """
 SELECT 'routine ' || p.oid::regprocedure::text, acl.privilege_type
 FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace,
@@ -150,7 +153,8 @@ WHERE d.datname = current_database() AND acl.grantee = 0
 UNION ALL
 SELECT 'relation ' || n.nspname || '.' || c.relname, acl.privilege_type
 FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace,
-     aclexplode(coalesce(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END, c.relowner))) AS acl
+     aclexplode(coalesce(c.relacl, acldefault(
+         (CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END)::"char", c.relowner))) AS acl
 WHERE n.nspname IN ('public', 'kerno_bootstrap') AND acl.grantee = 0
 """
 
@@ -445,6 +449,14 @@ def test_h2_returns_the_secret_for_an_exact_id_only_the_documented_full_profile_
 
 
 # ── PUBLIC ACL entries and the effective-privilege matrix ────────────────────
+
+
+def test_every_acldefault_call_passes_the_internal_char_type():
+    # Offline guard on the SQL text; PostgreSQL's own acceptance of it is Checkpoint B evidence.
+    first_arguments = re.findall(r"acldefault\(\s*(.+?),\s*\w+\.\w+\)", _PUBLIC_ACL_ENTRIES_SQL, re.DOTALL)
+    assert len(first_arguments) == 4
+    for argument in first_arguments:
+        assert re.fullmatch(r"'[a-z]'", argument) or argument.endswith('::"char"'), argument
 
 
 def test_public_holds_nothing_on_the_helpers_procedures_bootstrap_schema_database_or_relations(runtime_connection):

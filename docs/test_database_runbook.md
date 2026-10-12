@@ -465,7 +465,11 @@ KERNO_TEST_RUNTIME_DATABASE_APPROVAL=kerno_test_app@127.0.0.1:5432/kerno_test
 | Final acceptance | `--require-live-database --require-runtime-identity`; both identities verified and **no test skipped at all** |
 
 `--require-runtime-identity` is accepted only together with
-`--require-live-database`.
+`--require-live-database`. Configuration and zero skips are not enough under
+it: the run must also have held the owner's exclusive session and verified the
+runtime identity live, or it fails and the summary names the missing proof. A
+selection containing no runtime test therefore cannot pass under both flags.
+Nothing is opened at the end of a run to supply the proof.
 
 ### Setup sequence (pending approval; run from the recorded branch SHA)
 

@@ -8,8 +8,11 @@ What:  Reports, as one JSON line on stdout, whether DATABASE_URL survived the
        asks for the db_connection fixture, so a run can show whether that
        fixture skipped, failed or stopped, and a third skips itself so a
        --require-live-database run can show that a skipped live test fails
-       the run. A fourth, in TestRuntimeProbe, asks for runtime_connection
-       (C2) with the owner fixture replaced inside that class only, so a run
+       the run. A fourth uses nothing at all, so a run selecting only it
+       shows that both flags and valid settings are not enough to pass a
+       --require-runtime-identity run. A fifth, in TestRuntimeProbe, asks
+       for runtime_connection (C2) with the owner fixture replaced inside
+       that class only, so a run
        with no database can show the runtime fixture's own decision — skipped
        as "runtime identity not configured", failed, or stopped — and how its
        skip is counted.
@@ -88,6 +91,12 @@ def test_probe_skips_itself():
     # Selected only by the required-live accounting check, which must turn
     # this skip into a failed run.
     pytest.skip("probe integration test skipping on purpose")
+
+
+def test_probe_harmless_unit_check():
+    # Uses no fixture and touches no database: a run selecting only this
+    # cannot have verified anything, so --require-runtime-identity must fail it.
+    assert "kerno_test_app".startswith("kerno_test")
 
 
 class TestRuntimeProbe:

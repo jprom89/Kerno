@@ -64,7 +64,7 @@ def _restricted_runtime_identity() -> runtime_identity.ConnectionIdentity:
     """A non-owner login with no elevated attribute, membership or owned object."""
     return runtime_identity.ConnectionIdentity(
         session_user="kerno_app", superuser=False, bypass_rls=False, create_role=False,
-        create_database=False, memberships=0, owns_database=False, owned_objects=0,
+        create_database=False, replication=False, memberships=0, owns_database=False, owned_objects=0,
     )
 
 

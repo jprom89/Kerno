@@ -682,7 +682,7 @@ def test_dotenv_loading_stays_disabled_in_this_test_process_after_the_app_is_imp
 
 
 def isolate_skip_accounting(monkeypatch, require_live: bool = False, require_runtime: bool = False) -> None:
-    """Give conftest fresh skip lists and flags, so a hook test never writes into the real run's accounting.
+    """Give conftest fresh skip lists, flags and missing-proof record, so a hook test never writes into the real run's.
 
     A fake skip left in the real module-level lists would fail a real
     --require-live-database or --require-runtime-identity run.
@@ -692,6 +692,7 @@ def isolate_skip_accounting(monkeypatch, require_live: bool = False, require_run
     monkeypatch.setattr(conftest, "_OTHER_SKIPS", [])
     monkeypatch.setattr(conftest, "_REQUIRE_LIVE", {"enabled": require_live})
     monkeypatch.setattr(conftest, "_REQUIRE_RUNTIME", {"enabled": require_runtime})
+    monkeypatch.setattr(conftest, "_MISSING_REQUIRED_PROOF", [])
 
 
 class _Config:

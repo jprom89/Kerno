@@ -262,6 +262,28 @@ def test_runtime_settings_naming_another_role_fail_the_run_before_any_test(tmp_p
 
 
 @pytest.mark.slow
+def test_both_flags_and_valid_settings_cannot_pass_a_run_that_verified_nothing(tmp_path):
+    # Every setting is syntactically valid, so configuration passes; the one
+    # selected test uses no fixture, so no session opens and nothing is
+    # verified. Nothing listens on port 1, and nothing tries to connect.
+    overrides = {
+        **_UNREACHABLE_SETTINGS,
+        safety.TEST_RUNTIME_DATABASE_URL_VARIABLE: _UNREACHABLE_RUNTIME_URL,
+        safety.TEST_RUNTIME_DATABASE_APPROVAL_VARIABLE: "kerno_test_app@127.0.0.1:1/kerno_test",
+    }
+    completed = _pytest_probe(
+        tmp_path, overrides, "harmless", "--require-live-database", "--require-runtime-identity"
+    )
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.TESTS_FAILED, output[-2000:]
+    assert "1 passed" in completed.stdout and not _skip_reported(output)
+    assert "FAILED: required runtime-identity run incomplete: the owner's exclusive test-database session" in output
+    assert "FAILED: required runtime-identity run incomplete: the runtime identity was never verified live" in output
+    assert "runtime identity: kerno_test_app@127.0.0.1:1/kerno_test configured, not used in this run" in output
+    assert SECRET not in output
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "owner, flags",
     [({}, ()), (_UNREACHABLE_SETTINGS, ("--require-live-database",))],
