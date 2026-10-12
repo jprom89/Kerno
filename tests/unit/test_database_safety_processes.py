@@ -15,7 +15,11 @@ What:  Runs genuine pytest processes (conftest loading in its real order) and
        runtime settings a runtime test is skipped by name and the run passes;
        an inherited KERNO_MIGRATION_DATABASE_URL naming anything but the owner
        target stops pytest and the wrapper before any connection; and the
-       wrapper never reads the runtime settings.
+       wrapper never reads the runtime settings. For PILOT-READY-003:
+       --runtime-profile pilot runs only the pilot_profile-marked probe and
+       reports the rest as deselected, a default run deselects that probe and
+       never skips it, an unknown profile is a usage error, and the wrapper
+       refuses a grant profile outside its allow-list before any bootstrap.
 Why:   A boundary that is only unit-tested could still be bypassed by the
        real startup order. Every URL a child sees is fake and points at
        127.0.0.1 port 1, where nothing listens, and children never inherit a
@@ -61,6 +65,11 @@ _STRIPPED_FROM_CHILDREN = frozenset({
 })
 _RUNTIME_PROBE = "runtime_fixture_outcome"
 _UNREACHABLE_RUNTIME_URL = f"postgresql://kerno_test_app:{SECRET}@127.0.0.1:1/kerno_test"
+# The probe marked pilot_profile, and the line it prints when it runs.
+_PILOT_PROBE = "test_probe_pilot_marked_check"
+_PILOT_PROBE_OUTPUT = "KERNO_PILOT_PROBE_RAN"
+# Every test in the probe file; a pilot run keeps exactly one of them.
+_PROBE_TEST_COUNT = 6
 
 
 def _child_environment(tmp_path, overrides: dict | None) -> dict:
@@ -88,6 +97,12 @@ def _run(command: list[str], tmp_path, overrides: dict | None = None) -> subproc
 def _pytest_probe(tmp_path, overrides: dict | None, selection: str, *extra: str) -> subprocess.CompletedProcess:
     """Run the probe file in a fresh pytest process, selecting tests by keyword."""
     command = [sys.executable, "-m", "pytest", str(_PROBE), "-s", "-rs", "-p", "no:cacheprovider", "-k", selection, *extra]
+    return _run(command, tmp_path, overrides)
+
+
+def _pytest_probe_file(tmp_path, overrides: dict | None, *extra: str) -> subprocess.CompletedProcess:
+    """Run the whole probe file in a fresh pytest process with no keyword selection, listing every outcome (-rA)."""
+    command = [sys.executable, "-m", "pytest", str(_PROBE), "-s", "-rA", "-p", "no:cacheprovider", *extra]
     return _run(command, tmp_path, overrides)
 
 
@@ -279,6 +294,10 @@ def test_both_flags_and_valid_settings_cannot_pass_a_run_that_verified_nothing(t
     assert "1 passed" in completed.stdout and not _skip_reported(output)
     assert "FAILED: required runtime-identity run incomplete: the owner's exclusive test-database session" in output
     assert "FAILED: required runtime-identity run incomplete: the runtime identity was never verified live" in output
+    assert (
+        "FAILED: required runtime-identity run incomplete: the runtime login's assigned grant profile was never "
+        "verified as 'full' (--runtime-profile)"
+    ) in output
     assert "runtime identity: kerno_test_app@127.0.0.1:1/kerno_test configured, not used in this run" in output
     assert SECRET not in output
 
@@ -298,6 +317,48 @@ def test_without_runtime_settings_a_runtime_test_skips_by_name_and_the_run_passe
     skip_lines = [line for line in completed.stdout.splitlines() if line.startswith("SKIPPED")]
     assert len(skip_lines) == 1 and skip_lines[0].endswith("runtime identity not configured")
     assert "runtime identity: not configured" in completed.stdout and SECRET not in output
+
+
+# ── --runtime-profile (PILOT-READY-003) in real pytest processes ────────────
+
+
+def _passed_tests(completed: subprocess.CompletedProcess) -> list[str]:
+    """The node ids pytest listed as PASSED in its -rA summary."""
+    return [line.split(" ", 1)[1] for line in completed.stdout.splitlines() if line.startswith("PASSED ")]
+
+
+@pytest.mark.slow
+def test_a_pilot_run_selects_only_the_pilot_marked_probe_and_deselects_the_rest(tmp_path):
+    completed = _pytest_probe_file(tmp_path, {}, "--runtime-profile", "pilot")
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.OK, output[-2000:]
+    assert f"1 passed, {_PROBE_TEST_COUNT - 1} deselected" in completed.stdout and not _skip_reported(output)
+    passed = _passed_tests(completed)
+    assert len(passed) == 1 and passed[0].endswith(f"::{_PILOT_PROBE}")
+    assert _PILOT_PROBE_OUTPUT in completed.stdout and "KERNO_PROBE_REPORT" not in completed.stdout
+    assert SECRET not in output
+
+
+@pytest.mark.slow
+def test_a_default_run_deselects_the_pilot_marked_probe_and_never_skips_it(tmp_path):
+    completed = _pytest_probe_file(tmp_path, {})
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.OK, output[-2000:]
+    # Without a database the two live probes and the runtime probe skip; the pilot probe is the one deselected.
+    assert "2 passed, 3 skipped, 1 deselected" in completed.stdout
+    assert _PILOT_PROBE not in completed.stdout and _PILOT_PROBE_OUTPUT not in completed.stdout
+    assert all(not test.endswith(f"::{_PILOT_PROBE}") for test in _passed_tests(completed))
+    assert SECRET not in output
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("profile", ["bogus", "Pilot"])
+def test_an_unknown_runtime_profile_is_a_usage_error_before_any_test(tmp_path, profile):
+    completed = _pytest_probe_file(tmp_path, {}, "--runtime-profile", profile)
+    output = _output(completed)
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR, output[-2000:]
+    assert "--runtime-profile" in output and "invalid choice" in output and repr(profile) in output
+    assert "KERNO_PROBE_REPORT" not in completed.stdout and _PILOT_PROBE_OUTPUT not in completed.stdout
 
 
 # ── KERNO_MIGRATION_DATABASE_URL, and the wrapper never reading runtime settings ─
@@ -344,14 +405,35 @@ def _invalid_runtime_settings(tmp_path) -> dict:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("command", ["current", "grant-runtime"])
-def test_the_wrapper_process_never_reads_runtime_settings(tmp_path, command):
-    baseline = _wrapper(tmp_path, _UNREACHABLE_SETTINGS, command)
-    with_runtime = _wrapper(tmp_path, {**_UNREACHABLE_SETTINGS, **_invalid_runtime_settings(tmp_path)}, command)
+@pytest.mark.parametrize(
+    "arguments", [("current",), ("grant-runtime",), ("grant-runtime", "--profile", "pilot")],
+    ids=["current", "grant-runtime", "grant-runtime --profile pilot"],
+)
+def test_the_wrapper_process_never_reads_runtime_settings(tmp_path, arguments):
+    baseline = _wrapper(tmp_path, _UNREACHABLE_SETTINGS, *arguments)
+    with_runtime = _wrapper(tmp_path, {**_UNREACHABLE_SETTINGS, **_invalid_runtime_settings(tmp_path)}, *arguments)
     output = _output(with_runtime)
     assert baseline.returncode == 3 and with_runtime.returncode == 3, output[-2000:]
     assert f"test database: {_UNREACHABLE_APPROVAL}" in with_runtime.stdout
     assert "KERNO_TEST_RUNTIME" not in output and SECRET not in output
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("grant-runtime", "--profile", "staging"), ("grant-runtime", "--profile"),
+        ("revoke-runtime", "--profile", "pilot"),
+    ],
+    ids=["unknown profile", "missing value", "profile on revoke"],
+)
+def test_the_wrapper_process_refuses_a_profile_outside_its_allow_list_before_any_bootstrap(tmp_path, arguments):
+    completed = _wrapper(tmp_path, _UNREACHABLE_SETTINGS, *arguments)
+    output = _output(completed)
+    assert completed.returncode == 2, output[-2000:]
+    # No "test database:" line: the command line was refused before the bootstrap ran.
+    assert "grant-runtime [--profile full|pilot]" in completed.stdout and "test database:" not in completed.stdout
+    assert SECRET not in output
 
 
 @pytest.mark.slow
@@ -404,10 +486,12 @@ class _RecordingSession:
     """A held session that records each re-proof, and can be told to lose the lock."""
 
     def __init__(self, calls: list[str], lose_after: int | None = None) -> None:
+        """Record into calls; lose the lock after lose_after re-proofs, or never."""
         self.calls = calls
         self.lose_after = lose_after
 
     def assert_held(self) -> None:
+        """Record one re-proof, raising DatabaseExclusivityLost once the scripted number has passed."""
         self.calls.append("held?")
         if self.lose_after is not None and self.calls.count("held?") > self.lose_after:
             raise safety.DatabaseExclusivityLost("lost")
@@ -421,30 +505,35 @@ class _FakeSafety:
     redact = staticmethod(safety.redact)
 
     def __init__(self, prepare_error=None, session_error=None, lose_after=None) -> None:
+        """Script the bootstrap and lock outcomes; no calls recorded yet."""
         self.prepare_error = prepare_error
         self.session_error = session_error
         self.lose_after = lose_after
         self.calls: list[str] = []
 
     def prepare_migration_process(self):
+        """Record the bootstrap and return the default target, or raise the scripted error."""
         self.calls.append("prepare")
         if self.prepare_error:
             raise self.prepare_error
         return make_target()
 
     def ensure_exclusive_session(self, purpose):
+        """Record the lock request and return a recording session, or raise the scripted error."""
         self.calls.append(f"lock:{purpose}")
         if self.session_error:
             raise self.session_error
         return _RecordingSession(self.calls, self.lose_after)
 
     def release_exclusive_session(self):
+        """Record the release."""
         self.calls.append("release")
 
 
 def _scripted(monkeypatch, wrapper, calls: list[str], steps=("z1a2b3c4", "a2b3c4d5"), current="y0z1a2b3", fail_step=None):
     """Replace the wrapper's Alembic touch points with recorders; nothing real runs."""
     def apply_step(config, command, step):
+        """Record the step, or fail it with a credential-bearing message when scripted to."""
         if step == fail_step:
             raise RuntimeError(f"permission denied while connecting with {GOOD_URL}")
         calls.append(step)
@@ -505,6 +594,7 @@ def test_a_guard_refusal_inside_a_step_is_a_target_refusal_not_a_migration_failu
     _scripted(monkeypatch, wrapper, [])
 
     def refuse(target):
+        """Refuse the connection the way the guard does."""
         raise safety.DatabaseTargetRejected("a connection was requested to something else")
 
     monkeypatch.setattr(wrapper, "current_revision", refuse)
@@ -517,6 +607,7 @@ def test_an_unreachable_destination_is_a_usage_refusal(monkeypatch, capsys):
     _scripted(monkeypatch, wrapper, [])
 
     def unplannable(*args):
+        """Fail planning as Alembic does for an unknown revision."""
         raise ValueError("no such revision")
 
     monkeypatch.setattr(wrapper, "plan_steps", unplannable)

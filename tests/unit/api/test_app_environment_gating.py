@@ -53,10 +53,15 @@ def env(monkeypatch):
     # a startup test would otherwise fail for an unrelated reason.
     monkeypatch.setenv("KERNO_JWT_SECRET", "test-secret-for-unit-tests")
     monkeypatch.setenv("DATABASE_URL", "postgresql://unused/for-startup-checks-only")
-    # The startup identity gate (C2) reads the pool's login; these tests are
-    # about other startup checks, so it sees a restricted runtime identity.
-    # Its own behaviour is tested in tests/unit/api/test_runtime_identity_gate.py.
+    # Every app here is a full-profile app; the pilot's gating of these same
+    # surfaces is tested in tests/unit/api/test_serving_profile.py.
+    monkeypatch.setenv("KERNO_SERVING_PROFILE", "full")
+    # The startup identity gate (C2) reads the pool's login and its assigned
+    # grant profile; these tests are about other startup checks, so it sees a
+    # restricted runtime identity assigned the full profile. Its own behaviour
+    # is tested in tests/unit/api/test_runtime_identity_gate.py.
     monkeypatch.setattr(runtime_identity, "read_connection_identity", _restricted_runtime_identity)
+    monkeypatch.setattr(runtime_identity, "read_assigned_profile", _assigned_full_profile)
     return monkeypatch
 
 
@@ -66,6 +71,11 @@ def _restricted_runtime_identity() -> runtime_identity.ConnectionIdentity:
         session_user="kerno_app", superuser=False, bypass_rls=False, create_role=False,
         create_database=False, replication=False, memberships=0, owns_database=False, owned_objects=0,
     )
+
+
+def _assigned_full_profile() -> str:
+    """The grant profile the database assigns the restricted login: the full one."""
+    return "full"
 
 
 # ── Documentation surface ───────────────────────────────────────────────────
