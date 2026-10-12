@@ -403,9 +403,9 @@ details.
 
 ## 8. Runtime identity `kerno_test_app` (C2, PILOT-READY-002)
 
-**Status (12 October 2026): Checkpoint B run on the unmerged branch
+**Status (12 October 2026): Checkpoint B run on the then-unmerged branch
 `pilot/pilot-ready-002-c2-runtime`; final acceptance passed at
-`fb9f506812fcf43f8f0d56f854348ff6ac113d99`, pending independent review.**
+`fb9f506812fcf43f8f0d56f854348ff6ac113d99`; merged via PR #19 (`8229843`).**
 Migration 029 is applied to `kerno_test`, `kerno_test_app` exists and holds
 the full-profile grants. This was synthetic, disposable-test validation under
 the owner's written authorization on PR #19; it is not customer or production
