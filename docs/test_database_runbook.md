@@ -403,10 +403,13 @@ details.
 
 ## 8. Runtime identity `kerno_test_app` (C2, PILOT-READY-002)
 
-**Status: implemented on the unmerged branch `pilot/pilot-ready-002-c2-runtime`;
-nothing below has been run.** No role has been created, no grant applied and
-migration 029 has not been applied to `kerno_test`. Every live step waits for
-the owner's written approval (issue #18, Checkpoint A).
+**Status (12 October 2026): Checkpoint B run on the unmerged branch
+`pilot/pilot-ready-002-c2-runtime`; final acceptance passed at
+`fb9f506812fcf43f8f0d56f854348ff6ac113d99`, pending independent review.**
+Migration 029 is applied to `kerno_test`, `kerno_test_app` exists and holds
+the full-profile grants. This was synthetic, disposable-test validation under
+the owner's written authorization on PR #19; it is not customer or production
+acceptance. The record is at the end of this section.
 
 The C2 tests run the application as a second, non-owner login on the same
 database, so that row-level security, the column grants and the ledger's
@@ -551,6 +554,27 @@ the role.
 The migration wrapper's exit code 2 now also covers an unmet `grant-runtime`
 or `revoke-runtime` precondition (029 missing, the role missing or invalid);
 exit 1 covers a failed grant change, which is rolled back whole.
+
+### Checkpoint B record (12 October 2026)
+
+Every command targeted `kerno_test@127.0.0.1:5432/kerno_test` (owner) or
+`kerno_test_app@127.0.0.1:5432/kerno_test` (runtime) through the guard; no
+credential was displayed.
+
+| Step | Who, at which SHA | Command | Exit | Result |
+|---|---|---|---|---|
+| Migration round trip | Claude Code, `98513958` | `migrate_test_database.py upgrade head`, `downgrade c4d5e6f7`, `upgrade head` | 0, 0, 0 | `c4d5e6f7` → `d5e6f7g8` → `c4d5e6f7` → `d5e6f7g8` |
+| Owner regression | Claude Code, `98513958` | `pytest --require-live-database -rs` | 0 | 2145 passed, 67 skipped, all "runtime identity not configured" (not runtime acceptance) |
+| Role creation | the owner, privately on MSI; script blob `16d0cbbe` | `python scripts\provision_test_runtime_role.py` | 0 | `.env.test.runtime` written; role created and verified (attributes, zero memberships either way, no owned objects, no CONNECT yet, stored verifier matches); no runtime login (reported by the owner, not observed by Claude Code) |
+| Grants | Claude Code, `98513958` | `migrate_test_database.py grant-runtime` | 0 | full profile applied as `kerno_test`; assignment recorded |
+| Boundary, run 1 | Claude Code, `98513958` | `pytest tests/security/test_runtime_identity_boundary.py --require-live-database --require-runtime-identity -rs` | **1** | 2 failed, 56 passed: both `DROP POLICY` probes were refused with SQLSTATE 42501 as intended, but PostgreSQL 18 says "must be owner of relation …" where the test expected "… of table …" |
+| Correction | `fb9f5068` | expected text of those two cases only | — | reviewed and approved by the owner |
+| Boundary, run 2 | Claude Code, `fb9f5068` | same command | 0 | 58 passed, 0 skipped |
+| Final acceptance | Claude Code, `fb9f5068` | `pytest --require-live-database --require-runtime-identity -rs` | 0 | **2212 passed, 0 failed, 0 errors, 0 skipped**; owner target and lock verified; runtime identity verified |
+
+Afterwards `migrate_test_database.py current` reported `d5e6f7g8`. Nothing was
+revoked, and the role, the assignment record and both settings files remain in
+place.
 
 ## What never happens
 
