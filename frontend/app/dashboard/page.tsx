@@ -18,6 +18,11 @@ import RecalculateButton from "@/components/RecalculateButton";
 import { fetchCoverageSummary, fetchMe } from "@/lib/api";
 import { isFullProfile } from "@/lib/servingProfile";
 
+// Rendered per request, never prerendered at build: the page reads the session
+// cookie, and the serving profile is server-runtime configuration that must
+// not be resolved (or required) by `next build`.
+export const dynamic = "force-dynamic";
+
 // UI gating only (KER-302 AC-6): the backend enforces auth on the endpoint.
 const RECALCULATE_ROLES = ["compliance_lead", "vciso"];
 

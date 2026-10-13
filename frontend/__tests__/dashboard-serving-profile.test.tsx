@@ -5,11 +5,16 @@
  *
  * What:  renders the real dashboard server component: compliance_lead and
  *        vciso get Recalculate in the full profile and not in pilot; the
- *        read-only timestamp and the export control stay in both; an
- *        unrecognised profile throws before any backend read.
+ *        read-only timestamp and the export control stay in both; a profile
+ *        configuration error throws before any backend read.
  * Why:   the pilot API does not register manual recalculation, so a pilot
  *        dashboard offering it would show a control that can only fail.
- * How:   npm test -- dashboard-serving-profile; lib/api is mocked.
+ * How:   npm test -- dashboard-serving-profile; lib/api is mocked, and so is
+ *        isFullProfile(): the server resolves its profile once per process, so
+ *        one module registry cannot render several profiles, and a fresh
+ *        registry would load a second React. How the profile itself resolves
+ *        (development, production, missing, blank, unrecognised) is proved in
+ *        serving-profile.test.ts.
  */
 
 import "@testing-library/jest-dom";
@@ -17,13 +22,17 @@ import { render, screen } from "@testing-library/react";
 
 // A relative path: the "@/" alias is rewritten in imports only, not in jest.mock.
 jest.mock("../lib/api", () => ({ fetchCoverageSummary: jest.fn(), fetchMe: jest.fn() }));
+jest.mock("../lib/servingProfile", () => ({
+  ...jest.requireActual("../lib/servingProfile"),
+  isFullProfile: jest.fn(),
+}));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: jest.fn(), push: jest.fn() }),
 }));
 
 import DashboardPage from "@/app/dashboard/page";
 import { fetchCoverageSummary, fetchMe } from "@/lib/api";
-import { ServingProfileConfigError } from "@/lib/servingProfile";
+import { isFullProfile, ServingProfileConfigError } from "@/lib/servingProfile";
 
 const SUMMARY = {
   total_controls: 4,
@@ -34,9 +43,9 @@ const SUMMARY = {
   last_recalculated_at: null,
 };
 
-/** Render the dashboard for one profile (undefined leaves it unset) and role. */
-async function renderDashboard(profile: string | undefined, role: string) {
-  jest.replaceProperty(process, "env", { ...process.env, KERNO_SERVING_PROFILE: profile });
+/** Render the dashboard for a server whose resolved profile is full or pilot, and one role. */
+async function renderDashboard(profile: "full" | "pilot", role: string) {
+  (isFullProfile as jest.Mock).mockReturnValue(profile === "full");
   (fetchCoverageSummary as jest.Mock).mockResolvedValue(SUMMARY);
   (fetchMe as jest.Mock).mockResolvedValue({ email: "u@example.test", role });
   render(await DashboardPage());
@@ -48,8 +57,7 @@ describe("dashboard Recalculate control", () => {
   it.each([
     ["full", "compliance_lead"],
     ["full", "vciso"],
-    [undefined, "compliance_lead"],
-  ])("is offered under profile %p to %s", async (profile, role) => {
+  ] as const)("is offered under profile %p to %s", async (profile, role) => {
     await renderDashboard(profile, role);
     expect(screen.getByRole("button", { name: "Recalculate now" })).toBeInTheDocument();
   });
@@ -70,8 +78,10 @@ describe("dashboard Recalculate control", () => {
     expect(screen.getByRole("button", { name: /export/i })).toBeInTheDocument();
   });
 
-  it("throws on an unrecognised profile before reading the backend", async () => {
-    jest.replaceProperty(process, "env", { ...process.env, KERNO_SERVING_PROFILE: "Pilot" });
+  it("throws on a profile configuration error before reading the backend", async () => {
+    (isFullProfile as jest.Mock).mockImplementation(() => {
+      throw new ServingProfileConfigError("KERNO_SERVING_PROFILE must be set to \"full\" or \"pilot\" outside development");
+    });
     await expect(DashboardPage()).rejects.toThrow(ServingProfileConfigError);
     expect(fetchCoverageSummary).not.toHaveBeenCalled();
     expect(fetchMe).not.toHaveBeenCalled();
