@@ -33,6 +33,8 @@ One UI: Next.js `frontend/`.
 **Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
 B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 merged via PR #19 (`8229843`);
 applied only to the disposable `kerno_test`, not to any customer environment.
+PILOT-READY-003 (serving profile and pilot grant set, G10) merged via PR #21
+(`14c8f9a5`); likewise exercised only on `kerno_test`, not on a pilot host.
 
 **KER-409 through KER-412, KER-402, CORS/docs hygiene, and the frozen
 filing download are LANDED. Do not re-implement any of them.** The DORA
@@ -371,7 +373,7 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
 | C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Merged via PR #19** (`8229843`). Execution evidence: final acceptance on the then-unmerged branch at `fb9f5068`, both identities verified, 2212 passed, 0 failed, 0 skipped, after a recorded 2-failed run at `98513958` (record in `docs/test_database_runbook.md` §8). On `kerno_test` only: 029 applied, `kerno_test_app` created by the owner and granted the full profile. Not deployed; no customer environment. The no-FORCE exception and the H1/H2 residuals are approved for synthetic disposable-test validation only, not for customer data. |
-| PILOT-READY-003 ([#20](https://github.com/jprom89/Kerno/issues/20)) | Pilot serving profile (G10), matching runtime grants, startup profile check | **Checkpoint B passed on the unmerged branch** `pilot/pilot-ready-003-serving-profile` (draft PR #21), pending independent review: at `9a59e32f`, 030 round trip, full run 2818 passed / 0 skipped, switch to pilot, pilot run 57 passed / 0 skipped, restore to full, restoration proof 75 passed (record in `docs/test_database_runbook.md` §9). On `kerno_test` only: head `e6f7g8h9`, runtime back on the full profile. Pilot exclusions are not accepted for customer data. Not merged. |
+| PILOT-READY-003 ([#20](https://github.com/jprom89/Kerno/issues/20)) | Pilot serving profile (G10), matching runtime grants, startup profile check | **Merged via PR #21** (`14c8f9a5`). Execution evidence: Checkpoint B on the then-unmerged branch at tested SHA `9a59e32f987357f82ec8921578853561661301bd`, recorded in the documentation-only commit `84abdf85f0b517962e781366ef8519689b9661c4`: 030 round trip, full run 2818 passed, switch to pilot, pilot run 57 passed, restore to full, restoration proof 75 passed, with 0 failures, 0 errors and 0 skips in every run (record in `docs/test_database_runbook.md` §9). On `kerno_test` only: final head `e6f7g8h9`, runtime back on the full profile. Not deployed; validation on the pilot host is outstanding. Pilot exclusions are not accepted for customer data. |
 | PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | Merged via PR #17 (`a849708`): `docs/pilot_readiness_kickoff.md`. Its exceptions, risk acceptances and pilot exclusions are proposed, not approved. Deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
