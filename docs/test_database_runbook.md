@@ -403,9 +403,9 @@ details.
 
 ## 8. Runtime identity `kerno_test_app` (C2, PILOT-READY-002)
 
-**Status (12 October 2026): Checkpoint B run on the unmerged branch
+**Status (12 October 2026): Checkpoint B run on the then-unmerged branch
 `pilot/pilot-ready-002-c2-runtime`; final acceptance passed at
-`fb9f506812fcf43f8f0d56f854348ff6ac113d99`, pending independent review.**
+`fb9f506812fcf43f8f0d56f854348ff6ac113d99`; merged via PR #19 (`8229843`).**
 Migration 029 is applied to `kerno_test`, `kerno_test_app` exists and holds
 the full-profile grants. This was synthetic, disposable-test validation under
 the owner's written authorization on PR #19; it is not customer or production
@@ -575,6 +575,106 @@ credential was displayed.
 Afterwards `migrate_test_database.py current` reported `d5e6f7g8`. Nothing was
 revoked, and the role, the assignment record and both settings files remain in
 place.
+
+## 9. Serving profiles and the pilot grant set (PILOT-READY-003)
+
+**Status (13 October 2026): Checkpoint B run on the unmerged branch
+`pilot/pilot-ready-003-serving-profile` at
+`9a59e32f987357f82ec8921578853561661301bd`; every step passed, pending
+independent review.** Migration 030 is applied to `kerno_test` (head
+`e6f7g8h9`) and the runtime was switched full → pilot → full; it holds the
+full profile again. Synthetic disposable-test validation under the owner's
+written authorization on PR #21, not customer or production acceptance. The
+record is at the end of this section.
+
+**Two profiles, two settings, one per process.**
+
+- The **serving profile** (`KERNO_SERVING_PROFILE`, `full` or `pilot`) decides
+  which routes an API process registers. `pilot` leaves the kickoff §4.3
+  exclusions unregistered (404 before any dependency), never serves the docs
+  or the legacy dashboard, and stops the nightly recalculation job before it
+  connects. Outside development the value is required; anything unrecognised
+  refuses startup.
+- The **grant profile** is what `kerno_bootstrap.apply_runtime_grants` gave
+  the runtime login, recorded in the owner-only `runtime_assignment` row.
+  Migration 030 adds `kerno_bootstrap.session_runtime_profile()`: no argument,
+  SECURITY DEFINER, pinned search path, no PUBLIC EXECUTE, answering only for
+  `session_user`. The runtime holds EXECUTE on it in both profiles (the one
+  matrix addition); it still cannot read the table or apply grants.
+- **At startup** the API compares the two. A pilot app refuses on any
+  mismatch, missing or unknown assignment in every environment; a full app
+  refuses outside development and warns in development (owner-mode local use).
+  This compares a recorded label once, at startup. It does not attest that
+  nobody changed the grants afterwards: a profile switch requires stopping the
+  API (and its scheduler), switching the grants, and restarting with the
+  matching `KERNO_SERVING_PROFILE`. The frontend is a separate process with its
+  own `KERNO_SERVING_PROFILE` and must be deployed with the same value.
+
+**Test sequencing.** The grant profile is database-wide for the one runtime
+login, so full and pilot runs never overlap and the switch happens between
+pytest processes, never inside one (no nested workflow while pytest holds the
+lock). `--runtime-profile` (default `full`) tells a pytest run which profile it
+expects: the first runtime test reads the assignment as the runtime login and
+stops the run on a mismatch. Tests marked `pilot_profile` run only under
+`--runtime-profile pilot`; every other test only under `full`. Deselected tests
+are reported as deselected, not skipped, so each run still allows zero skips,
+and the two runs together cover the whole suite. The full run also proves the
+transition both ways inside one owner transaction that is always rolled back:
+full → pilot removes every full-only table, column and routine privilege,
+pilot → full restores exactly the full matrix, re-applying either is
+idempotent, and refused calls roll back without effect.
+
+### Checkpoint B sequence (approved and run, 13 October 2026)
+
+Every step runs as before through the guard, one workflow at a time, stopping
+at the first failure. The identities are the existing `kerno_test` owner and
+`kerno_test_app` runtime; no role, password or settings file changes.
+
+| # | Command | Profile | Expected |
+|---|---|---|---|
+| 1 | `python scripts/migrate_test_database.py upgrade head` | full | `upgrade -> e6f7g8h9`; 030 re-applies the recorded `full` assignment, so the runtime gains EXECUTE on the lookup |
+| 2 | `python scripts/migrate_test_database.py downgrade d5e6f7g8` | full | 030 round trip to its immediate parent only: lookup dropped, 029's procedure restored |
+| 3 | `python scripts/migrate_test_database.py upgrade head` | full | `upgrade -> e6f7g8h9` again; head confirmed with `current` |
+| 4 | `python -m pytest --require-live-database --require-runtime-identity -rs` | full | every non-pilot test, zero failures, errors or skips; owner, lock, runtime and `full` assignment verified |
+| 5 | `python scripts/migrate_test_database.py grant-runtime --profile pilot` | → pilot | `done: grant-runtime kerno_test_app … (profile pilot)` |
+| 6 | `python -m pytest --require-live-database --require-runtime-identity --runtime-profile pilot -rs` | pilot | only `pilot_profile` tests, zero failures, errors or skips; `pilot` assignment verified |
+| 7 | `python scripts/migrate_test_database.py grant-runtime` | → full | restoration: `(profile full)` |
+| 8 | `python -m pytest tests/security/test_runtime_identity_boundary.py tests/integration/test_runtime_serving_profile_startup.py --require-live-database --require-runtime-identity -rs` | full | restoration proof: the exact full matrix and a `full` assignment |
+
+**On a failure** the sequence stops and the result is reported as it stands,
+including which grant profile is then in force (the last successful
+`grant-runtime` line; a failed `grant-runtime` rolls back whole and changes
+nothing). Nothing is restored, revoked or downgraded automatically: if step 6
+fails, the runtime stays on the pilot grants until the owner approves step 7.
+A lost lock ends the workflow without cleanup. `revoke-runtime` is not part of
+this sequence.
+
+### Checkpoint B record (13 October 2026)
+
+All at `9a59e32f987357f82ec8921578853561661301bd`, run by Claude Code one
+guarded workflow at a time. Owner `kerno_test@127.0.0.1:5432/kerno_test`
+(settings from `.env.test`); runtime `kerno_test_app@127.0.0.1:5432/kerno_test`
+(settings from `.env.test.runtime`); no credential displayed, no role created
+or changed, `kerno_dev` untouched. The pre-check found head `d5e6f7g8`. No
+read-only path reports the runtime assignment before 030 (030 creates the
+runtime's lookup); the last recorded state was `full` (end of §8), and step 5
+verified it as `full` as the runtime and as the owner.
+
+| Step | Command | Profile in force | Exit | Result |
+|---|---|---|---|---|
+| 1 | `migrate_test_database.py upgrade head` | full | 0 | `upgrade -> e6f7g8h9` (030 re-applied the recorded `full` assignment) |
+| 2 | `migrate_test_database.py downgrade d5e6f7g8` | full | 0 | `downgrade -> d5e6f7g8` (030 only) |
+| 3 | `migrate_test_database.py upgrade head` | full | 0 | `upgrade -> e6f7g8h9` |
+| 4 | `migrate_test_database.py current` | full | 0 | `e6f7g8h9` |
+| 5 | `pytest --require-live-database --require-runtime-identity -rs` | **full** | 0 | **2818 passed, 0 failed, 0 errors, 0 skipped**, 57 deselected (pilot-only); owner, lock, runtime identity and `full` grant profile verified |
+| 6 | `migrate_test_database.py grant-runtime --profile pilot` | → **pilot** | 0 | `(profile pilot)`; assignment `(kerno_test_app, pilot)` checked before commit |
+| 7 | `pytest --require-live-database --require-runtime-identity --runtime-profile pilot -rs` | **pilot** | 0 | **57 passed, 0 failed, 0 errors, 0 skipped**, 2818 deselected; runtime identity and `pilot` grant profile verified; 46 pilot boundary tests (pilot matrix both ways, denials, PUBLIC ACLs, lookup and record agree) and 11 pilot application tests (real lifespan, retained workflow on the runtime pool, every excluded method 404 without lease, external call or write, full app refused) |
+| 8 | `migrate_test_database.py grant-runtime` | → **full** | 0 | `(profile full)`; assignment `(kerno_test_app, full)` checked before commit |
+| 9 | `pytest tests/security/test_runtime_identity_boundary.py tests/integration/test_runtime_serving_profile_startup.py --require-live-database --require-runtime-identity -rs` | **full** | 0 | **75 passed, 0 failed, 0 errors, 0 skipped**; exact full matrix and `full` grant profile verified; full app starts, pilot app refused |
+
+Afterwards `migrate_test_database.py current` reported `e6f7g8h9`. The two
+pytest selections (steps 5 and 7) together cover all 2875 collected tests.
+Warnings were library deprecations and PyJWT's short-test-key warning.
 
 ## What never happens
 

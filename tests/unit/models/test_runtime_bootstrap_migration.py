@@ -249,12 +249,17 @@ def _written_columns(pattern: re.Pattern, captured: str) -> set[str]:
 # ── Revision chain ──────────────────────────────────────────────────────────
 
 
-def test_migration_029_sits_on_028_and_is_the_single_head():
+def test_migration_029_sits_on_028_and_its_only_successor_030_is_the_single_head():
     migration = _load(_MIGRATION_029, "migration_029")
     assert (migration.revision, migration.down_revision) == ("d5e6f7g8", "c4d5e6f7")
     config = Config()
     config.set_main_option("script_location", str(safety.REPOSITORY_ROOT / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["d5e6f7g8"]
+    script = ScriptDirectory.from_config(config)
+    # 029 was the head until PILOT-READY-003 added 030 (the profile lookup) on top of it.
+    assert script.get_heads() == ["e6f7g8h9"]
+    assert script.get_revision("e6f7g8h9").down_revision == "d5e6f7g8"
+    successors = [revision.revision for revision in script.walk_revisions() if revision.down_revision == "d5e6f7g8"]
+    assert successors == ["e6f7g8h9"]
 
 
 def test_upgrade_runs_in_dependency_order():

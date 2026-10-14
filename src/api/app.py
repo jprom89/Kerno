@@ -18,6 +18,10 @@ Why:   one factory builds the whole app so tests can construct isolated
        outside development, and refuses an owner, elevated or member database
        login, or the owner's KERNO_MIGRATION_DATABASE_URL, outside development
        (src/api/runtime_identity.py; a warning in development).
+       Serving profile (PILOT-READY-003, src/api/serving_profile.py): "full"
+       registers every router; "pilot" registers only the supported pilot
+       workflow, never the docs or the legacy dashboard, and requires the
+       database's runtime assignment to say "pilot" before it serves anything.
 How:   run locally with: uvicorn src.api.app:app --reload --port 8000
        exercised by every test under tests/unit/api/.
 """
@@ -44,6 +48,7 @@ from slowapi.errors import RateLimitExceeded
 
 from config.constants import EXAMPLE_ALLOWED_ORIGINS
 from src.api import runtime_identity, trust_center, webhooks
+from src.api.serving_profile import FULL_PROFILE, SERVING_PROFILE_VARIABLE, resolve_serving_profile
 from src.api.rate_limit import limiter
 from src.api.routers import ai_decisions, coverage, evidence, export, overrides, panel, recommendations, register, remediation, scheduler, submissions
 from src.api.routers import auth as auth_router
@@ -54,12 +59,19 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    """Refuse to start without the required settings, a safe CORS list and a matching runtime login and profile.
+
+    The profile checked is the one create_app() resolved and stored on
+    app.state, never a fresh read of the environment.
+    """
     if not os.environ.get("KERNO_JWT_SECRET"):
         raise RuntimeError("KERNO_JWT_SECRET environment variable is not set")
     if not os.environ.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL environment variable is not set")
     _reject_example_origins()
-    runtime_identity.enforce_runtime_identity(development=_is_development())
+    runtime_identity.enforce_runtime_identity(
+        development=_is_development(), serving_profile=app.state.serving_profile
+    )
     yield
 
 
@@ -156,33 +168,48 @@ def _frontend_url() -> str | None:
     return target.rstrip("/")
 
 
-def create_app() -> FastAPI:
-    """Return a fully configured FastAPI application instance.
+def create_app(serving_profile: str | None = None) -> FastAPI:
+    """Return a configured FastAPI application serving one profile, "full" or "pilot".
 
-    The legacy static dashboard is registered in development only. The
-    interactive documentation is registered in development or when
-    KERNO_ENABLE_DOCS=1. Anything not registered 404s rather than being served
-    to anonymous callers.
+    The profile is resolved once, here — from the argument when given,
+    otherwise from KERNO_SERVING_PROFILE — and stored on app.state; route
+    registration, the docs, the legacy dashboard and the lifespan's database
+    check all use that one value. Raises ServingProfileError for an unknown
+    value, or for no value outside development, so the process refuses to
+    start. The pilot never serves the docs or the legacy dashboard, whatever
+    KERNO_ENV or KERNO_ENABLE_DOCS say.
     """
+    profile = _resolve_profile(serving_profile)
     # These must be constructor arguments: FastAPI registers the documentation
     # routes at the end of __init__, so assigning the attributes afterwards is
     # a silent no-op. openapi_url is the one that matters — nulling docs_url
     # and redoc_url alone removes the two HTML viewers but leaves the schema
     # itself served at /openapi.json, which is the actual disclosure.
-    serve_docs = _docs_enabled()
+    serve_docs = profile == FULL_PROFILE and _docs_enabled()
     app = FastAPI(
         lifespan=_lifespan,
         openapi_url="/openapi.json" if serve_docs else None,
         docs_url="/docs" if serve_docs else None,
         redoc_url="/redoc" if serve_docs else None,
     )
+    app.state.serving_profile = profile
+    _configure_rate_limiting_and_cors(app)
+    _include_pilot_workflow_routers(app)
+    if profile == FULL_PROFILE:
+        _include_full_only_routers(app)
+    _register_root(app)
+    _register_exception_handlers(app)
+    if profile == FULL_PROFILE:
+        _mount_legacy_dashboard(app)
+    return app
 
-    # SEC-05: register the shared rate limiter and its 429 handler.
+
+def _configure_rate_limiting_and_cors(app: FastAPI) -> None:
+    """Register the shared rate limiter (SEC-05) and the dashboard-origin CORS policy (KER-301)."""
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-    # KER-301: allow the dashboard's origins only. Credentials are enabled for
-    # the httpOnly session cookie; an empty allow-list disables CORS entirely.
+    # Credentials are enabled for the httpOnly session cookie; an empty
+    # allow-list disables CORS entirely.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_allowed_origins(),
@@ -191,20 +218,43 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+
+def _resolve_profile(serving_profile: str | None) -> str:
+    """Resolve the explicit argument, or KERNO_SERVING_PROFILE when there is none; raises ServingProfileError."""
+    value = os.environ.get(SERVING_PROFILE_VARIABLE) if serving_profile is None else serving_profile
+    return resolve_serving_profile(value, development=_is_development())
+
+
+def _include_pilot_workflow_routers(app: FastAPI) -> None:
+    """Register the routers of the supported pilot workflow (kickoff §4.1); both profiles serve them.
+
+    The register router carries only the entry operations; its reporting
+    windows live on a separate router that only the full profile registers.
+    Submission windows stay: the submission-run workflow reads them.
+    """
     app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["auth"])
     app.include_router(register.router, prefix="/api/v1/register", tags=["register"])
     app.include_router(submissions.router, prefix="/api/v1/submissions", tags=["submissions"])
     app.include_router(overrides.router, prefix="/api/v1", tags=["overrides"])
-    app.include_router(panel.router, prefix="/api/v1/panel", tags=["panel"])
     app.include_router(coverage.router, prefix="/api/v1/coverage", tags=["coverage"])
-    app.include_router(remediation.router, prefix="/api/v1/remediation", tags=["remediation"])
     app.include_router(export.router, prefix="/api/v1/export", tags=["export"])
-    app.include_router(scheduler.router, prefix="/api/v1/scheduler", tags=["scheduler"])
-    app.include_router(ai_decisions.router, prefix="/api/v1", tags=["ai-decisions"])
     app.include_router(
         recommendations.router, prefix="/api/v1/recommendations", tags=["recommendations"]
     )
     app.include_router(evidence.router, prefix="/api/v1/evidence", tags=["evidence"])
+
+
+def _include_full_only_routers(app: FastAPI) -> None:
+    """Register the surfaces the pilot excludes (kickoff §4.3); only the full profile serves them.
+
+    Left unregistered in the pilot, each answers 404 before any dependency
+    runs: no pool lease, no business service, no external call, no ledger write.
+    """
+    app.include_router(register.windows_router, prefix="/api/v1/register", tags=["register"])
+    app.include_router(panel.router, prefix="/api/v1/panel", tags=["panel"])
+    app.include_router(remediation.router, prefix="/api/v1/remediation", tags=["remediation"])
+    app.include_router(scheduler.router, prefix="/api/v1/scheduler", tags=["scheduler"])
+    app.include_router(ai_decisions.router, prefix="/api/v1", tags=["ai-decisions"])
     # Trust Center (KER-204): the status page is deliberately public (no /api/v1
     # prefix, no auth); the visibility toggle is authenticated and role-gated.
     app.include_router(trust_center.public_router, tags=["trust-center"])
@@ -214,6 +264,10 @@ def create_app() -> FastAPI:
     # Webhooks (KER-205): /ingest is public (HMAC-authenticated); the
     # registration/rotation management endpoints are JWT + platform_engineer.
     app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
+
+
+def _register_root(app: FastAPI) -> None:
+    """Serve GET / in both profiles: a redirect to the frontend, or a minimal service descriptor."""
 
     @app.get("/", include_in_schema=False)
     def root():
@@ -233,18 +287,23 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=200, content={"service": "kerno-api", "status": "ok"})
         return RedirectResponse(url=target, status_code=302)
 
+
+def _register_exception_handlers(app: FastAPI) -> None:
+    """Map the domain errors to their status codes and keep every unexpected error's text out of responses."""
+
     @app.exception_handler(TenantContextMissingError)
     async def handle_tenant_context_missing(request: Request, exc: TenantContextMissingError):
+        """A request reached the database layer without a tenant context: 403."""
         return JSONResponse(status_code=403, content={"detail": "tenant context required"})
 
     @app.exception_handler(EntryNotFoundError)
     async def handle_entry_not_found(request: Request, exc: EntryNotFoundError):
+        """An id that is not this tenant's, or not well formed: the same 404 either way."""
         return JSONResponse(status_code=404, content={"detail": "entry not found"})
 
     @app.exception_handler(RuntimeError)
     async def handle_runtime_error(request: Request, exc: RuntimeError):
-        # SEC-03: never return the exception text to the caller. Log it in full
-        # server-side, keyed by a correlation id the caller can quote in support.
+        """SEC-03: log the error in full under a correlation id; return only the id."""
         correlation_id = str(uuid.uuid4())
         logger.exception("Unhandled RuntimeError [%s]", correlation_id)
         return JSONResponse(
@@ -254,14 +313,20 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def handle_unhandled(request: Request, exc: Exception):
+        """Any other error: a generic 500 with no detail."""
         logger.exception("Unhandled exception")
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
-    # The legacy dashboard is development-only. It keeps its session JWT in
-    # localStorage, where any script on the page can read it, and it is the
-    # only remaining consumer of that pattern — the Next.js dashboard uses an
-    # httpOnly cookie (KER-301). The isdir guard stays because src/dashboard/
-    # has no __init__.py and is therefore not packaged by an installed build.
+
+def _mount_legacy_dashboard(app: FastAPI) -> None:
+    """Serve the legacy static dashboard in development only (full profile only; the caller checks that).
+
+    It keeps its session JWT in localStorage, where any script on the page can
+    read it, and it is the only remaining consumer of that pattern — the
+    Next.js dashboard uses an httpOnly cookie (KER-301). The isdir guard stays
+    because src/dashboard/ has no __init__.py and is therefore not packaged by
+    an installed build.
+    """
     dashboard_dir = os.path.join(os.path.dirname(__file__), "..", "dashboard")
     if _is_development() and os.path.isdir(dashboard_dir):
         app.mount(
@@ -269,8 +334,6 @@ def create_app() -> FastAPI:
             StaticFiles(directory=dashboard_dir, html=True),
             name="dashboard",
         )
-
-    return app
 
 
 app = create_app()

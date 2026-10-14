@@ -2,17 +2,26 @@
  * app/dashboard/page.tsx — the NIS2 coverage dashboard home (KER-302 AC-1/3/4/6).
  *
  * What:  overall met/partial/gap counts, the per-category card grid, the
- *        last-recalculated timestamp, and (for compliance_lead/vciso) the
- *        manual recalculate button.
+ *        last-recalculated timestamp, and (for compliance_lead/vciso, in the
+ *        full serving profile only) the manual recalculate button.
  * Why:   the first thing a design partner sees — posture at a glance, sourced
- *        live from the KER-109 system-of-record resolution.
- * How:   server component; data via lib/api.ts. Tests: npm test.
+ *        live from the KER-109 system-of-record resolution. The pilot API does
+ *        not register manual recalculation (PILOT-READY-003), so the pilot
+ *        dashboard does not offer a button that could only fail.
+ * How:   server component; data via lib/api.ts, profile via lib/servingProfile.ts.
+ *        Tests: npm test -- serving-profile.
  */
 
 import CoverageGrid from "@/components/CoverageGrid";
 import ExportButton from "@/components/ExportButton";
 import RecalculateButton from "@/components/RecalculateButton";
 import { fetchCoverageSummary, fetchMe } from "@/lib/api";
+import { isFullProfile } from "@/lib/servingProfile";
+
+// Rendered per request, never prerendered at build: the page reads the session
+// cookie, and the serving profile is server-runtime configuration that must
+// not be resolved (or required) by `next build`.
+export const dynamic = "force-dynamic";
 
 // UI gating only (KER-302 AC-6): the backend enforces auth on the endpoint.
 const RECALCULATE_ROLES = ["compliance_lead", "vciso"];
@@ -20,6 +29,7 @@ const RECALCULATE_ROLES = ["compliance_lead", "vciso"];
 // UI gating only (KER-304 AC-6): hidden for auditor and end_customer_admin.
 const EXPORT_ROLES = ["compliance_lead", "vciso", "security_engineer", "platform_engineer"];
 
+/** Render the last-recalculated timestamp in UTC, or "Never calibrated" when there is none. */
 function formatTimestamp(iso: string | null): string {
   if (!iso) {
     return "Never calibrated";
@@ -27,9 +37,15 @@ function formatTimestamp(iso: string | null): string {
   return new Date(iso).toLocaleString("en-GB", { timeZone: "UTC" }) + " UTC";
 }
 
+/**
+ * The dashboard home. An unrecognised KERNO_SERVING_PROFILE throws here rather
+ * than guessing a profile; the timestamp line stays in both profiles because it
+ * comes from the retained coverage summary, not the excluded scheduler route.
+ */
 export default async function DashboardPage() {
+  const fullProfile = isFullProfile();
   const [summary, me] = await Promise.all([fetchCoverageSummary(), fetchMe()]);
-  const canRecalculate = me !== null && RECALCULATE_ROLES.includes(me.role);
+  const canRecalculate = fullProfile && me !== null && RECALCULATE_ROLES.includes(me.role);
   const canExport = me !== null && EXPORT_ROLES.includes(me.role);
 
   return (

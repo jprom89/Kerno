@@ -243,11 +243,18 @@ migration today.
     to anyone.
 - **A separate guarded owner operation applies the grants.** On `kerno_test`
   this is the new wrapper subcommand `grant-runtime` (§2.7, step 5); in the
-  pilot environment it is an owner-run step. It records the role and profile
-  as database settings, `kerno.runtime_role` and `kerno.runtime_profile`, set
-  with `ALTER DATABASE … SET` **[PG]**.
-- **Later table-creating migrations** call the procedure when those settings
-  are present. A new session reads database-level settings **[PG]**.
+  pilot environment it is an owner-run step. The procedure records the role
+  and profile in the owner-only, one-row table
+  `kerno_bootstrap.runtime_assignment`, in the same transaction as the grants;
+  `revoke_runtime_grants` clears it.
+- **Later table-creating migrations** call the procedure for the role and
+  profile in `runtime_assignment`, when a row exists.
+- *Superseded (reconciled 12 October 2026, after PR #19):* this section
+  originally proposed recording the role and profile as database settings
+  (`ALTER DATABASE … SET kerno.runtime_role / kerno.runtime_profile`). A
+  non-superuser owner cannot set or reset custom placeholder settings, so
+  migration 029 implemented the `runtime_assignment` record instead (owner
+  approved for the synthetic tests; `docs/test_database_runbook.md` §8).
 - **No default privileges.** `ALTER DEFAULT PRIVILEGES` is not used, so a new
   table never inherits grants silently.
 - **Per-profile matrix tests** compare effective privileges with the matrix in
@@ -471,7 +478,7 @@ is not proof of the non-owner boundary.
 
 | Need | Covered today? |
 |---|---|
-| Owner-side DDL; grants on objects `kerno_test` owns; `GRANT CONNECT` on `kerno_test`; `ALTER DATABASE kerno_test SET …` | **Yes.** These are database- and object-owner rights; `kerno_test` gains no attribute **[PG]**. |
+| Owner-side DDL; grants on objects `kerno_test` owns; `GRANT CONNECT` on `kerno_test`; ~~`ALTER DATABASE kerno_test SET …`~~ (superseded: not used, see §1.4) | **Yes** for DDL, grants and CONNECT: these are database- and object-owner rights; `kerno_test` gains no attribute **[PG]**. Setting a custom placeholder with `ALTER DATABASE … SET` turned out to need superuser, which is why it is not used. |
 | Creating `kerno_test_app` and setting its password | **No.** This needs SUPERUSER or CREATEROLE, which `kerno_test` must not have. It is the administrator action in §2.7 step 3. |
 | The guard accepting a second identity | **No.** The guard requires `session_user = current_user = database owner = kerno_test` (`tests/_database_safety.py:399-418`) and compares a single endpoint (`:632-653`). The change needs approval. |
 | Confirming the new role can log in over `127.0.0.1` | **Unknown.** `pg_hba.conf` was never examined (`docs/test_database_runbook.md:239-241`). Step 6 of §2.7 is the first runtime login, and it reports a refusal rather than editing authentication. |
@@ -750,16 +757,17 @@ happen on failure.
    `migrate`).**
    - **Checks, as `kerno_test`:** the head includes 029, and the fixed role
      `kerno_test_app` exists with the expected attributes (a catalog read).
-   - **Then, in one transaction:**
+   - **Then, in one transaction** (as implemented by migration 029 and run in
+     Checkpoint B; the two `ALTER DATABASE … SET` lines this step originally
+     proposed are superseded, see §1.4):
 
      ```sql
      GRANT CONNECT ON DATABASE kerno_test TO kerno_test_app;
-     ALTER DATABASE kerno_test SET kerno.runtime_role = 'kerno_test_app';
-     ALTER DATABASE kerno_test SET kerno.runtime_profile = 'full';
      CALL kerno_bootstrap.apply_runtime_grants('kerno_test_app', 'full');
      ```
 
-     That `ALTER DATABASE … SET` is transactional is **[PG]**, to verify.
+     The procedure writes the `runtime_assignment` row; the wrapper checks it
+     before committing.
    - **Never connects as the runtime and never reads `.env.test.runtime`.**
    - **This is the step that makes a positive runtime login possible.** Between
      step 3 and this step, any pytest run ends as a reported runtime-setup
@@ -790,7 +798,8 @@ happen on failure.
 **Withdrawal:**
 
 - **Owner:** `python scripts/migrate_test_database.py revoke-runtime` revokes
-  the runtime's grants and CONNECT and resets both database settings.
+  the runtime's grants and CONNECT and clears the `runtime_assignment` record
+  (originally proposed as resetting two database settings; superseded, §1.4).
 - **Administrator:** `ALTER ROLE kerno_test_app NOLOGIN`.
 - **Owner:** deletes `.env.test.runtime`.
 
@@ -972,7 +981,8 @@ It requires explicit approval, including the §3 decisions, before work starts.
      strict `NULLIF` form, with `USING` and `WITH CHECK`, and **without FORCE,
      subject to the owner approving that exception**.
    - The migration itself grants nothing to any role. Later table-creating
-     migrations call the procedure when `kerno.runtime_role` is set.
+     migrations call the procedure when a `runtime_assignment` row exists
+     (originally "when `kerno.runtime_role` is set"; superseded, §1.4).
    - It changes no other policy, no FORCE flag and no table.
    - Its downgrade restores the 019 and 022 policies, removes the helpers, the
      procedure and the schema, and revokes runtime grants.

@@ -69,8 +69,9 @@ function operationCalls(): [string, RequestInit][] {
   return (global.fetch as jest.Mock).mock.calls.filter(([url]) => url !== SESSION_URL);
 }
 
+// Pinned to full: recalculate answers 404 under pilot (serving-profile.test.ts covers that).
 beforeEach(() => {
-  jest.replaceProperty(process, "env", { ...process.env,
+  jest.replaceProperty(process, "env", { ...process.env, KERNO_SERVING_PROFILE: "full",
     KERNO_TRUSTED_ORIGINS: ORIGIN, KERNO_API_URL: "http://backend.test" });
   global.fetch = backend(() => Response.json({ ok: true }));
 });

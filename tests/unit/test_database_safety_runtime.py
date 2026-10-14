@@ -11,12 +11,19 @@ What:  Proves, with no real database, how a pytest process treats the second,
        remembered without reconnecting; the runtime endpoint is authorised only
        after that check, only in the pytest workflow, and every runtime connect
        re-proves the lock; and the conftest helpers, fixtures and hooks follow
-       every row of the item 8 behaviour table.
-Why:   PILOT-READY-002 requires an offline unit test for each refusal and each
-       row of that table. Everything here uses in-memory fakes, temporary
-       files and monkeypatched conftest state, so the real run's skip
-       accounting is never touched. Child-process proofs of the same rules are
-       in tests/unit/test_database_safety_processes.py.
+       every row of the item 8 behaviour table. For PILOT-READY-003 it also
+       proves the --runtime-profile rules: collection keeps only the tests of
+       the selected profile and reports the rest as deselected; the runtime
+       login's assigned grant profile is read once, as that login, only after
+       its identity is verified, and any mismatch, missing assignment or
+       failed read stops the run without echoing a credential; and a required
+       run that never verified the profile fails.
+Why:   PILOT-READY-002 and PILOT-READY-003 require an offline unit test for
+       each refusal and each row of that table. Everything here uses in-memory
+       fakes, temporary files and monkeypatched conftest state, so the real
+       run's skip accounting and runtime-profile record are never touched.
+       Child-process proofs of the same rules are in
+       tests/unit/test_database_safety_processes.py.
 How:   pytest tests/unit/test_database_safety_runtime.py -v
 """
 
@@ -25,6 +32,7 @@ from __future__ import annotations
 import types
 
 import psycopg2
+import psycopg2.errors
 import psycopg2.extensions
 import pytest
 
@@ -824,30 +832,76 @@ def test_redact_all_hides_both_urls_and_both_passwords():
 # ── The conftest behaviour table (§2.3 item 8), helpers, fixtures and hooks ──
 
 
+class _DeselectionHook:
+    """The one hook pytest_collection_modifyitems calls on config.hook, recording each batch it deselects."""
+
+    def __init__(self) -> None:
+        """Nothing deselected yet."""
+        self.deselected: list[list] = []
+
+    def pytest_deselected(self, items) -> None:
+        """Record one batch of deselected items."""
+        self.deselected.append(list(items))
+
+
 class _Options:
-    """A pytest config fake whose two database flags are set independently, with no parallel workers."""
+    """A pytest config fake whose database flags and runtime profile are set independently, with no parallel workers."""
 
-    def __init__(self, require_live: bool = False, require_runtime: bool = False) -> None:
-        """Remember the two flags."""
-        self._flags = {"require_live_database": require_live, "require_runtime_identity": require_runtime}
+    def __init__(
+        self, require_live: bool = False, require_runtime: bool = False, runtime_profile: str = "full"
+    ) -> None:
+        """Remember the two flags and the --runtime-profile value."""
+        self._flags = {
+            "require_live_database": require_live, "require_runtime_identity": require_runtime,
+            "runtime_profile": runtime_profile,
+        }
         self.option = types.SimpleNamespace(numprocesses=None, dist="no")
+        self.hook = _DeselectionHook()
 
-    def getoption(self, name: str) -> bool:
-        """Return one flag; an option name conftest should not ask for fails loudly."""
+    def getoption(self, name: str):
+        """Return one option; an option name conftest should not ask for fails loudly."""
         return self._flags[name]
 
 
-def isolate_conftest(monkeypatch, require_live=False, require_runtime=False, state=None) -> None:
-    """Give conftest fresh accounting, flags, final problems and process state for one test."""
-    isolate_skip_accounting(monkeypatch, require_live, require_runtime)
+def isolate_conftest(
+    monkeypatch, require_live=False, require_runtime=False, state=None, runtime_profile="full"
+) -> None:
+    """Give conftest fresh accounting, flags, runtime-profile records, final problems and process state for one test."""
+    isolate_skip_accounting(monkeypatch, require_live, require_runtime, runtime_profile)
     monkeypatch.setattr(conftest, "_TEST_DATABASE", state or safety.ProcessState())
     monkeypatch.setattr(conftest, "_FINAL_EXCLUSIVITY_PROBLEMS", [])
     monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
 
 
-def _runtime_outcome(config, state) -> BaseException | None:
+class _AssignedProfile:
+    """A read_profile stand-in that reports one assigned grant profile and records each runtime it was asked about."""
+
+    def __init__(self, assigned) -> None:
+        """Script the profile the database would report."""
+        self.assigned = assigned
+        self.asked: list = []
+
+    def __call__(self, runtime):
+        """Record the question and return the scripted profile."""
+        self.asked.append(runtime)
+        return self.assigned
+
+
+def _must_not_read_profile(runtime):
+    """Fail loudly: the assigned profile may be read only after the runtime identity is verified."""
+    raise AssertionError("the runtime profile was read although the runtime identity was not verified")
+
+
+def record_verified_profile(state, profile: str = "full") -> None:
+    """Verify profile for state's runtime via require_runtime_profile and a matching stub; isolate conftest first."""
+    conftest.require_runtime_profile(
+        _Options(runtime_profile=profile), state.runtime_target, state, _AssignedProfile(profile)
+    )
+
+
+def _runtime_outcome(config, state, read_profile=_must_not_read_profile) -> BaseException | None:
     """What require_runtime_identity did: returned (None), skipped, failed or stopped the run."""
-    return _outcome_of(lambda: conftest.require_runtime_identity(config, state))
+    return _outcome_of(lambda: conftest.require_runtime_identity(config, state, read_profile))
 
 
 def _report(keywords: dict, skipped: bool = True, nodeid: str = "probe::test") -> types.SimpleNamespace:
@@ -975,9 +1029,239 @@ def test_row_4_a_runtime_login_the_server_refuses_fails_each_runtime_test_and_ne
 
 
 def test_final_acceptance_a_verified_runtime_identity_is_returned_to_the_fixture(workflow, monkeypatch):
+    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=workflow.state)
     monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", runtime_connect(workflow.server, []))
-    runtime = conftest.require_runtime_identity(_Options(require_live=True, require_runtime=True), workflow.state)
+    read_profile = _AssignedProfile("full")
+    config = _Options(require_live=True, require_runtime=True)
+    runtime = conftest.require_runtime_identity(config, workflow.state, read_profile)
     assert runtime is workflow.state.runtime_target and workflow.state.runtime_verified
+    assert read_profile.asked == [runtime] and conftest._VERIFIED_RUNTIME_PROFILE == {"value": "full"}
+
+
+def test_require_runtime_identity_reads_the_profile_once_and_only_after_the_identity_is_verified(workflow, monkeypatch):
+    isolate_conftest(monkeypatch, require_live=True, state=workflow.state)
+    events: list[str] = []
+    real_verify = safety.verify_runtime_identity
+
+    def verify_and_record(state=None, connect=None):
+        """Run the real live check on the fake server, then record that it passed."""
+        runtime = real_verify(state, connect=runtime_connect(workflow.server, []))
+        events.append("identity verified")
+        return runtime
+
+    def read_profile(runtime):
+        """Record the profile read and report the selected profile."""
+        events.append("profile read")
+        return "full"
+
+    monkeypatch.setattr(safety, "verify_runtime_identity", verify_and_record)
+    for _ in range(2):
+        conftest.require_runtime_identity(_Options(require_live=True), workflow.state, read_profile)
+    assert events == ["identity verified", "profile read", "identity verified"]
+
+
+def _refuse_with(error):
+    """Return a verify_runtime_identity stand-in that raises error."""
+    def refuse(state=None, connect=None):
+        """Raise the scripted refusal."""
+        raise error
+    return refuse
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        pytest.param(None, pytest.skip.Exception, id="not configured"),
+        pytest.param(safety.RuntimeIdentityNotReady("login refused"), pytest.fail.Exception, id="not ready"),
+        pytest.param(safety.DatabaseTargetRejected("wrong identity"), pytest.exit.Exception, id="refused"),
+        pytest.param(safety.DatabaseExclusivityLost("lost"), pytest.exit.Exception, id="exclusivity lost"),
+    ],
+)
+def test_an_unverified_runtime_identity_keeps_its_outcome_and_never_reaches_the_profile_read(
+    monkeypatch, error, expected
+):
+    state = safety.ProcessState(target=make_target(), runtime_target=None if error is None else make_runtime_target())
+    isolate_conftest(monkeypatch, require_live=True, state=state)
+    if error is not None:
+        monkeypatch.setattr(safety, "verify_runtime_identity", _refuse_with(error))
+    outcome = _runtime_outcome(_Options(require_live=True), state, _must_not_read_profile)
+    assert isinstance(outcome, expected), f"expected {expected.__name__}, got {outcome!r}"
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
+
+
+# ── The assigned grant profile (PILOT-READY-003): read once, as the runtime ──
+
+
+_PROFILES = ["full", "pilot"]
+
+
+@pytest.mark.parametrize("profile", _PROFILES)
+def test_a_matching_assigned_profile_passes_is_recorded_and_is_not_read_again(monkeypatch, profile):
+    state = _configured_but_unproved()
+    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=state, runtime_profile=profile)
+    read_profile = _AssignedProfile(profile)
+    config = _Options(require_live=True, require_runtime=True, runtime_profile=profile)
+    for _ in range(2):
+        conftest.require_runtime_profile(config, state.runtime_target, state, read_profile)
+    assert read_profile.asked == [state.runtime_target]
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": profile}
+
+
+@pytest.mark.parametrize(
+    "selected, assigned",
+    [
+        pytest.param("full", "pilot", id="full run, pilot assigned"),
+        pytest.param("pilot", "full", id="pilot run, full assigned"),
+        pytest.param("full", None, id="full run, nothing assigned to this login"),
+        pytest.param("pilot", None, id="pilot run, nothing assigned to this login"),
+        pytest.param("full", "staging", id="unrecognised profile"),
+    ],
+)
+def test_an_assigned_profile_other_than_the_selected_one_stops_the_run(monkeypatch, selected, assigned):
+    state = _configured_but_unproved()
+    isolate_conftest(monkeypatch, require_live=True, state=state, runtime_profile=selected)
+    read_profile = _AssignedProfile(assigned)
+    config = _Options(require_live=True, runtime_profile=selected)
+    outcome = _outcome_of(lambda: conftest.require_runtime_profile(config, state.runtime_target, state, read_profile))
+    assert isinstance(outcome, pytest.exit.Exception), f"expected the run to stop, got {outcome!r}"
+    assert outcome.returncode == pytest.ExitCode.USAGE_ERROR
+    message = str(outcome)
+    assert message.startswith("runtime profile mismatch: the database assigns")
+    assert repr(assigned) in message and RUNTIME_APPROVAL in message and f"--runtime-profile {selected}" in message
+    assert _credential_free(message) and len(read_profile.asked) == 1
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
+
+
+@pytest.mark.parametrize(
+    "error_class",
+    [psycopg2.OperationalError, psycopg2.errors.UndefinedFunction, psycopg2.errors.InsufficientPrivilege],
+    ids=["connection refused", "lookup missing", "lookup not granted"],
+)
+def test_a_failed_profile_read_stops_the_run_without_echoing_a_credential(monkeypatch, error_class):
+    state = _configured_but_unproved()
+    isolate_conftest(monkeypatch, require_live=True, state=state)
+
+    def fail(runtime):
+        """Fail the read as the driver does, quoting both URLs and the runtime password back."""
+        raise error_class(_FOREIGN_ERROR)
+
+    config = _Options(require_live=True)
+    outcome = _outcome_of(lambda: conftest.require_runtime_profile(config, state.runtime_target, state, fail))
+    assert isinstance(outcome, pytest.exit.Exception), f"expected the run to stop, got {outcome!r}"
+    assert outcome.returncode == pytest.ExitCode.USAGE_ERROR
+    assert str(outcome).startswith("runtime profile could not be read: ") and _credential_free(str(outcome))
+    assert "<test-database-url>" in str(outcome)
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
+
+
+@pytest.mark.parametrize(
+    "error, code, prefix",
+    [
+        (safety.DatabaseExclusivityLost("lost"), pytest.ExitCode.INTERRUPTED, "test database exclusivity lost: "),
+        (safety.DatabaseTargetRejected("refused by the guard"), pytest.ExitCode.USAGE_ERROR, "runtime profile refused: "),
+    ],
+    ids=["lock lost", "guard refusal"],
+)
+def test_a_guard_error_while_reading_the_profile_stops_the_run_like_the_identity_check(monkeypatch, error, code, prefix):
+    state = _configured_but_unproved()
+    isolate_conftest(monkeypatch, require_live=True, state=state)
+
+    def refuse(runtime):
+        """Fail the read the way the guarded psycopg2.connect does."""
+        raise error
+
+    config = _Options(require_live=True)
+    outcome = _outcome_of(lambda: conftest.require_runtime_profile(config, state.runtime_target, state, refuse))
+    assert isinstance(outcome, pytest.exit.Exception), f"expected the run to stop, got {outcome!r}"
+    assert outcome.returncode == code and str(outcome).startswith(prefix)
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
+
+
+class _ProfileConnection:
+    """A raw runtime connection that answers only the read-only profile lookup and records what happened to it."""
+
+    def __init__(self, row, fail: bool = False) -> None:
+        """Script the row the lookup returns, or a driver error on the lookup itself."""
+        self.row = row
+        self.fail = fail
+        self.statements: list[str] = []
+        self.rollbacks = 0
+        self.closed = False
+
+    def cursor(self) -> "_ProfileCursor":
+        """Return a cursor over this connection."""
+        return _ProfileCursor(self)
+
+    def rollback(self) -> None:
+        """Count the rollback."""
+        self.rollbacks += 1
+
+    def close(self) -> None:
+        """Mark the connection closed."""
+        self.closed = True
+
+
+class _ProfileCursor:
+    """Answers the two statements read_assigned_runtime_profile issues; any other statement fails the test."""
+
+    def __init__(self, connection: _ProfileConnection) -> None:
+        """Remember the connection."""
+        self._connection = connection
+
+    def execute(self, sql: str, params=None) -> None:
+        """Record the statement, and raise on the lookup when scripted to."""
+        assert sql in ("SET TRANSACTION READ ONLY", "SELECT kerno_bootstrap.session_runtime_profile()"), sql
+        self._connection.statements.append(sql)
+        if self._connection.fail and sql.startswith("SELECT"):
+            raise psycopg2.errors.UndefinedFunction(_FOREIGN_ERROR)
+
+    def fetchone(self):
+        """Return the scripted row."""
+        return self._connection.row
+
+
+def _profile_connect(requests: list, connection: _ProfileConnection):
+    """Return a stand-in for libpq that records each request and hands out connection."""
+    def connect(dsn=None, connection_factory=None, cursor_factory=None, **keyword_arguments):
+        """Record one request."""
+        requests.append((dsn, keyword_arguments))
+        return connection
+    return connect
+
+
+@pytest.mark.parametrize(
+    "row, expected", [(("pilot",), "pilot"), (("full",), "full"), ((None,), None)], ids=["pilot", "full", "null"]
+)
+def test_the_profile_is_read_as_the_runtime_through_the_guard_read_only_on_one_closed_connection(
+    workflow, monkeypatch, row, expected
+):
+    verify(workflow)
+    requests: list = []
+    connection = _ProfileConnection(row)
+    monkeypatch.setattr(safety, "_STATE", workflow.state)
+    monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _profile_connect(requests, connection))
+    assert conftest.read_assigned_runtime_profile(workflow.state.runtime_target) == expected
+    assert requests == [(RUNTIME_URL, {"application_name": "kerno-test-runtime-profile"})]
+    assert connection.statements == ["SET TRANSACTION READ ONLY", "SELECT kerno_bootstrap.session_runtime_profile()"]
+    assert connection.rollbacks == 1 and connection.closed
+
+
+def test_a_failed_profile_lookup_still_closes_its_connection(workflow, monkeypatch):
+    verify(workflow)
+    connection = _ProfileConnection(None, fail=True)
+    monkeypatch.setattr(safety, "_STATE", workflow.state)
+    monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _profile_connect([], connection))
+    with pytest.raises(psycopg2.Error):
+        conftest.read_assigned_runtime_profile(workflow.state.runtime_target)
+    assert connection.closed and len(connection.statements) == 2
+
+
+def test_the_profile_read_is_refused_by_the_guard_before_the_runtime_is_verified(workflow, monkeypatch):
+    monkeypatch.setattr(safety, "_STATE", workflow.state)
+    monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _must_not_reach_libpq)
+    with pytest.raises(safety.DatabaseTargetRejected, match="only after its live verification") as refused:
+        conftest.read_assigned_runtime_profile(workflow.state.runtime_target)
+    assert _credential_free(str(refused.value))
 
 
 @pytest.mark.parametrize("configured", [False, True], ids=["nothing configured", "both identities configured"])
@@ -990,11 +1274,14 @@ def test_the_runtime_flag_without_the_live_flag_is_a_usage_error(monkeypatch, co
         conftest.pytest_configure(_Options(require_runtime=True))
 
 
-def test_configure_accepts_the_final_acceptance_flags_when_both_identities_are_configured(monkeypatch):
+@pytest.mark.parametrize("profile", _PROFILES)
+def test_configure_accepts_the_final_acceptance_flags_when_both_identities_are_configured(monkeypatch, profile):
     state = safety.ProcessState(target=make_target(), runtime_target=make_runtime_target())
     isolate_conftest(monkeypatch, state=state)
-    conftest.pytest_configure(_Options(require_live=True, require_runtime=True))
+    conftest.pytest_configure(_Options(require_live=True, require_runtime=True, runtime_profile=profile))
     assert conftest._REQUIRE_LIVE == {"enabled": True} and conftest._REQUIRE_RUNTIME == {"enabled": True}
+    assert conftest._SELECTED_RUNTIME_PROFILE == {"value": profile}
+    assert conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
 
 
 _SKIP_KINDS = [
@@ -1017,9 +1304,14 @@ _NEVER_VERIFIED = "the runtime identity was never verified live (no runtime-iden
 _NO_SESSION = "exclusive test-database session was never opened"
 
 
-def _required_runtime_run(monkeypatch, state) -> None:
+def _profile_never_verified(profile: str = "full") -> str:
+    """The missing-proof entry for a run whose --runtime-profile was never verified against the database."""
+    return f"the runtime login's assigned grant profile was never verified as {profile!r} (--runtime-profile)"
+
+
+def _required_runtime_run(monkeypatch, state, runtime_profile: str = "full") -> None:
     """Isolate conftest for a --require-live-database --require-runtime-identity run over state."""
-    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=state)
+    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=state, runtime_profile=runtime_profile)
 
 
 def _configured_but_unproved() -> safety.ProcessState:
@@ -1031,14 +1323,19 @@ def _configured_but_unproved() -> safety.ProcessState:
 def test_under_the_runtime_flag_any_skip_turns_a_passing_run_into_a_failure(workflow, monkeypatch, keywords, bucket):
     verify(workflow)
     _required_runtime_run(monkeypatch, workflow.state)
+    record_verified_profile(workflow.state)
     conftest.pytest_runtest_logreport(_report(keywords))
     assert _finish() == pytest.ExitCode.TESTS_FAILED
     assert conftest._MISSING_REQUIRED_PROOF == []
 
 
-def test_under_the_runtime_flag_a_verified_run_without_skips_passes_and_a_failure_stays_a_failure(workflow, monkeypatch):
+@pytest.mark.parametrize("profile", _PROFILES)
+def test_under_the_runtime_flag_a_verified_run_without_skips_passes_and_a_failure_stays_a_failure(
+    workflow, monkeypatch, profile
+):
     verify(workflow)
-    _required_runtime_run(monkeypatch, workflow.state)
+    _required_runtime_run(monkeypatch, workflow.state, runtime_profile=profile)
+    record_verified_profile(workflow.state, profile)
     assert _finish() == pytest.ExitCode.OK and conftest._MISSING_REQUIRED_PROOF == []
     conftest.pytest_runtest_logreport(_report({}))
     assert _finish(pytest.ExitCode.TESTS_FAILED) == pytest.ExitCode.TESTS_FAILED
@@ -1046,6 +1343,7 @@ def test_under_the_runtime_flag_a_verified_run_without_skips_passes_and_a_failur
 
 def test_under_the_runtime_flag_an_unverified_runtime_identity_fails_a_run_without_skips(workflow, monkeypatch):
     _required_runtime_run(monkeypatch, workflow.state)
+    record_verified_profile(workflow.state)
     assert _finish() == pytest.ExitCode.TESTS_FAILED
     assert conftest._MISSING_REQUIRED_PROOF == [_NEVER_VERIFIED]
 
@@ -1053,15 +1351,48 @@ def test_under_the_runtime_flag_an_unverified_runtime_identity_fails_a_run_witho
 def test_under_the_runtime_flag_a_run_that_never_opened_the_exclusive_session_fails(monkeypatch):
     state = safety.ProcessState(target=make_target(), runtime_target=make_runtime_target(), runtime_verified=True)
     _required_runtime_run(monkeypatch, state)
+    record_verified_profile(state)
     assert _finish() == pytest.ExitCode.TESTS_FAILED
     assert len(conftest._MISSING_REQUIRED_PROOF) == 1 and _NO_SESSION in conftest._MISSING_REQUIRED_PROOF[0]
 
 
-def test_under_the_runtime_flag_configured_targets_alone_name_both_missing_proofs(monkeypatch):
+@pytest.mark.parametrize("profile", _PROFILES)
+def test_under_the_runtime_flag_an_unverified_grant_profile_fails_an_otherwise_complete_run(
+    workflow, monkeypatch, profile
+):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state, runtime_profile=profile)
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    assert conftest._MISSING_REQUIRED_PROOF == [_profile_never_verified(profile)]
+
+
+def test_under_the_runtime_flag_a_profile_verified_as_the_other_one_is_still_missing(workflow, monkeypatch):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state, runtime_profile="pilot")
+    record_verified_profile(workflow.state, "full")
+    assert _finish() == pytest.ExitCode.TESTS_FAILED
+    assert conftest._MISSING_REQUIRED_PROOF == [_profile_never_verified("pilot")]
+
+
+@pytest.mark.parametrize(
+    "prior",
+    [pytest.ExitCode.TESTS_FAILED, pytest.ExitCode.INTERRUPTED, pytest.ExitCode.USAGE_ERROR,
+     pytest.ExitCode.NO_TESTS_COLLECTED],
+    ids=["failed", "interrupted", "usage error", "nothing collected"],
+)
+def test_an_unverified_grant_profile_is_reported_but_never_replaces_a_nonzero_outcome(workflow, monkeypatch, prior):
+    verify(workflow)
+    _required_runtime_run(monkeypatch, workflow.state)
+    assert _finish(prior) == prior
+    assert conftest._MISSING_REQUIRED_PROOF == [_profile_never_verified()]
+
+
+def test_under_the_runtime_flag_configured_targets_alone_name_every_missing_proof(monkeypatch):
     _required_runtime_run(monkeypatch, _configured_but_unproved())
     assert _finish() == pytest.ExitCode.TESTS_FAILED
     missing = conftest._MISSING_REQUIRED_PROOF
-    assert len(missing) == 2 and _NO_SESSION in missing[0] and missing[1] == _NEVER_VERIFIED
+    assert len(missing) == 3 and _NO_SESSION in missing[0]
+    assert missing[1:] == [_NEVER_VERIFIED, _profile_never_verified()]
 
 
 def test_under_the_runtime_flag_a_verified_run_whose_lock_was_lost_is_interrupted(workflow, monkeypatch):
@@ -1081,7 +1412,7 @@ def test_under_the_runtime_flag_a_verified_run_whose_lock_was_lost_is_interrupte
 def test_missing_live_proof_is_reported_but_never_replaces_a_nonzero_outcome(monkeypatch, prior):
     _required_runtime_run(monkeypatch, _configured_but_unproved())
     assert _finish(prior) == prior
-    assert len(conftest._MISSING_REQUIRED_PROOF) == 2
+    assert len(conftest._MISSING_REQUIRED_PROOF) == 3
 
 
 @pytest.mark.parametrize("require_live", [False, True], ids=["no flag", "live flag only"])
@@ -1097,6 +1428,7 @@ def test_finishing_a_required_run_opens_no_connection_to_supply_missing_proof(wo
 
     monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _must_not_reach_libpq)
     monkeypatch.setattr(safety, "verify_runtime_identity", must_not_verify)
+    monkeypatch.setattr(conftest, "read_assigned_runtime_profile", _must_not_read_profile)
     _required_runtime_run(monkeypatch, workflow.state)
     already_run = len(workflow.guard.executed)
     assert _finish() == pytest.ExitCode.TESTS_FAILED
@@ -1129,23 +1461,65 @@ def test_without_either_flag_no_skip_fails_the_run(monkeypatch):
 class _Item:
     """A collected test as pytest_collection_modifyitems sees it."""
 
-    def __init__(self, *fixturenames: str) -> None:
-        """Remember the fixture names; no markers yet."""
+    def __init__(self, *fixturenames: str, markers: tuple[str, ...] = ()) -> None:
+        """Remember the fixture names and the markers the test was declared with."""
         self.fixturenames = list(fixturenames)
-        self.markers: list[str] = []
+        self.markers: list[str] = list(markers)
 
     def add_marker(self, marker) -> None:
         """Record the marker's name."""
         self.markers.append(marker.name)
+
+    def get_closest_marker(self, name: str):
+        """The marker's name when the item carries it, else None; conftest only asks whether it is present."""
+        return name if name in self.markers else None
 
 
 def test_collection_marks_every_runtime_fixture_user_as_runtime_identity_and_integration():
     items = [
         _Item("runtime_connection", "request"), _Item("runtime_pool", "monkeypatch"), _Item("db_connection"), _Item(),
     ]
-    conftest.pytest_collection_modifyitems(None, items)
+    config = _Options()
+    conftest.pytest_collection_modifyitems(config, items)
     marked = ["runtime_identity", "integration"]
     assert [item.markers for item in items] == [marked, marked, [], []]
+    assert len(items) == 4 and config.hook.deselected == []
+
+
+def _profile_items() -> dict[str, _Item]:
+    """One unmarked and one pilot_profile test, each with and without a runtime fixture, by name."""
+    return {
+        "runtime": _Item("runtime_pool"), "unit": _Item(),
+        "pilot runtime": _Item("runtime_connection", markers=("pilot_profile",)),
+        "pilot unit": _Item(markers=("pilot_profile",)),
+    }
+
+
+@pytest.mark.parametrize(
+    "profile, kept, deselected",
+    [
+        ("full", ["runtime", "unit"], ["pilot runtime", "pilot unit"]),
+        ("pilot", ["pilot runtime", "pilot unit"], ["runtime", "unit"]),
+    ],
+)
+def test_collection_keeps_only_the_selected_profile_and_reports_the_rest_as_deselected(profile, kept, deselected):
+    by_name = _profile_items()
+    items = list(by_name.values())
+    config = _Options(runtime_profile=profile)
+    conftest.pytest_collection_modifyitems(config, items)
+    assert items == [by_name[name] for name in kept]
+    assert config.hook.deselected == [[by_name[name] for name in deselected]]
+    marked = ["runtime_identity", "integration"]
+    assert by_name["runtime"].markers == marked and by_name["pilot runtime"].markers == ["pilot_profile", *marked]
+    assert by_name["unit"].markers == [] and by_name["pilot unit"].markers == ["pilot_profile"]
+
+
+def test_a_pilot_collection_with_no_pilot_tests_selects_nothing_and_deselects_everything():
+    items = [_Item("runtime_pool"), _Item()]
+    everything = list(items)
+    config = _Options(runtime_profile="pilot")
+    conftest.pytest_collection_modifyitems(config, items)
+    assert items == [] and config.hook.deselected == [everything]
 
 
 class _IdentityConnection:
@@ -1261,9 +1635,14 @@ class _FixtureRequest:
 
 
 def _runtime_fixture_ready(held: types.SimpleNamespace, monkeypatch, opened: list) -> _FixtureRequest:
-    """Verify the runtime, point conftest and the guard at this workflow, and return a final-acceptance request."""
+    """Verify the runtime and its "full" profile, point conftest and the guard at this workflow, and return a request.
+
+    The profile is recorded first, so the fixture must not read it again: a
+    second read would reach the identity-only fake connection and fail.
+    """
     verify(held)
     isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=held.state)
+    record_verified_profile(held.state)
     monkeypatch.setattr(safety, "_STATE", held.state)
     monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", physical_connections(opened))
     return _FixtureRequest(_Options(require_live=True, require_runtime=True))
@@ -1307,6 +1686,24 @@ def test_the_runtime_connection_fixture_asks_for_the_owner_fixture_first_and_clo
     assert raw.closed and raw.rollbacks == 2
 
 
+@pytest.mark.parametrize("fixture_name", ["runtime_connection", "runtime_pool"])
+def test_a_runtime_fixture_stops_the_run_before_its_first_connection_when_the_assigned_profile_differs(
+    workflow, monkeypatch, fixture_name
+):
+    verify(workflow)
+    isolate_conftest(monkeypatch, require_live=True, require_runtime=True, state=workflow.state)
+    monkeypatch.setattr(safety, "_STATE", workflow.state)
+    monkeypatch.setattr(safety, "_ORIGINAL_CONNECT", _must_not_reach_libpq)
+    monkeypatch.setattr(conftest, "read_assigned_runtime_profile", _AssignedProfile("pilot"))
+    request = _FixtureRequest(_Options(require_live=True, require_runtime=True))
+    fixture_function = getattr(conftest, fixture_name).__wrapped__
+    arguments = (request,) if fixture_name == "runtime_connection" else (request, monkeypatch)
+    outcome = _outcome_of(lambda: next(fixture_function(*arguments)))
+    assert isinstance(outcome, pytest.exit.Exception), f"expected the run to stop, got {outcome!r}"
+    assert outcome.returncode == pytest.ExitCode.USAGE_ERROR and "runtime profile mismatch" in str(outcome)
+    assert request.requested == ["db_connection"] and conftest._VERIFIED_RUNTIME_PROFILE == {"value": None}
+
+
 def test_without_runtime_settings_the_runtime_connection_fixture_skips_only_after_asking_for_the_owner_fixture(
     monkeypatch,
 ):
@@ -1342,8 +1739,9 @@ def _summary_cases() -> list:
             safety.ProcessState(
                 target=owner, runtime_target=runtime, runtime_source="the process environment", runtime_verified=True,
             ),
-            f"runtime identity: {RUNTIME_APPROVAL} verified (settings from the process environment)", False,
-            id="verified",
+            f"runtime identity: {RUNTIME_APPROVAL} verified (settings from the process environment); "
+            "grant profile: not verified", False,
+            id="verified, profile not yet read",
         ),
         pytest.param(
             safety.ProcessState(target=owner, runtime_target=runtime, runtime_not_ready="the server refused the login"),
@@ -1365,6 +1763,22 @@ def test_the_terminal_summary_states_the_runtime_identity_without_credentials(mo
     assert _credential_free("\n".join(entry[0] for entry in reporter.lines))
 
 
+@pytest.mark.parametrize("profile", _PROFILES)
+def test_the_terminal_summary_names_the_verified_grant_profile(monkeypatch, profile):
+    state = safety.ProcessState(
+        target=make_target(), runtime_target=make_runtime_target(), runtime_source=".env.test.runtime",
+        runtime_verified=True,
+    )
+    isolate_conftest(monkeypatch, state=state, runtime_profile=profile)
+    record_verified_profile(state, profile)
+    reporter = _Reporter()
+    conftest.pytest_terminal_summary(reporter, pytest.ExitCode.OK, None)
+    expected = (
+        f"runtime identity: {RUNTIME_APPROVAL} verified (settings from .env.test.runtime); grant profile: {profile}"
+    )
+    assert (expected, False) in reporter.lines
+
+
 def test_the_summary_names_each_live_proof_a_required_runtime_run_never_completed(monkeypatch):
     _required_runtime_run(monkeypatch, _configured_but_unproved())
     _finish()
@@ -1374,7 +1788,7 @@ def test_the_summary_names_each_live_proof_a_required_runtime_run_never_complete
     assert incomplete == [
         f"FAILED: required runtime-identity run incomplete: {problem}" for problem in conftest._MISSING_REQUIRED_PROOF
     ]
-    assert len(incomplete) == 2 and _credential_free("\n".join(incomplete))
+    assert len(incomplete) == 3 and _credential_free("\n".join(incomplete))
 
 
 def test_the_summary_under_the_runtime_flag_lists_every_skip_and_allows_none(monkeypatch):

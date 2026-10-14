@@ -31,6 +31,10 @@ from src.services.dora_roi_service import (
 )
 
 router = APIRouter()
+# GET /windows (reporting windows) lives on its own router: the pilot serving
+# profile registers the entry operations on `router` but not this anonymous read
+# (PILOT-READY-003, kickoff §4.3). Submission windows are a different surface.
+windows_router = APIRouter()
 
 
 @router.post("/entries", status_code=201)
@@ -110,7 +114,7 @@ def update_entry(
     return RegisterEntryResponse.model_validate(result)
 
 
-@router.get("/windows")
+@windows_router.get("/windows")
 def list_windows(conn=Depends(get_conn)) -> list[ReportingWindowResponse]:
     """List DORA reporting windows. Global reference data — no auth required."""
     results = list_reporting_windows(conn)

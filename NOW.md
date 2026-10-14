@@ -31,7 +31,8 @@ not replace the next slice with more NIS2 cards.
 One UI: Next.js `frontend/`.
 
 **Hygiene (landed on `main`, do not re-do):** C1 `ed3f3f2`, A `7b6738b`,
-B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 still held.
+B `715dbbe`, D `fb741f0` + `e5c28ac`. C2 merged via PR #19 (`8229843`);
+applied only to the disposable `kerno_test`, not to any customer environment.
 
 **KER-409 through KER-412, KER-402, CORS/docs hygiene, and the frozen
 filing download are LANDED. Do not re-implement any of them.** The DORA
@@ -369,7 +370,8 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | A | `require_role` on six routes + structural sweep | `7b6738b` on `main` |
 | B | Legacy dashboard + OpenAPI off outside dev | `715dbbe` on `main` |
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
-| C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Checkpoint B passed on the unmerged branch** `pilot/pilot-ready-002-c2-runtime` (draft PR #19), pending independent review: final acceptance at `fb9f5068` with both identities verified, 2212 passed, 0 failed, 0 skipped (record in `docs/test_database_runbook.md` §8). On `kerno_test` only: 029 applied, `kerno_test_app` created by the owner and granted the full profile. The no-FORCE exception and the H1/H2 residuals are approved for synthetic disposable-test validation only, not for customer data. Not merged. |
+| C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Merged via PR #19** (`8229843`). Execution evidence: final acceptance on the then-unmerged branch at `fb9f5068`, both identities verified, 2212 passed, 0 failed, 0 skipped, after a recorded 2-failed run at `98513958` (record in `docs/test_database_runbook.md` §8). On `kerno_test` only: 029 applied, `kerno_test_app` created by the owner and granted the full profile. Not deployed; no customer environment. The no-FORCE exception and the H1/H2 residuals are approved for synthetic disposable-test validation only, not for customer data. |
+| PILOT-READY-003 ([#20](https://github.com/jprom89/Kerno/issues/20)) | Pilot serving profile (G10), matching runtime grants, startup profile check | **Checkpoint B passed on the unmerged branch** `pilot/pilot-ready-003-serving-profile` (draft PR #21), pending independent review: at `9a59e32f`, 030 round trip, full run 2818 passed / 0 skipped, switch to pilot, pilot run 57 passed / 0 skipped, restore to full, restoration proof 75 passed (record in `docs/test_database_runbook.md` §9). On `kerno_test` only: head `e6f7g8h9`, runtime back on the full profile. Pilot exclusions are not accepted for customer data. Not merged. |
 | PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | Merged via PR #17 (`a849708`): `docs/pilot_readiness_kickoff.md`. Its exceptions, risk acceptances and pilot exclusions are proposed, not approved. Deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
@@ -399,8 +401,10 @@ KER-405 stays on hold except the two items in Ticket D.
 Pulled from the August 2026 audit. Register KER-107 (KER-409), submissions 404,
 and the frozen filing download are **done** — they are not in this list.
 
-- C2 — app DB role is not the table owner; FORCE on `users` and
-  `webhook_registrations` with a login bootstrap that still works
+- ~~C2 — app DB role is not the table owner; FORCE on `users` and
+  `webhook_registrations` with a login bootstrap that still works~~ — done via
+  PR #19, without FORCE on those two tables (the approved no-FORCE exception,
+  kickoff §1.5)
 - Login and webhook `/ingest` rate limits
 - JWT revocation / shorter TTL
 - `_CursorResult.fetchall` / `fetchone` swallowing exceptions

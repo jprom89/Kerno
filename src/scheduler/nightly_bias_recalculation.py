@@ -38,6 +38,14 @@ tenant can also be recalculated on demand through
 POST /api/v1/scheduler/run-recalculation (src/api/routers/scheduler.py), which
 calls ``run_tenant_recalculation`` for the authenticated tenant.
 
+Serving profile (PILOT-READY-003). This job is excluded from the pilot. It is
+a separate process, so it reads KERNO_SERVING_PROFILE itself with the same
+resolver the API uses, before it opens any connection: "pilot", a missing
+value outside development, or an unrecognised value makes it log the reason
+and exit with SCHEDULED_JOB_REFUSED_EXIT_CODE without touching the database.
+The scheduler entry that runs it must therefore be given the same
+KERNO_SERVING_PROFILE as the API it belongs to.
+
 How to run or test
 ------------------
 Unit tests (no database required):
@@ -61,12 +69,18 @@ import uuid
 
 import psycopg2
 
-from config.constants import MILLISECONDS_PER_SECOND, RbacRole
+from config.constants import MILLISECONDS_PER_SECOND, SCHEDULED_JOB_REFUSED_EXIT_CODE, RbacRole
 
 # _ExecutableConn is imported rather than reimplemented so the cron entrypoint
 # converts :name parameters (and vector values) exactly the way every other
 # caller does — dependencies.py is the single home for that adaptation logic.
 from src.api.dependencies import _ExecutableConn
+from src.api.serving_profile import (
+    PILOT_PROFILE,
+    SERVING_PROFILE_VARIABLE,
+    ServingProfileError,
+    resolve_serving_profile,
+)
 from src.services.audit_log import append_audit_entry
 from src.services.bias_recalculation_service import (
     coerce_vector,
@@ -391,17 +405,35 @@ def _cron_transaction():
         raw_conn.close()
 
 
+def serving_profile_refusal(environ) -> str | None:
+    """Return why this job must not run under the configured serving profile, or None when it may.
+
+    Uses the API's own resolver: a blank value means "full" only when
+    KERNO_ENV is development. The pilot excludes this job (kickoff §4.3).
+    """
+    development = environ.get("KERNO_ENV", "") == "development"
+    try:
+        profile = resolve_serving_profile(environ.get(SERVING_PROFILE_VARIABLE), development)
+    except ServingProfileError as exc:
+        return str(exc)
+    if profile == PILOT_PROFILE:
+        return "the nightly bias recalculation is excluded from the pilot serving profile"
+    return None
+
+
 def main() -> None:
-    """Cron entrypoint: recalculate every active tenant's bias vector (KER-201).
+    """Cron entrypoint: recalculate every active tenant's bias vector (KER-201), unless the profile excludes it.
 
     Invoke nightly from the platform scheduler:
 
         python -m src.scheduler.nightly_bias_recalculation
 
-    Loads .env when python-dotenv is available (matching the app factory), then
-    runs the full batch. Per-tenant failures are logged and skipped inside the
-    batch; the process exits normally so the scheduler treats partial failure
-    as a logged condition, not a crash loop.
+    Loads .env when python-dotenv is available (matching the app factory),
+    then checks the serving profile before any connection: a refusal is
+    logged and the process exits with SCHEDULED_JOB_REFUSED_EXIT_CODE.
+    Otherwise it runs the full batch. Per-tenant failures are logged and
+    skipped inside the batch; the process exits normally so the scheduler
+    treats partial failure as a logged condition, not a crash loop.
     """
     try:
         from dotenv import load_dotenv
@@ -409,6 +441,10 @@ def main() -> None:
     except ImportError:
         pass
     logging.basicConfig(level=logging.INFO)
+    refusal = serving_profile_refusal(os.environ)
+    if refusal is not None:
+        logger.error("Nightly bias recalculation refused before any database work: %s.", refusal)
+        raise SystemExit(SCHEDULED_JOB_REFUSED_EXIT_CODE)
     admin_session = _TenantSession(PLATFORM_SCHEDULER_TENANT_ID)
     summary = run_nightly_bias_recalculation(_cron_transaction, admin_session)
     logger.info(

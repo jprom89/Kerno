@@ -1681,7 +1681,7 @@ parked so it is not lost, not because it has been assessed and cleared.
 | A | require_role() on six ungated mutating/sensitive routes | ✅ done, commit 7b6738b |
 | B | Lock down the legacy dashboard and OpenAPI docs outside dev | ✅ done |
 | D | Server-side justification_text enforcement + ai_decision_log append-only triggers | ✅ done |
-| C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | **held — its own PR, needs a real DB role** |
+| C2 | Non-owner DB role + FORCE RLS on users/webhook_registrations | ✅ merged via PR #19 (`8229843`, PILOT-READY-002): non-owner runtime role, full profile. Live acceptance on the disposable `kerno_test` only: 2,212 passed at `fb9f506`, after a recorded 2-failed run at `9851395`. Not applied to any customer environment. FORCE on users/webhook_registrations was **not** added; that no-FORCE exception and the H1/H2 residuals are approved for the synthetic tests only (`docs/test_database_runbook.md` §8) |
 
 ### Ticket A — authorisation matrix (approved)
 
@@ -1852,7 +1852,10 @@ application still connects as the table owner (ticket C2 held) and can disable
 the triggers, and unlike `audit_log` there is no hash chain — §13 KER-203
 decision 2 deliberately did not give this table one. "Database-enforced" and
 "tamper-resistant" are both overclaims until C2 lands, and even then a stronger
-word needs a second layer this table does not have. The §15 approved demo
+word needs a second layer this table does not have. (Status note, 12 October
+2026: C2 is merged and the application can run as a non-owner login, but no
+customer environment runs that way yet, and this table still has no hash
+chain; the wording rule above stands.) The §15 approved demo
 sentence covers **human** decisions and is unchanged; it must not be extended
 to the AI log.
 

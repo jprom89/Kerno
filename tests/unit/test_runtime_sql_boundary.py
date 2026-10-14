@@ -2,8 +2,10 @@
 
 What:  Scans every string literal in src/**/*.py, except docstrings, and checks
        that none reads the users table, none reads signing_secret from
-       webhook_registrations, and that the two kerno_bootstrap helpers are
-       named only by auth_service.py and webhook_service.py.
+       webhook_registrations, that the two kerno_bootstrap helpers are named
+       only by auth_service.py and webhook_service.py, and that the profile
+       lookup kerno_bootstrap.session_runtime_profile() is named only by
+       runtime_identity.py and only ever called without an argument.
 Why:   C2 (PILOT-READY-002, docs/pilot_readiness_kickoff.md §5 item 3). The
        runtime login holds no grant on users and none on signing_secret, so
        such a query would fail in production while passing every owner-run
@@ -11,6 +13,9 @@ Why:   C2 (PILOT-READY-002, docs/pilot_readiness_kickoff.md §5 item 3). The
        non-docstring literal is treated as possible SQL and matched without
        regard to case; comments never reach the AST. A prose string that
        trips a rule is a cheap, visible failure; a missed query is not.
+       PILOT-READY-003 (migration 030) adds the one argument-less lookup the
+       startup profile check needs; the runtime still cannot name another
+       role or read the owner-only assignment record.
 How:   pytest tests/unit/test_runtime_sql_boundary.py -v
 """
 
@@ -34,6 +39,13 @@ BOOTSTRAP_HELPER_CALLERS = {
     ("src/services/auth_service.py", "resolve_login"),
     ("src/services/webhook_service.py", "webhook_verification"),
 }
+
+# The startup profile check (PILOT-READY-003) and its one caller. The helper
+# answers only for session_user, so every call must pass no argument.
+PROFILE_LOOKUP_CALLER = ("src/api/runtime_identity.py", "session_runtime_profile")
+_PROFILE_LOOKUP_CALL = re.compile(r"\bkerno_bootstrap\.session_runtime_profile\s*\(([^)]*)\)", re.IGNORECASE)
+
+BOOTSTRAP_OBJECTS_NAMED_BY_APPLICATION_CODE = BOOTSTRAP_HELPER_CALLERS | {PROFILE_LOOKUP_CALLER}
 
 
 def _docstring_nodes(tree: ast.AST) -> set[int]:
@@ -136,10 +148,23 @@ def test_the_bootstrap_helpers_are_named_only_by_their_two_callers():
     assert named == BOOTSTRAP_HELPER_CALLERS
 
 
+def test_the_profile_lookup_is_named_only_by_the_runtime_identity_check():
+    named = {(path, name) for path, name in _bootstrap_objects_named() if name == PROFILE_LOOKUP_CALLER[1]}
+    assert named == {PROFILE_LOOKUP_CALLER}
+
+
+def test_every_profile_lookup_in_application_code_passes_no_argument():
+    calls = []
+    for path, literals in src_string_literals().items():
+        for literal in literals:
+            calls.extend((path, arguments.strip()) for arguments in _PROFILE_LOOKUP_CALL.findall(literal))
+    assert calls == [(PROFILE_LOOKUP_CALLER[0], "")]
+
+
 def test_no_other_kerno_bootstrap_object_is_named_in_application_code():
     # The procedures and the assignment record are owner-only; the runtime can
     # never use them, so application code has no reason to name them.
-    assert _bootstrap_objects_named() == BOOTSTRAP_HELPER_CALLERS
+    assert _bootstrap_objects_named() == BOOTSTRAP_OBJECTS_NAMED_BY_APPLICATION_CODE
 
 
 # ── The scanner and the rules themselves ────────────────────────────────────
@@ -197,3 +222,17 @@ def test_the_users_rule(sql, expected):
 )
 def test_the_signing_secret_rule(sql, expected):
     assert reads_signing_secret(sql) is expected
+
+
+@pytest.mark.parametrize(
+    "sql, arguments",
+    [
+        ("SELECT kerno_bootstrap.session_runtime_profile()", [""]),
+        ("select KERNO_BOOTSTRAP.session_runtime_profile ( )", [" "]),
+        ("SELECT kerno_bootstrap.session_runtime_profile('kerno_test')", ["'kerno_test'"]),
+        ("SELECT kerno_bootstrap.session_runtime_profile(:role_name)", [":role_name"]),
+        ("SELECT profile FROM kerno_bootstrap.runtime_assignment", []),
+    ],
+)
+def test_the_profile_lookup_call_rule(sql, arguments):
+    assert _PROFILE_LOOKUP_CALL.findall(sql) == arguments

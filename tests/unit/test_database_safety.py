@@ -681,17 +681,23 @@ def test_dotenv_loading_stays_disabled_in_this_test_process_after_the_app_is_imp
 # ── The fixture and hooks: stop, re-prove, release ──────────────────────────
 
 
-def isolate_skip_accounting(monkeypatch, require_live: bool = False, require_runtime: bool = False) -> None:
-    """Give conftest fresh skip lists, flags and missing-proof record, so a hook test never writes into the real run's.
+def isolate_skip_accounting(
+    monkeypatch, require_live: bool = False, require_runtime: bool = False, runtime_profile: str = "full"
+) -> None:
+    """Give conftest fresh skip lists, flags, runtime-profile records and missing-proof record for one hook test.
 
     A fake skip left in the real module-level lists would fail a real
-    --require-live-database or --require-runtime-identity run.
+    --require-live-database or --require-runtime-identity run, and a fake
+    verified profile left in the real record would let a real run skip its
+    live profile read and pass the final-proof check without it.
     """
     monkeypatch.setattr(conftest, "_LIVE_TEST_SKIPS", [])
     monkeypatch.setattr(conftest, "_RUNTIME_TEST_SKIPS", [])
     monkeypatch.setattr(conftest, "_OTHER_SKIPS", [])
     monkeypatch.setattr(conftest, "_REQUIRE_LIVE", {"enabled": require_live})
     monkeypatch.setattr(conftest, "_REQUIRE_RUNTIME", {"enabled": require_runtime})
+    monkeypatch.setattr(conftest, "_SELECTED_RUNTIME_PROFILE", {"value": runtime_profile})
+    monkeypatch.setattr(conftest, "_VERIFIED_RUNTIME_PROFILE", {"value": None})
     monkeypatch.setattr(conftest, "_MISSING_REQUIRED_PROOF", [])
 
 

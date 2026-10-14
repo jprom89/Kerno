@@ -68,6 +68,13 @@ from tests import _database_safety as test_database_safety
 
 _TEST_DATABASE = test_database_safety.bootstrap_test_process(read_runtime=True)
 
+# src/api/app.py builds an app at import, and outside development it requires
+# KERNO_SERVING_PROFILE (PILOT-READY-003). Test processes build full-profile
+# apps unless a test passes serving_profile="pilot" itself; an inherited value
+# is overridden, never trusted. The runtime login's live grant profile is a
+# separate thing, chosen per run with --runtime-profile.
+os.environ["KERNO_SERVING_PROFILE"] = "full"
+
 from config.constants import EMBEDDING_DIMENSION  # noqa: E402 — after the boundary on purpose
 
 try:
@@ -86,6 +93,14 @@ _RUNTIME_TEST_SKIPS: list[str] = []
 _OTHER_SKIPS: list[str] = []
 _REQUIRE_RUNTIME = {"enabled": False}
 _RUNTIME_FIXTURES = frozenset({"runtime_connection", "runtime_pool"})
+# --runtime-profile: the grant profile the runtime login must hold for this run
+# (PILOT-READY-003). Tests marked pilot_profile run only under "pilot", every
+# other test only under "full". The profile actually assigned is verified as
+# the runtime login, once per run, before the first runtime test.
+RUNTIME_PROFILES = ("full", "pilot")
+_SELECTED_RUNTIME_PROFILE = {"value": "full"}
+_VERIFIED_RUNTIME_PROFILE = {"value": None}
+_ASSIGNED_PROFILE_SQL = "SELECT kerno_bootstrap.session_runtime_profile()"
 # One TestClient request at a time, plus headroom for a nested lease.
 RUNTIME_POOL_MAX_CONNECTIONS = 4
 # Set when the lock could not be re-proved at the end of the session.
@@ -336,14 +351,16 @@ def _skip_or_fail(config, reason: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def require_runtime_identity(config, state=None):
+def require_runtime_identity(config, state=None, read_profile=None):
     """Return the verified runtime target, or skip, fail or stop the run per the §2.3 item 8 behaviour table.
 
     Not configured: skip by name, or fail under --require-runtime-identity.
     Configured but the login is refused: fail this test (a runtime-setup
     failure, nonzero with or without the flag). Unsafe identity, unsafe
-    settings or an unproved lock: stop the run. Must be called after the
-    pytest workflow's exclusive session is held (db_connection first).
+    settings or an unproved lock: stop the run. Then the assigned grant
+    profile must equal --runtime-profile (require_runtime_profile). Must be
+    called after the pytest workflow's exclusive session is held
+    (db_connection first).
     """
     state = state or _TEST_DATABASE
     if state.runtime_target is None:
@@ -351,13 +368,58 @@ def require_runtime_identity(config, state=None):
             pytest.fail("runtime identity required but not configured")
         pytest.skip("runtime identity not configured")
     try:
-        return test_database_safety.verify_runtime_identity(state=state)
+        runtime = test_database_safety.verify_runtime_identity(state=state)
     except test_database_safety.RuntimeIdentityNotReady as exc:
         pytest.fail(f"runtime identity setup failure: {exc}")
     except test_database_safety.DatabaseExclusivityLost as exc:
         pytest.exit(f"test database exclusivity lost: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
     except test_database_safety.KernoTestDatabaseError as exc:
         pytest.exit(f"runtime identity refused: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
+    require_runtime_profile(config, runtime, state, read_profile)
+    return runtime
+
+
+def require_runtime_profile(config, runtime, state=None, read_profile=None) -> None:
+    """Stop the run unless the database assigns the runtime login exactly this run's --runtime-profile.
+
+    Read once per run, as the runtime login itself, through the owner-defined
+    lookup (migration 030); a mismatch, a missing assignment or a failed read
+    is a usage error, never a skip, because every runtime test of this run
+    would otherwise meet grants it was not written for.
+    """
+    expected = config.getoption("runtime_profile")
+    if _VERIFIED_RUNTIME_PROFILE["value"] == expected:
+        return
+    try:
+        assigned = (read_profile or read_assigned_runtime_profile)(runtime)
+    except test_database_safety.DatabaseExclusivityLost as exc:
+        pytest.exit(f"test database exclusivity lost: {exc}", returncode=pytest.ExitCode.INTERRUPTED)
+    except test_database_safety.KernoTestDatabaseError as exc:
+        pytest.exit(f"runtime profile refused: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
+    except psycopg2.Error as exc:
+        detail = test_database_safety.redact_all(str(exc).strip(), runtime, (state or _TEST_DATABASE).target)
+        pytest.exit(f"runtime profile could not be read: {detail}", returncode=pytest.ExitCode.USAGE_ERROR)
+    if assigned != expected:
+        pytest.exit(
+            f"runtime profile mismatch: the database assigns {assigned!r} to {runtime.identity}, but this run "
+            f"selected --runtime-profile {expected}; switch the grants with the guarded grant-runtime first.",
+            returncode=pytest.ExitCode.USAGE_ERROR,
+        )
+    _VERIFIED_RUNTIME_PROFILE["value"] = expected
+
+
+def read_assigned_runtime_profile(runtime) -> str | None:
+    """Ask, as the runtime login, which grant profile the database assigns to it; one short read-only connection."""
+    raw_conn = psycopg2.connect(runtime.url, application_name="kerno-test-runtime-profile")
+    try:
+        cursor = raw_conn.cursor()
+        cursor.execute("SET TRANSACTION READ ONLY")
+        cursor.execute(_ASSIGNED_PROFILE_SQL)
+        row = cursor.fetchone()
+        raw_conn.rollback()
+        return None if row is None else row[0]
+    finally:
+        raw_conn.close()
 
 
 def _require_runtime_session_user(raw_conn) -> None:
@@ -451,12 +513,21 @@ def pytest_addoption(parser) -> None:
         help="C2 acceptance: with --require-live-database, fail unless the kerno_test_app runtime "
         "identity is configured and verified, and fail the run if any test at all is skipped",
     )
+    parser.addoption(
+        "--runtime-profile",
+        choices=RUNTIME_PROFILES,
+        default="full",
+        help="the grant profile the runtime login holds for this run (default full): pilot runs only the "
+        "tests marked pilot_profile, full runs every other test; verified against the database's "
+        "assignment as the runtime login before the first runtime test",
+    )
 
 
 def pytest_configure(config) -> None:
     """Fail the run on invalid test settings, missing required settings, or parallel workers."""
     _REQUIRE_LIVE["enabled"] = bool(config.getoption("require_live_database"))
     _REQUIRE_RUNTIME["enabled"] = bool(config.getoption("require_runtime_identity"))
+    _SELECTED_RUNTIME_PROFILE["value"] = config.getoption("runtime_profile")
     if _REQUIRE_RUNTIME["enabled"] and not _REQUIRE_LIVE["enabled"]:
         raise pytest.UsageError("--require-runtime-identity must be combined with --require-live-database.")
     if _TEST_DATABASE.problem:
@@ -488,11 +559,27 @@ def _parallel_workers_requested(config) -> bool:
 
 
 def pytest_collection_modifyitems(config, items) -> None:
-    """Mark every test that uses a runtime fixture as runtime_identity and integration, so its skips are counted."""
+    """Mark runtime-fixture users runtime_identity and integration; keep only the tests of this run's profile.
+
+    Tests marked pilot_profile are selected only under --runtime-profile
+    pilot, and every other test only under full. Deselected tests are reported
+    as deselected, never as skipped; the two profile runs together cover the
+    whole collected suite.
+    """
     for item in items:
         if _RUNTIME_FIXTURES & set(item.fixturenames):
             item.add_marker(pytest.mark.runtime_identity)
             item.add_marker(pytest.mark.integration)
+    pilot_run = config.getoption("runtime_profile") == "pilot"
+    kept, deselected = [], []
+    for item in items:
+        if (item.get_closest_marker("pilot_profile") is not None) == pilot_run:
+            kept.append(item)
+        else:
+            deselected.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
 
 
 def pytest_runtest_logreport(report) -> None:
@@ -547,6 +634,11 @@ def _missing_required_proof(state) -> list[str]:
         )
     if not state.runtime_verified:
         missing.append("the runtime identity was never verified live (no runtime-identity test reached it)")
+    if _VERIFIED_RUNTIME_PROFILE["value"] != _SELECTED_RUNTIME_PROFILE["value"]:
+        missing.append(
+            f"the runtime login's assigned grant profile was never verified as "
+            f"{_SELECTED_RUNTIME_PROFILE['value']!r} (--runtime-profile)"
+        )
     return missing
 
 
@@ -588,7 +680,11 @@ def _runtime_identity_summary() -> str:
     if runtime is None:
         return "runtime identity: not configured - runtime-identity tests were skipped"
     if _TEST_DATABASE.runtime_verified:
-        return f"runtime identity: {runtime.identity} verified (settings from {_TEST_DATABASE.runtime_source})"
+        profile = _VERIFIED_RUNTIME_PROFILE["value"] or "not verified"
+        return (
+            f"runtime identity: {runtime.identity} verified (settings from {_TEST_DATABASE.runtime_source}); "
+            f"grant profile: {profile}"
+        )
     if _TEST_DATABASE.runtime_not_ready:
         return f"FAILED: runtime identity setup failure: {_TEST_DATABASE.runtime_not_ready}"
     return f"runtime identity: {runtime.identity} configured, not used in this run"

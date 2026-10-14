@@ -15,7 +15,10 @@ What:  Reports, as one JSON line on stdout, whether DATABASE_URL survived the
        that class only, so a run
        with no database can show the runtime fixture's own decision — skipped
        as "runtime identity not configured", failed, or stopped — and how its
-       skip is counted.
+       skip is counted. A sixth is marked pilot_profile and uses nothing
+       (PILOT-READY-003), so a run can show that --runtime-profile pilot
+       selects only it and that every other run deselects it, never skips it.
+       Its name shares no keyword with the other probes' -k selections.
 Why:   TEST-SAFETY-001 must prove the boundary holds in a genuine pytest
        process, with conftest loading in its real order, not only in unit
        tests of the helper. The development URL used here is fake and points
@@ -97,6 +100,13 @@ def test_probe_harmless_unit_check():
     # Uses no fixture and touches no database: a run selecting only this
     # cannot have verified anything, so --require-runtime-identity must fail it.
     assert "kerno_test_app".startswith("kerno_test")
+
+
+@pytest.mark.pilot_profile
+def test_probe_pilot_marked_check():
+    # Uses no fixture and touches no database; prints a marker so a run can
+    # show it actually ran, which only --runtime-profile pilot allows.
+    print("KERNO_PILOT_PROBE_RAN", flush=True)
 
 
 class TestRuntimeProbe:
