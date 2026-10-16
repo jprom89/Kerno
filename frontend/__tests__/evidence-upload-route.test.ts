@@ -1,20 +1,29 @@
 /**
- * __tests__/evidence-upload-route.test.ts — the evidence upload proxy verifies the session, then bounds the body (SEC-REMED-003).
+ * __tests__/evidence-upload-route.test.ts — the evidence upload proxy verifies the session and role, then bounds the body (SEC-REMED-003, PILOT-READY-004).
  *
  * What:  drives the real POST handler with request bodies that record every
  *        chunk pulled from them. A caller without a session the backend
- *        verifies is refused before one body byte is read; headers alone can
- *        refuse; otherwise the bytes that actually arrive are counted against
- *        the limit and reading stops at the first chunk over it. A verified
- *        upload within the limit is forwarded unparsed and byte-identical.
+ *        verifies, or whose verified role may not upload, is refused before
+ *        one body byte is read; headers alone can refuse; otherwise the bytes
+ *        that actually arrive are counted against the limit and reading stops
+ *        at the first chunk over it. A verified upload within the limit is
+ *        forwarded unparsed and byte-identical, and the backend's refusals are
+ *        relayed unchanged. A connection to the backend that breaks is a 502
+ *        with a string detail, or the busy 503 and its Retry-After when those
+ *        headers got through; never retried. After every test, every upload
+ *        slot has come back.
  * Why:   regression for finding resource-exhaustion.evidence-buffering — the
  *        proxy used to call request.formData() before any session check.
+ *        Deadlines and overlapping uploads: evidence-upload-admission.test.ts;
+ *        the same broken connection on a real socket:
+ *        evidence-upload-backend-reset.test.ts.
  * How:   npm test -- evidence-upload-route; mocked cookies, limits and backend.
  */
 
 import { NextRequest } from "next/server";
 
 import { POST } from "@/app/api/evidence/route";
+import { activeUploads } from "@/lib/upload-intake";
 import { config as middlewareConfig } from "@/middleware";
 
 const cookieGet = jest.fn();
@@ -22,10 +31,16 @@ jest.mock("next/headers", () => ({ cookies: async () => ({ get: cookieGet }) }))
 
 const TEST_FILE_LIMIT = 1024;
 const TEST_BODY_LIMIT = 2048;
+// Deadlines are generous here: nothing in this file should ever reach one.
 jest.mock("../lib/evidence-upload-limits", () => ({
   MAX_EVIDENCE_FILE_BYTES: 1024,
   EVIDENCE_UPLOAD_ENVELOPE_ALLOWANCE_BYTES: 1024,
   EVIDENCE_UPLOAD_MAX_BODY_BYTES: 2048,
+  EVIDENCE_UPLOAD_MAX_ACTIVE_PER_PROCESS: 2,
+  EVIDENCE_UPLOAD_RETRY_AFTER_SECONDS: 5,
+  EVIDENCE_UPLOAD_SESSION_CHECK_DEADLINE_MS: 10_000,
+  EVIDENCE_UPLOAD_RECEPTION_DEADLINE_MS: 10_000,
+  EVIDENCE_UPLOAD_FORWARD_DEADLINE_MS: 10_000,
 }));
 
 const ORIGIN = "https://kerno.example.test";
@@ -35,6 +50,8 @@ const BOUNDARY = "KernoSecRemed003Boundary";
 const MULTIPART = `multipart/form-data; boundary=${BOUNDARY}`;
 const CHUNK_BYTES = 600;
 const STORED = { record_id: "e0000000-0000-4000-e000-000000000031", deduplicated: false };
+const ROLE_REFUSAL = { detail: "your role is not permitted to perform this action" };
+const UNREACHABLE = { detail: "the evidence service could not be reached" };
 
 interface BodyProbe {
   stream: ReadableStream<Uint8Array>;
@@ -47,6 +64,7 @@ interface Forwarded {
 }
 
 let session: number | "unreachable";
+let identity: () => Response;
 let forwarded: Forwarded[];
 let operation: (init: RequestInit) => Promise<Response>;
 
@@ -66,6 +84,13 @@ function probeBody(chunks: Uint8Array<ArrayBuffer>[], failAfter?: number): BodyP
     },
   }, { highWaterMark: 0 });
   return { stream, pulled: () => pulled };
+}
+
+/** A session token whose payload claims a role; only the backend can say whether the claim is true. */
+function tokenClaiming(role: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "synthetic", role })).toString("base64url");
+  return `${header}.${payload}.`;
 }
 
 function bytes(text: string): Uint8Array<ArrayBuffer> {
@@ -113,18 +138,22 @@ beforeEach(() => {
     KERNO_TRUSTED_ORIGINS: ORIGIN, KERNO_API_URL: "http://backend.test" });
   cookieGet.mockReturnValue({ value: "synthetic-session" });
   session = 200;
+  identity = () => Response.json({ email: "u@example.test", role: "compliance_lead" }, { status: session as number });
   forwarded = [];
   operation = async () => Response.json(STORED, { status: 201 });
   global.fetch = jest.fn().mockImplementation(async (url: string, init: RequestInit = {}) => {
     if (url === SESSION_URL) {
       if (session === "unreachable") throw new TypeError("fetch failed");
-      return Response.json({ email: "u@example.test", role: "compliance_lead" }, { status: session });
+      return identity();
     }
     forwarded.push({ url, init });
     return operation(init);
   });
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  expect(activeUploads()).toBe(0);
+  jest.restoreAllMocks();
+});
 
 describe("POST /api/evidence — an unverified caller is refused before any body byte is read", () => {
   it("refuses a request with no session cookie without asking the backend", async () => {
@@ -164,6 +193,58 @@ describe("POST /api/evidence — an unverified caller is refused before any body
     session = 401;
     const response = await POST(upload(probeBody([]).stream, { "content-type": "application/json" }));
     expect(response.status).toBe(401);
+  });
+
+  it.each(["auditor", "platform_engineer", "end_customer_admin", "COMPLIANCE_LEAD", "compliance_lead ", ""])(
+    "refuses the verified role %p with 403 before reading or forwarding anything", async (role) => {
+      identity = () => Response.json({ email: "u@example.test", role });
+      const probe = probeBody(chunked(multipart(bytes("synthetic evidence"))));
+      const unpermitted = upload(probe.stream);
+      const formData = jest.spyOn(unpermitted, "formData");
+      const response = await POST(unpermitted);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("connection")).toBe("close");
+      expect(await response.json()).toEqual(ROLE_REFUSAL);
+      expect(probe.pulled()).toBe(0);
+      expect(formData).not.toHaveBeenCalled();
+      expect(forwarded).toEqual([]);
+    },
+  );
+
+  it("judges the role the backend verified, never a claim in the cookie's token or the request", async () => {
+    cookieGet.mockReturnValue({ value: tokenClaiming("compliance_lead") });
+    identity = () => Response.json({ email: "u@example.test", role: "auditor" });
+    const probe = probeBody(chunked(multipart(bytes("synthetic evidence"))));
+    const claimed = upload(probe.stream, { "x-kerno-role": "compliance_lead", role: "compliance_lead" });
+    const response = await POST(claimed);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual(ROLE_REFUSAL);
+    expect(probe.pulled()).toBe(0);
+    expect(forwarded).toEqual([]);
+  });
+
+  it.each([
+    ["no role", () => Response.json({ email: "u@example.test" })],
+    ["a role that is not a string", () => Response.json({ email: "u@example.test", role: ["compliance_lead"] })],
+    ["a JSON null", () => Response.json(null)],
+    ["a body that is not JSON", () => new Response("compliance_lead", { status: 200 })],
+    ["an empty body", () => new Response(null, { status: 200 })],
+  ])("treats a verification answer with %s as unverified (502), reading nothing", async (_label, answer) => {
+    identity = answer;
+    const probe = probeBody(chunked(multipart(bytes("synthetic evidence"))));
+    const response = await POST(upload(probe.stream));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ detail: "the session could not be verified" });
+    expect(probe.pulled()).toBe(0);
+    expect(forwarded).toEqual([]);
+  });
+
+  it.each(["compliance_lead", "vciso", "security_engineer"])("forwards an upload from the verified role %s", async (role) => {
+    identity = () => Response.json({ email: "u@example.test", role });
+    const body = multipart(bytes("synthetic evidence"));
+    const response = await POST(upload(probeBody(chunked(body)).stream));
+    expect(response.status).toBe(201);
+    expect(await forwardedBytes()).toEqual(body);
   });
 });
 
@@ -320,13 +401,91 @@ describe("POST /api/evidence — a verified upload keeps its contract", () => {
 
   it.each([
     [403, "your role is not permitted to perform this action"],
+    [408, "upload was not received within the time limit"],
     [413, "file exceeds the 10485760-byte upload limit"],
     [422, "record_type is required"],
-  ])("relays the backend's %i refusal", async (status, detail) => {
+    [422, "the PDF could not be read"],
+    [422, "the PDF has more than 500 pages"],
+    [422, "the PDF could not be processed within the time limit"],
+    [500, "internal server error"],
+    [503, "evidence uploads are busy; try again shortly"],
+    [503, "evidence processing is unavailable; try again later"],
+  ])("relays the backend's %i refusal %p", async (status, detail) => {
     operation = async () => Response.json({ detail }, { status });
     const response = await POST(upload(multipart(bytes("synthetic evidence"))));
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ detail });
+  });
+});
+
+describe("POST /api/evidence — the API's Retry-After reaches the browser", () => {
+  it("relays the busy 503's Retry-After with its status and detail", async () => {
+    operation = async () => Response.json(
+      { detail: "evidence uploads are busy; try again shortly" },
+      { status: 503, headers: { "Retry-After": "5" } },
+    );
+    const response = await POST(upload(multipart(bytes("synthetic evidence"))));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
+    expect(await response.json()).toEqual({ detail: "evidence uploads are busy; try again shortly" });
+  });
+
+  it.each([
+    ["no Retry-After", {}],
+    ["an HTTP-date Retry-After", { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" }],
+    ["a non-numeric Retry-After", { "Retry-After": "soon" }],
+  ])("adds no Retry-After when the backend sends %s", async (_label, headers) => {
+    operation = async () => Response.json({ detail: "the PDF could not be read" }, { status: 422, headers });
+    const response = await POST(upload(multipart(bytes("synthetic evidence"))));
+    expect(response.status).toBe(422);
+    expect(response.headers.get("retry-after")).toBeNull();
+  });
+});
+
+describe("POST /api/evidence — a broken connection to the backend is a controlled refusal, never a thrown 500", () => {
+  /** An answer whose status and headers arrived but whose body then fails, as Node's fetch fails it on a reset socket. */
+  function cutOff(status: number, headers: Record<string, string> = {}): Response {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes('{"detail": "evidence up'));
+        controller.error(new TypeError("terminated"));
+      },
+    });
+    return new Response(body, { status, headers: { "content-type": "application/json", ...headers } });
+  }
+
+  it("answers 502 with a string detail when the backend request itself fails, and does not retry it", async () => {
+    operation = async () => {
+      throw new TypeError("fetch failed", { cause: new Error("read ECONNRESET") });
+    };
+    const response = await POST(upload(multipart(bytes("synthetic evidence"))));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual(UNREACHABLE);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(forwarded).toHaveLength(1);
+  });
+
+  it("relays the busy 503 and its Retry-After when its headers arrived but its body was cut off", async () => {
+    operation = async () => cutOff(503, { "Retry-After": "5" });
+    const response = await POST(upload(multipart(bytes("synthetic evidence"))));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
+    expect(await response.json()).toEqual({ detail: "evidence uploads are busy; try again shortly" });
+    expect(forwarded).toHaveLength(1);
+  });
+
+  it.each([
+    ["a 503 without Retry-After", 503, {}],
+    ["a 503 with an HTTP-date Retry-After", 503, { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" }],
+    ["a stored record", 201, {}],
+    ["a refusal", 422, { "Retry-After": "5" }],
+  ])("answers 502 when the answer's body is cut off after the headers of %s", async (_label, status, headers) => {
+    operation = async () => cutOff(status, headers);
+    const response = await POST(upload(multipart(bytes("synthetic evidence"))));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual(UNREACHABLE);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(forwarded).toHaveLength(1);
   });
 });
 
