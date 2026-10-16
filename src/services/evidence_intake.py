@@ -21,6 +21,11 @@ Rejecting is preferred to storing something unusable: an unsupported extension
 raises rather than saving a blob the scorer could never read, and an extraction
 that yields nothing but whitespace is an error rather than an empty record.
 
+PDFs are never parsed in this process. Their text is read by a separate worker
+process under page, decoded-byte, text, memory and CPU limits and a deadline at
+which it is killed (pdf_text_extraction.py, PILOT-READY-004), so a hostile PDF
+cannot hold the API's threads, memory or credentials.
+
 How to run or test
 ------------------
 Unit tests (no database, no network):
@@ -31,11 +36,8 @@ Unit tests (no database, no network):
 from __future__ import annotations
 
 import hashlib
-import io
 import logging
 from pathlib import PurePosixPath
-
-from pypdf import PdfReader
 
 from config.constants import (
     MAX_EVIDENCE_UPLOAD_BYTES,
@@ -43,6 +45,7 @@ from config.constants import (
     RbacRole,
 )
 from src.exceptions import EvidenceExtractionError, UnsupportedFileTypeError
+from src.services import pdf_text_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +71,13 @@ _EXTERNAL_ID_MAX_LENGTH = 255
 def extract_text(filename: str, content: bytes) -> str:
     """Return the plain text of an uploaded evidence document.
 
-    Dispatches on the filename's extension: PDFs go through pypdf, plain-text
-    formats are decoded as UTF-8 with a latin-1 fallback. Raises
-    ``UnsupportedFileTypeError`` for an extension we cannot read,
-    ``EvidenceExtractionError`` when a supported type yields nothing usable,
-    and ``ValueError`` when the upload exceeds MAX_EVIDENCE_UPLOAD_BYTES.
+    Dispatches on the filename's extension: PDFs are read by the bounded worker
+    process, plain-text formats are decoded as UTF-8 with a latin-1 fallback.
+    Raises ``UnsupportedFileTypeError`` for an extension we cannot read,
+    ``EvidenceExtractionError`` when a supported type yields nothing usable or
+    a PDF is refused, ``EvidenceProcessingUnavailableError`` when the PDF
+    worker could not run, and ``ValueError`` when the upload exceeds
+    MAX_EVIDENCE_UPLOAD_BYTES. Blocking for PDFs: call it off the event loop.
     """
     if len(content) > MAX_EVIDENCE_UPLOAD_BYTES:
         raise ValueError(
@@ -85,7 +90,7 @@ def extract_text(filename: str, content: bytes) -> str:
             f"supported: {sorted(SUPPORTED_EVIDENCE_EXTENSIONS)}"
         )
     text = (
-        _extract_pdf_text(content)
+        pdf_text_extraction.extract_pdf_text(content)
         if extension == ".pdf"
         else _decode_plain_text(content)
     )
@@ -118,21 +123,6 @@ def external_id_for(filename: str) -> str:
 def _file_extension(filename: str) -> str:
     """Return the lowercased extension of a filename, or an empty string."""
     return PurePosixPath(filename).suffix.lower()
-
-
-def _extract_pdf_text(content: bytes) -> str:
-    """Return the concatenated text of every page in a PDF.
-
-    Pages that yield no text (scanned images, for example) contribute nothing
-    rather than failing the whole document — a mixed PDF is still worth
-    ingesting. A structurally unreadable file raises EvidenceExtractionError.
-    """
-    try:
-        reader = PdfReader(io.BytesIO(content))
-        pages = [page.extract_text() or "" for page in reader.pages]
-    except Exception as exc:
-        raise EvidenceExtractionError(f"could not read PDF: {exc}") from exc
-    return "\n".join(pages)
 
 
 def _decode_plain_text(content: bytes) -> str:

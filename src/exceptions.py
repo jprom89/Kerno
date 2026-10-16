@@ -50,6 +50,13 @@ class EvidenceExtractionError(Exception):
     the type was right, the content was not."""
 
 
+class EvidenceProcessingUnavailableError(Exception):
+    """Raised when the PDF text-extraction worker could not start or exited without a
+    valid result (PILOT-READY-004) — a server-side fault, not something wrong with the
+    document. The upload path maps it to 503. Deliberately neither a ValueError (413)
+    nor an EvidenceExtractionError (422), so no handler for a bad document absorbs it."""
+
+
 class UnsupportedEventTypeError(ValueError):
     """Raised when an authenticated webhook delivery carries an event_type outside
     the supported set (KER-205). The router maps this to 422 — only ever AFTER the

@@ -578,10 +578,11 @@ place.
 
 ## 9. Serving profiles and the pilot grant set (PILOT-READY-003)
 
-**Status (13 October 2026): Checkpoint B run on the unmerged branch
-`pilot/pilot-ready-003-serving-profile` at
-`9a59e32f987357f82ec8921578853561661301bd`; every step passed, pending
-independent review.** Migration 030 is applied to `kerno_test` (head
+**Status (14 October 2026): Checkpoint B run on the then-unmerged branch
+`pilot/pilot-ready-003-serving-profile`; every step passed at
+`9a59e32f987357f82ec8921578853561661301bd` (record committed in the
+documentation-only `84abdf85f0b517962e781366ef8519689b9661c4`); merged via
+PR #21 (`14c8f9a5`).** Migration 030 is applied to `kerno_test` (head
 `e6f7g8h9`) and the runtime was switched full → pilot → full; it holds the
 full profile again. Synthetic disposable-test validation under the owner's
 written authorization on PR #21, not customer or production acceptance. The
