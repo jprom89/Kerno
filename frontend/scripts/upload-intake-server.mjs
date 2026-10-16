@@ -17,6 +17,7 @@
  * How: build first, then run node scripts/upload-intake-server.mjs from a checkout with no frontend
  *      .env files. Loopback only: a stub backend with synthetic tokens, and no database, browser or
  *      credentials. The deadline checks take as long as the real deadlines (about three minutes in all).
+ *      The server runs with KERNO_SERVING_PROFILE=full unless KERNO_VALIDATION_SERVING_PROFILE says otherwise.
  *      See docs/sec_remed_003_evidence_intake.md and docs/evidence_upload_limits.md.
  */
 import assert from "node:assert/strict";
@@ -69,6 +70,7 @@ const STALL_BEYOND_DEADLINE_MS = 15000;
 // How long to let a released slot settle before it is used again.
 const SETTLE_MS = 500;
 const limits = readLimits();
+const servingProfile = process.env.KERNO_VALIDATION_SERVING_PROFILE ?? "full";
 const backendCalls = [];
 const results = [];
 
@@ -167,9 +169,11 @@ function startFrontend(port, backendPort, tempRoot, resources) {
   for (const key of ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]) {
     if (process.env[key]) env[key] = process.env[key];
   }
+  // next start refuses to run without a serving profile (PILOT-READY-003). The upload proxy is served in both;
+  // KERNO_VALIDATION_SERVING_PROFILE picks which one the harness runs.
   Object.assign(env, { NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1",
     KERNO_API_URL: `http://127.0.0.1:${backendPort}`, KERNO_TRUSTED_ORIGINS: `http://127.0.0.1:${port}`,
-    TEMP: tempRoot, TMP: tempRoot });
+    KERNO_SERVING_PROFILE: servingProfile, TEMP: tempRoot, TMP: tempRoot });
   return spawnOwned(resources, "frontendProcess", process.execPath, [join(frontend, "node_modules/next/dist/bin/next"),
     "start", "--hostname", "127.0.0.1", "--port", String(port)],
   { cwd: frontend, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -473,7 +477,7 @@ async function main() {
     backendRequest(request, response).catch(() => respond(response, UNAUTHORIZED, { detail: "stub failure" }));
   }) };
   const evidence = { evidence: "real production Next.js server with a stubbed backend over loopback; not a browser or deployment test",
-    sourceSha: process.env.KERNO_VALIDATION_SOURCE_SHA ?? "unrecorded", limits, results };
+    sourceSha: process.env.KERNO_VALIDATION_SOURCE_SHA ?? "unrecorded", servingProfile, limits, results };
   await runWithCleanup(async () => {
     const backendPort = await listen(resources.backend);
     const port = await unusedPort();
