@@ -294,6 +294,13 @@ touched.
 
 ## Remaining limitations
 
+*Update, 16 October 2026:* PILOT-READY-004 (gate G6) adds PDF page,
+decoded-output, text, time and memory limits, reception deadlines on both
+paths and per-process concurrency caps. It is on the unmerged branch
+`pilot/pilot-ready-004-upload-limits` and pending independent review. See
+`docs/evidence_upload_limits.md`. The list below is kept as the record at the
+time of SEC-REMED-003.
+
 - **PDF parsing is not bounded by this change.** Decoded-output, page and CPU
   limits for pypdf stay a separate control. A 10 MiB PDF can still be costly
   to extract. This fixes transport size and does not establish parser-bomb

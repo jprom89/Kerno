@@ -318,15 +318,17 @@ Still open after SEC-REMED-001, so they are not mistaken for fixed:
 
 Still open after SEC-REMED-003, so they are not mistaken for fixed:
 
-- **PDF extraction cost.** A PDF of up to 10 MiB is still handed to pypdf with
-  no decoded-output, page or CPU limit. The transport limit is not parser-bomb
-  resistance.
-- **No reception deadline or concurrency cap on uploads.** A slow
-  authenticated sender holds up to the body limit until the server's own
-  timeouts, and SEC-05 rate limiting is still deferred.
+- **PDF extraction cost** and **no reception deadline or concurrency cap on
+  uploads** are addressed by PILOT-READY-004 (G6). That work is on the
+  unmerged branch `pilot/pilot-ready-004-upload-limits`, pending independent
+  review, and has had no live (Checkpoint B) or host validation; see the
+  PILOT-READY-004 row and `docs/evidence_upload_limits.md`. SEC-05 rate
+  limiting is still deferred: the caps bound concurrency, not request rate.
 - **Hosting limits are unmeasured.** Vercel documents a 4.5 MB request-body
   limit for Functions; if the proxy is deployed there, the 10 MiB limit would
-  not be reachable through it. This is not verified.
+  not be reachable through it. The host's function duration must also allow
+  the proxy's 60 s reception and 75 s forward deadlines, and its worker and
+  replica counts multiply the per-process caps. None of this is verified.
 
 ## Honest claim (demo, deck, outreach)
 
@@ -374,6 +376,7 @@ Hygiene is on `main`. Do not re-implement C1/A/B/D.
 | D | Justification + `ai_decision_log` retention triggers | `fb741f0` + `e5c28ac` on `main` |
 | C2 / PILOT-READY-002 ([#18](https://github.com/jprom89/Kerno/issues/18)) | Non-owner runtime role (full profile) + guarded validation | **Merged via PR #19** (`8229843`). Execution evidence: final acceptance on the then-unmerged branch at `fb9f5068`, both identities verified, 2212 passed, 0 failed, 0 skipped, after a recorded 2-failed run at `98513958` (record in `docs/test_database_runbook.md` §8). On `kerno_test` only: 029 applied, `kerno_test_app` created by the owner and granted the full profile. Not deployed; no customer environment. The no-FORCE exception and the H1/H2 residuals are approved for synthetic disposable-test validation only, not for customer data. |
 | PILOT-READY-003 ([#20](https://github.com/jprom89/Kerno/issues/20)) | Pilot serving profile (G10), matching runtime grants, startup profile check | **Merged via PR #21** (`14c8f9a5`). Execution evidence: Checkpoint B on the then-unmerged branch at tested SHA `9a59e32f987357f82ec8921578853561661301bd`, recorded in the documentation-only commit `84abdf85f0b517962e781366ef8519689b9661c4`: 030 round trip, full run 2818 passed, switch to pilot, pilot run 57 passed, restore to full, restoration proof 75 passed, with 0 failures, 0 errors and 0 skips in every run (record in `docs/test_database_runbook.md` §9). On `kerno_test` only: final head `e6f7g8h9`, runtime back on the full profile. Not deployed; validation on the pilot host is outstanding. Pilot exclusions are not accepted for customer data. |
+| PILOT-READY-004 ([#22](https://github.com/jprom89/Kerno/issues/22)) | Evidence upload and PDF processing limits (G6) | **Checkpoint A on the unmerged branch** `pilot/pilot-ready-004-upload-limits` (draft PR), pending independent review. Implemented, and tested offline only on Windows with CPython 3.14.3 and pypdf 6.14.2. **Uploads:** 2 active per API process and 2 per Next.js process, refused at once with 503 and no queue; absolute reception deadlines of 30 s (API) and 60 s (proxy). **Extraction before the lease:** text is extracted before any database lease. **PDFs:** read in a killable worker process with a verified OS memory ceiling (512 MiB), a 30 s deadline, 500 pages, 16 MiB per stream, 64 MiB decoded, 10,485,760 characters, and refusal of any memory or limit failure pypdf swallows. Refusals carry safe fixed details. **Proxy:** the role is verified before the body, and every await is bounded. Records and evidence are in `docs/evidence_upload_limits.md`. **Not done:** Checkpoint B (synthetic live run) needs separate approval. The Linux ceilings have not been run on a supported Python. Python 3.12 or later is required for PDF processing, while `pyproject.toml` still allows 3.11 (G3). Host body, duration and replica limits are unmeasured. Not merged. |
 | PILOT-READY-001 ([#16](https://github.com/jprom89/Kerno/issues/16)) | C2 runtime-role specification, guarded validation plan, controlled-pilot release gates | Merged via PR #17 (`a849708`): `docs/pilot_readiness_kickoff.md`. Its exceptions, risk acceptances and pilot exclusions are proposed, not approved. Deployment and pilot acceptance are not started and each needs approval. |
 
 Role matrix for A (authoritative):
@@ -414,7 +417,8 @@ and the frozen filing download are **done** — they are not in this list.
 - Connection pool `RESET` / `DISCARD` on return; do not hold a pool
   connection across the LLM call
 - Jira Cloud auth (Basic email:api_token vs Bearer); per-tenant credentials
-- PDF page cap; evidence list pagination
+- Evidence list pagination (the PDF page cap is in PILOT-READY-004, pending
+  review)
 - `FILE_STRUCTURE.md` full reconciliation against the live tree
 - `close-callback` HMAC (KER-205 pattern), not a human RBAC role
 - Teardown-coverage test: assert every table with a `tenant_id` column is in
