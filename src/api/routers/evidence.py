@@ -7,11 +7,13 @@ Why:   before this, evidence could only arrive by webhook and could not be
        linked at all — so a customer could ingest perfectly and still score
        every control "gap, no evidence". This is the surface that makes the
        evidence base usable by a human.
-How:   thin translation only. Upload intake (limits, multipart parsing) lives
-       in src/api/evidence_upload_intake, text extraction in evidence_intake,
-       the link upsert in evidence_service; the tenant and the acting user
-       always come from the verified JWT, never the request.
-       pytest tests/unit/api/test_evidence.py tests/unit/api/test_evidence_upload_bounds.py -v
+How:   thin translation only. Upload admission and extraction live in
+       src/api/evidence_upload_processing, intake limits and multipart
+       parsing in src/api/evidence_upload_intake, text extraction in
+       evidence_intake, the link upsert in evidence_service; the tenant and
+       the acting user always come from the verified JWT, never the request.
+       pytest tests/unit/api/test_evidence.py tests/unit/api/test_evidence_upload_bounds.py
+       tests/unit/api/test_evidence_upload_admission.py -v
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config.constants import UPLOAD_SOURCE_SYSTEM
 from src.api.dependencies import get_conn, get_tenant_id, require_role
-from src.api.evidence_upload_intake import ReceivedEvidenceUpload, receive_evidence_upload
+from src.api.evidence_upload_processing import ProcessedEvidenceUpload, accept_evidence_upload
 # get_reviewer_id is the existing verified-JWT user identity (KER-202); reused
 # so linked_by names the same verified actor that override attribution does.
 from src.api.routers.overrides import get_reviewer_id
@@ -34,13 +36,11 @@ from src.api.schemas.evidence import (
     EvidenceUploadResponse,
 )
 from src.db.rls import set_tenant_context
-from src.exceptions import EvidenceExtractionError, UnsupportedFileTypeError
 from src.services.audit_log import append_audit_entry
 from src.services.evidence_intake import (
     EVIDENCE_CAPABLE_ROLES,
     content_fingerprint,
     external_id_for,
-    extract_text,
 )
 from src.services.evidence_service import link_evidence
 
@@ -142,22 +142,23 @@ def upload_evidence(
     tenant_id: str = Depends(get_tenant_id),
     user_id: str = Depends(get_reviewer_id),
     rbac_role: str = Depends(require_role(*EVIDENCE_CAPABLE_ROLES)),
-    upload: ReceivedEvidenceUpload = Depends(receive_evidence_upload),
+    document: ProcessedEvidenceUpload = Depends(accept_evidence_upload),
     conn=Depends(get_conn),
 ) -> EvidenceUploadResponse:
     """Store one uploaded document as an evidence record for this tenant.
 
-    The parameter order is the SEC-REMED-003 boundary: FastAPI resolves these
-    dependencies in declaration order, so the token and role are checked
-    before any body byte is read, and the bounded upload is received before a
-    database connection is leased. Do not reorder them. Extracts text (the
-    original bytes are not retained, §16 decision 2), fingerprints it, and
+    The parameter order is the SEC-REMED-003 and G6 boundary: FastAPI
+    resolves these dependencies in declaration order, so the token, then the
+    role, are checked before an upload slot is taken or any body byte is
+    read; the upload is then admitted, received within its size and time
+    limits and its text extracted within the extraction limits, all before a
+    database connection is leased. Do not reorder them. Fingerprints the
+    extracted text (the original bytes are not retained, §16 decision 2) and
     returns the EXISTING record when the same content was already uploaded.
-    Intake refusals are listed on receive_evidence_upload; unsupported file
-    type or unreadable content → 422; oversize → 413.
+    The refusals are listed on accept_evidence_upload and
+    receive_evidence_upload.
     """
-    text = _extract_or_reject(upload.filename, upload.content)
-    content_hash = content_fingerprint(text)
+    content_hash = content_fingerprint(document.text)
     set_tenant_context(conn, tenant_id)
 
     existing = conn.execute(
@@ -165,17 +166,17 @@ def upload_evidence(
     ).fetchone()
     if existing is not None:
         return _upload_response(existing, deduplicated=True)
-    return _store_new_upload(conn, tenant_id, user_id, rbac_role, upload, text, content_hash)
+    return _store_new_upload(conn, tenant_id, user_id, rbac_role, document, content_hash)
 
 
 def _store_new_upload(
     conn, tenant_id: str, user_id: str, rbac_role: str,
-    upload: ReceivedEvidenceUpload, text: str, content_hash: str,
+    document: ProcessedEvidenceUpload, content_hash: str,
 ) -> EvidenceUploadResponse:
     """Insert a new evidence record and its KER-107 ledger entry on the caller's transaction."""
     record_id = str(uuid.uuid4())
-    external_id = external_id_for(upload.filename or "upload")
-    title = upload.title or external_id
+    external_id = external_id_for(document.filename or "upload")
+    title = document.title or external_id
     conn.execute(
         _INSERT_RECORD,
         {
@@ -183,9 +184,9 @@ def _store_new_upload(
             "tenant_id": tenant_id,
             "source_system": UPLOAD_SOURCE_SYSTEM,
             "external_id": external_id,
-            "record_type": upload.record_type,
+            "record_type": document.record_type,
             "title": title,
-            "body": text,
+            "body": document.text,
             "content_hash": content_hash,
         },
     )
@@ -194,11 +195,11 @@ def _store_new_upload(
     ).fetchone()[0]
     _record_evidence_audit(
         conn, tenant_id, user_id, rbac_role, "evidence_uploaded", record_id,
-        {"external_id": external_id_for(upload.filename), "record_type": upload.record_type},
+        {"external_id": external_id_for(document.filename), "record_type": document.record_type},
     )
     return EvidenceUploadResponse(
         record_id=record_id, source_system=UPLOAD_SOURCE_SYSTEM, external_id=external_id,
-        record_type=upload.record_type, title=title, content_hash=content_hash,
+        record_type=document.record_type, title=title, content_hash=content_hash,
         created_at=created_at, deduplicated=False,
     )
 
@@ -299,23 +300,6 @@ def remove_link(
         conn, tenant_id, user_id, rbac_role, "evidence_unlinked", str(record_id),
         {"control_id": str(control_id)},
     )
-
-
-def _extract_or_reject(filename: str, content: bytes) -> str:
-    """Return the document's text, translating extraction failures to HTTP codes.
-
-    Unsupported type and unreadable content are both the caller's problem
-    (422); an oversize upload is 413, which is the honest status for a payload
-    the server refuses on size alone.
-    """
-    try:
-        return extract_text(filename, content)
-    except UnsupportedFileTypeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except EvidenceExtractionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=413, detail=str(exc))
 
 
 def _require_linkable(conn, tenant_id: str, record_id: str, control_id: str) -> None:

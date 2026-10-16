@@ -1,19 +1,24 @@
 """evidence_upload_intake.py — bounded multipart intake for POST /api/v1/evidence (SEC-REMED-003).
 
-What:  a FastAPI dependency that receives one evidence upload under fixed
-       limits and hands the endpoint plain values: the filename, at most
-       MAX_EVIDENCE_UPLOAD_BYTES of file content, the record_type and the
-       title. Every spooled file the parser opened is closed before it returns.
+What:  receives one evidence upload under fixed limits and returns plain
+       values: the filename, at most MAX_EVIDENCE_UPLOAD_BYTES of file
+       content, the record_type and the title. The whole body must arrive
+       within EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS of the first read.
+       Every spooled file the parser opened is closed before it returns.
 Why:   finding resource-exhaustion.evidence-buffering. With File() and Form()
        parameters, FastAPI parses the entire multipart body before any
        dependency runs, so the body was spooled before the token was checked,
        and the endpoint then read the complete file before checking its size.
-       The endpoint declares this dependency after its token and role
-       dependencies and before its connection dependency. FastAPI resolves
-       them in that order, so intake runs only for an authorised caller and
-       finishes before a database connection is leased.
-How:   Depends(receive_evidence_upload). Tests:
-       pytest tests/unit/api/test_evidence_upload_bounds.py -v
+       The reception deadline (PILOT-READY-004, G6) stops a client that
+       trickles its body from holding an upload slot open indefinitely.
+       Intake is called by accept_evidence_upload
+       (src/api/evidence_upload_processing.py), which the endpoint declares
+       after its token and role dependencies and before its connection
+       dependency. FastAPI resolves them in that order, so intake runs only
+       for an authorised, admitted caller and finishes before a database
+       connection is leased.
+How:   await receive_evidence_upload(request). Tests:
+       pytest tests/unit/api/test_evidence_upload_bounds.py tests/unit/api/test_evidence_upload_admission.py -v
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import anyio
 from fastapi import HTTPException, Request
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import parse_options_header
@@ -34,6 +40,7 @@ from config.constants import (
     EVIDENCE_UPLOAD_MAX_FIELD_BYTES,
     EVIDENCE_UPLOAD_MAX_FIELDS,
     EVIDENCE_UPLOAD_MAX_FILES,
+    EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS,
     MAX_EVIDENCE_UPLOAD_BYTES,
 )
 
@@ -53,6 +60,7 @@ _NO_BOUNDARY = "multipart boundary is missing"
 _INVALID_CONTENT_LENGTH = "invalid Content-Length"
 _BODY_TOO_LARGE = "upload exceeds the size limit"
 _BODY_INCOMPLETE = "upload was not received completely"
+_BODY_TOO_SLOW = "upload was not received within the time limit"
 _MALFORMED_MULTIPART = "malformed multipart body"
 _UNEXPECTED_FIELD = "unexpected form field; only file, record_type and title are accepted"
 _REPEATED_FIELD = "each form field may be sent only once"
@@ -89,13 +97,14 @@ async def receive_evidence_upload(request: Request) -> ReceivedEvidenceUpload:
     In order: the headers alone can refuse (415 not multipart, 400 no boundary
     or a malformed Content-Length, 413 a declared length over
     EVIDENCE_UPLOAD_MAX_BODY_BYTES); the body is received and counted as it
-    arrives, stopping at the first chunk over that limit (413) or on a client
-    disconnect (400); only the complete body is parsed, with at most one file,
-    two fields and EVIDENCE_UPLOAD_MAX_FIELD_BYTES per field (400); a
-    misshapen form is a 422 with a string detail; and at most
+    arrives, stopping at the first chunk over that limit (413), on a client
+    disconnect (400) or when EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS have
+    passed since the first read (408); only the complete body is parsed,
+    with at most one file, two fields and EVIDENCE_UPLOAD_MAX_FIELD_BYTES per
+    field (400); a misshapen form is a 422 with a string detail; and at most
     MAX_EVIDENCE_UPLOAD_BYTES + 1 file bytes are read (413 above the limit).
     """
-    _refuse_by_headers(request.headers)
+    refuse_by_headers(request.headers)
     parser = _TrackedMultiPartParser(
         request.headers,
         _single_chunk(await _receive_bounded_body(request)),
@@ -111,9 +120,12 @@ async def receive_evidence_upload(request: Request) -> ReceivedEvidenceUpload:
             spooled_file.close()
 
 
-def _refuse_by_headers(headers: Headers) -> None:
+def refuse_by_headers(headers: Headers) -> None:
     """Refuse, before reading any of the body, what the headers alone show cannot be a bounded upload.
 
+    accept_evidence_upload calls this before it takes an upload slot, so a
+    request the headers rule out never occupies one; receive_evidence_upload
+    calls it again, which costs nothing and keeps intake whole on its own.
     Only ASCII digits are a Content-Length (RFC 9110): int() alone would also
     accept a sign, surrounding spaces and underscores. The declared length
     only allows an earlier refusal; the bytes that arrive are always counted.
@@ -153,20 +165,27 @@ def _declares_more_than(digits: str, limit: int) -> bool:
 
 
 async def _receive_bounded_body(request: Request) -> bytes:
-    """Return the complete raw body, stopping at the first chunk that crosses EVIDENCE_UPLOAD_MAX_BODY_BYTES.
+    """Return the complete raw body, within EVIDENCE_UPLOAD_MAX_BODY_BYTES and the reception deadline.
 
-    The rest of an over-limit body is never consumed. Nothing is parsed or
+    Stops at the first chunk that crosses the size limit (413). The deadline
+    starts before the first read and is never reset by an arriving chunk, so
+    a body trickled in small pieces, or a first chunk that never comes, is
+    refused once EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS have passed (408).
+    The rest of a refused body is never consumed. Nothing is parsed or
     spooled here, so a refusal leaves no temporary file behind.
     """
     chunks: list[bytes] = []
     received = 0
     try:
-        async with contextlib.aclosing(request.stream()) as stream:
-            async for chunk in stream:
-                received += len(chunk)
-                if received > EVIDENCE_UPLOAD_MAX_BODY_BYTES:
-                    raise HTTPException(status_code=413, detail=_BODY_TOO_LARGE, headers=_CLOSE_CONNECTION)
-                chunks.append(chunk)
+        with anyio.fail_after(EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS):
+            async with contextlib.aclosing(request.stream()) as stream:
+                async for chunk in stream:
+                    received += len(chunk)
+                    if received > EVIDENCE_UPLOAD_MAX_BODY_BYTES:
+                        raise HTTPException(status_code=413, detail=_BODY_TOO_LARGE, headers=_CLOSE_CONNECTION)
+                    chunks.append(chunk)
+    except TimeoutError:
+        raise HTTPException(status_code=408, detail=_BODY_TOO_SLOW, headers=_CLOSE_CONNECTION)
     except ClientDisconnect:
         raise HTTPException(status_code=400, detail=_BODY_INCOMPLETE)
     return b"".join(chunks)
