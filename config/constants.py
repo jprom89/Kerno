@@ -460,6 +460,140 @@ EVIDENCE_UPLOAD_MAX_FILES: int = 1
 EVIDENCE_UPLOAD_MAX_FIELDS: int = 2
 
 # ---------------------------------------------------------------------------
+# Evidence upload admission and processing limits (PILOT-READY-004, G6)
+# ---------------------------------------------------------------------------
+
+# Bounds on how many uploads run at once, how long one may take to arrive, and
+# how much work reading a PDF's text may do. PDF processing refusals are 422,
+# never 413: 413 stays the byte-size refusal, and the dashboard replaces every
+# 413 detail with its own size message, which would hide the specific reason.
+# frontend/lib/evidence-upload-limits.ts mirrors the admission values for the
+# Next.js proxy, and a test fails if the two drift apart.
+#
+# Uploads admitted at once PER API PROCESS: each uvicorn worker process keeps
+# its own count, so a deployment running several workers admits this many in
+# each. Admission happens after the token and role checks and the refusals the
+# headers alone decide (415, 400, 413), before any body byte is read, so none
+# of those ever occupies a slot. The slot is held through reception, parsing,
+# extraction and the database write, and released on every outcome. A full
+# house is refused at once with 503 — there is no queue, because a queue of
+# waiting requests holding connections is the exhaustion this limit exists to
+# prevent.
+EVIDENCE_UPLOAD_MAX_ACTIVE: int = 2
+
+# Retry-After, in seconds, on that 503. Short on purpose: a slot frees as soon
+# as one upload finishes, and every stage an upload passes through is bounded.
+EVIDENCE_UPLOAD_RETRY_AFTER_SECONDS: int = 5
+
+# Total time from the first body read to the last byte, NOT reset per chunk, so
+# a client trickling a byte at a time cannot hold a slot open → 408. The
+# supported path is the Next.js proxy, which forwards an already-received body
+# over the server-side link in well under a second; 30 s still lets a direct
+# client send the full 10.06 MiB body at about 350 KB/s.
+EVIDENCE_UPLOAD_RECEPTION_DEADLINE_SECONDS: float = 30.0
+
+# PDF text is read in a separate worker process (src/services/pdf_text_worker.py)
+# that the API can kill. Wall-clock seconds from launching it to its result,
+# interpreter start and the pypdf import included. On expiry the worker is
+# killed and reaped → 422.
+PDF_EXTRACTION_DEADLINE_SECONDS: float = 30.0
+
+# Pages pypdf finds in the page tree, checked before any page's text is
+# extracted → 422. Far above any policy, report or runbook a team uploads.
+PDF_MAX_PAGES: int = 500
+
+# Decoded output of any ONE PDF stream → 422, enforced inside the worker only,
+# in two ways. It is written into pypdf's per-stream limits, so FlateDecode,
+# LZWDecode and RunLengthDecode (and the joining of a page's array of content
+# streams) stop DURING decompression, as their output grows past it; pypdf
+# also reads no stream whose stored length is declared longer. Every stream's
+# final output is also checked RIGHT AFTER that stream decodes, which is what
+# holds the filters pypdf does not bound to the same value: ASCII85Decode,
+# which can turn one input byte into four, above all. (The other filters
+# pypdf runs, ASCIIHex, DCT, JPX, CCITTFax and Crypt, shrink their input, pass
+# it through, or add a small fixed header; JBIG2Decode is disabled in the
+# worker, since it would start an external program.) A stream whose later
+# stages pypdf does not bound therefore exists in full before it is refused,
+# and such stages can be chained, each multiplying the last: that transient,
+# and whatever the decoder allocates on the way, is bounded only by the
+# worker's OS memory ceiling (PDF_WORKER_MEMORY_LIMIT_BYTES), past which the
+# document is refused as well.
+PDF_MAX_STREAM_OUTPUT_BYTES: int = 16 * 1024 * 1024
+
+# Total decoded bytes of every stream pypdf decodes for one document, charged
+# as each stream finishes decoding → 422. Decoded data is cached per stream,
+# so it accumulates. Because a stream is charged once it has decoded, the
+# decoded data held at once can reach this plus one more stream of up to
+# PDF_MAX_STREAM_OUTPUT_BYTES, plus that stream's transient while it decodes,
+# which only the OS memory ceiling bounds (see PDF_MAX_STREAM_OUTPUT_BYTES).
+PDF_MAX_DECODED_BYTES: int = 64 * 1024 * 1024
+
+# Characters of extracted text, cumulative across pages: checked as pypdf
+# reports each text fragment (extraction stops mid-page) and again on each
+# page's returned text → 422. A Form XObject's text, which pypdf reports in
+# fragments and then again whole, is charged once at any nesting depth.
+# Parity with the plain-text path: a PDF may not yield more text than a
+# plain-text upload could carry.
+PDF_MAX_EXTRACTED_TEXT_CHARACTERS: int = MAX_EVIDENCE_UPLOAD_BYTES
+
+# The worker's memory ceiling on every platform: RLIMIT_AS (address space) on
+# POSIX, a Job Object's per-process committed-memory limit on Windows. The
+# worker installs it and reads it back before it reads the upload or imports
+# pypdf; if it cannot, it answers "unavailable" (503) and parses nothing.
+# pypdf does not bound how far a font's ToUnicode map or glyph names can
+# amplify one text fragment, so only an OS ceiling bounds that. An allocation
+# past it raises MemoryError inside the worker → 422, even where pypdf catches
+# and ignores it (the worker observes every MemoryError raised); where the
+# interpreter itself fails on that out-of-memory path, the worker dies after
+# announcing it was ready to parse, and the API refuses the document the same
+# way → 422 (only a worker that dies before its ready line is a server fault
+# → 503).
+# Either way the worker's memory stays under the ceiling.
+PDF_WORKER_MEMORY_LIMIT_BYTES: int = 512 * 1024 * 1024
+
+# The worker's CPU-time ceiling on every platform (RLIMIT_CPU on POSIX, the
+# Job Object's per-process user-time limit on Windows): a backstop so that
+# even a worker orphaned by an API process that died before killing it cannot
+# run on. One second above the deadline, so a request always meets the
+# wall-clock deadline first.
+PDF_WORKER_CPU_LIMIT_SECONDS: int = int(PDF_EXTRACTION_DEADLINE_SECONDS) + 1
+
+# The oldest pypdf the worker will parse with: the exact version whose
+# per-stream limit globals, decode hook and the other names the worker relies
+# on it was built and tested against. The worker compares pypdf.__version__'s
+# leading numbers with this before parsing, and the API trusts no result
+# reporting an older one; an older or unparsable version → 503.
+# pyproject.toml declares the same floor.
+PDF_PARSER_MINIMUM_VERSION: str = "6.14.2"
+
+# The API reads the worker's stdout in chunks of this size, never all at once.
+PDF_WORKER_OUTPUT_READ_CHUNK_BYTES: int = 64 * 1024
+
+# The most bytes UTF-8 uses for one Python character: four for a character
+# outside the Basic Multilingual Plane. A lone surrogate, which the worker's
+# surrogatepass encoding lets through, takes three.
+UTF8_MAX_BYTES_PER_CHARACTER: int = 4
+
+# Room for each of the worker's header lines ("ready <ceiling> <pypdf
+# version>" or "<outcome> <ceiling> <pypdf version>", and its newline); a real
+# header line is under 50 bytes, and a longer one is malformed.
+PDF_WORKER_HEADER_MAX_BYTES: int = 256
+
+# The header lines one worker writes: the ready line, once its ceiling and
+# parser checks are in place and before it reads the upload, then the result
+# line.
+PDF_WORKER_HEADER_LINES: int = 2
+
+# The most stdout the API accepts from one worker: both header lines plus the
+# largest text the worker may return, at the worst-case encoded size. The API
+# stops reading past it and kills the worker → 503, so a misbehaving worker
+# cannot make the API buffer without bound.
+PDF_WORKER_MAX_OUTPUT_BYTES: int = (
+    UTF8_MAX_BYTES_PER_CHARACTER * PDF_MAX_EXTRACTED_TEXT_CHARACTERS
+    + PDF_WORKER_HEADER_LINES * PDF_WORKER_HEADER_MAX_BYTES
+)
+
+# ---------------------------------------------------------------------------
 # Frozen DORA filing download
 # ---------------------------------------------------------------------------
 

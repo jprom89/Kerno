@@ -34,7 +34,7 @@ dependencies = [
     # Evidence intake — PDF text extraction (KER-406). Declared explicitly:
     # it was previously only a transitive dependency, which violates SEC-06
     # reproducible installs.
-    "pypdf>=4.0.0",
+    "pypdf>=6.14.2",
 
     # Database
     "psycopg2-binary>=2.9.9",
